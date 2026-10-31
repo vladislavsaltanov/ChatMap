@@ -1,0 +1,16 @@
+@layer tokens, base, map;
+
+@layer tokens {
+  :root {
+    color-scheme: dark;
+    --paper: oklch(0.16 0.01 85);
+    --ink: oklch(0.92 0.01 85);
+    --ink-dim: oklch(0.62 0.01 85);
+    --hairline: oklch(0.32 0.01 85);
+    --font: system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --label-size: 11px;
+    --label-track: 0.08em;
+    --touch: 40px;
+    --gap: 8px;
+  }
+}
