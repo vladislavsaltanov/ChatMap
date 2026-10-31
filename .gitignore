@@ -1,5 +1,8 @@
 node_modules/
 dist/
+docs/
+specs/
+tools/
 coverage/
 *.local
 .DS_Store
