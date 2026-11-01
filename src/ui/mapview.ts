@@ -93,8 +93,10 @@ export class MapView {
         allowInvalidContainer: true,
         itemSizesReference: 'positions',
         autoRescaleContent: 'nodes',
-        stagePadding: 60,
+        stagePadding: 50,
         zoomToSizeRatioFunction: (ratio) => ratio,
+        labelRenderedSizeThreshold: 13,
+        labelDensity: 1.0,
       },
       primitives: {
         nodes: {
@@ -113,21 +115,22 @@ export class MapView {
             size: { attribute: 'size' },
             label: { attribute: 'label' },
             labelPosition: 'over',
-            labelColor: '#101116',
+            labelColor: '#0e1015',
             labelFont: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-            labelSize: 10.5,
-            labelVisibility: 'visible',
+            labelSize: 10,
+            labelVisibility: 'auto',
           },
           {
             when: (_a, s, g) =>
               Boolean((g as unknown as { hasActiveSubgraph?: boolean }).hasActiveSubgraph &&
                 !(s as unknown as { isActive?: boolean }).isActive),
-            then: { color: '#1f2029', labelColor: '#4e5267' },
+            then: { color: '#1a1b22', labelColor: '#44485c' },
           },
           {
             whenState: 'isHighlighted',
             then: {
               depth: 'topNodes',
+              labelVisibility: 'visible',
               labelColor: '#ffffff',
               backdropVisibility: 'visible',
               backdropBorderColor: '#ffffff',
@@ -139,6 +142,7 @@ export class MapView {
             whenState: 'isActive',
             then: {
               depth: 'topNodes',
+              labelVisibility: 'visible',
               labelColor: '#ffffff',
               backdropVisibility: 'visible',
               backdropBorderColor: '#ffffff',
@@ -150,6 +154,7 @@ export class MapView {
             whenState: 'isHovered',
             then: {
               depth: 'topNodes',
+              labelVisibility: 'visible',
               labelColor: '#ffffff',
               backdropVisibility: 'visible',
               backdropBorderColor: '#ffffff',

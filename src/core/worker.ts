@@ -125,7 +125,24 @@ function runPipeline(fullRun: boolean) {
     }
   })
 
-  const layoutResult = layout(layoutNodes, selection.edges, {
+  // Prune weak incidental noise to form a clean, legible network backbone
+  const MAX_PER_NODE = 4
+  const nodeDegrees = new Map<number, number>()
+  const backboneEdges: typeof selection.edges = []
+  for (const edge of selection.edges) {
+    const degA = nodeDegrees.get(edge.a) || 0
+    const degB = nodeDegrees.get(edge.b) || 0
+    if (degA < MAX_PER_NODE || degB < MAX_PER_NODE || edge.weight >= 4) {
+      backboneEdges.push(edge)
+      nodeDegrees.set(edge.a, degA + 1)
+      nodeDegrees.set(edge.b, degB + 1)
+      if (backboneEdges.length >= Math.max(300, selection.nodes.length * 3.5)) {
+        break
+      }
+    }
+  }
+
+  const layoutResult = layout(layoutNodes, backboneEdges, {
     seed: 1337,
     fullRun,
   })
@@ -172,7 +189,7 @@ function runPipeline(fullRun: boolean) {
   send({
     type: 'map',
     nodes,
-    edges: selection.edges,
+    edges: backboneEdges,
     maxCount: selection.maxCount,
     maxWeight: selection.maxWeight,
     forms,
