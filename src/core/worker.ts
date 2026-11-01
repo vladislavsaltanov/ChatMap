@@ -1,5 +1,5 @@
 import { isStopword, matchesLaugh, matchesMat } from './filters'
-import { nodeSize } from './geometry'
+import { nodeFitSize } from './geometry'
 import { layout } from './graph'
 import { Intern } from './intern'
 import { parse } from './parse'
@@ -86,11 +86,41 @@ function runPipeline(fullRun: boolean) {
     merged
   )
 
+  let minCount = Infinity
+  for (const n of selection.nodes) {
+    if (n.count < minCount) minCount = n.count
+  }
+  if (minCount === Infinity) minCount = 1
+
+  // Pre-calculate best word form and cell sizes so layout spaces them properly
+  const nodeInfoMap = new Map<number, { bestForm: string; forms: Array<[string, number]>; size: number }>()
+  for (const n of selection.nodes) {
+    const formMap = ia.forms.get(n.id)
+    let bestForm = ia.getCanon(n.id) || String(n.id)
+    let bestCount = 0
+
+    const formsList: Array<[string, number]> = []
+    if (formMap) {
+      for (const [form, cnt] of formMap) {
+        if (cnt > bestCount) {
+          bestCount = cnt
+          bestForm = form
+        }
+      }
+      formsList.push(...Array.from(formMap.entries()).sort((a, b) => b[1] - a[1]))
+    }
+
+    const size = nodeFitSize(bestForm, n.count, selection.maxCount, minCount)
+    nodeInfoMap.set(n.id, { bestForm, forms: formsList, size })
+  }
+
   send({ type: 'progress', done: 85, total: 100, stage: 'Укладка графа (ForceAtlas2)...' })
   const layoutNodes = selection.nodes.map((n) => {
     const canonStr = ia.getCanon(n.id) || String(n.id)
+    const info = nodeInfoMap.get(n.id)
     return {
       id: n.id,
+      size: info?.size,
       prevXY: positionsCache.get(canonStr),
     }
   })
@@ -109,33 +139,13 @@ function runPipeline(fullRun: boolean) {
   const nodes: WorkerNode[] = []
   const forms = new Map<number, Array<[string, number]>>()
 
-  let minCount = Infinity
   for (const n of selection.nodes) {
-    if (n.count < minCount) minCount = n.count
-  }
-  if (minCount === Infinity) minCount = 1
-
-  for (const n of selection.nodes) {
-    const formMap = ia.forms.get(n.id)
-    let bestForm = ia.getCanon(n.id) || String(n.id)
-    let bestCount = 0
-
-    if (formMap) {
-      for (const [form, cnt] of formMap) {
-        if (cnt > bestCount) {
-          bestCount = cnt
-          bestForm = form
-        }
-      }
-      forms.set(
-        n.id,
-        Array.from(formMap.entries()).sort((a, b) => b[1] - a[1])
-      )
+    const info = nodeInfoMap.get(n.id)!
+    if (info.forms.length > 0) {
+      forms.set(n.id, info.forms)
     }
 
     const pos = layoutResult.positions.get(n.id) || { x: 0, y: 0 }
-    const size = nodeSize(n.count, selection.maxCount, minCount)
-
     let authorLead: AuthorId = 0
     let leadCount = 0
     const authorMap = tallyResult.counts.get(n.id)
@@ -150,10 +160,10 @@ function runPipeline(fullRun: boolean) {
 
     nodes.push({
       id: n.id,
-      label: bestForm,
+      label: info.bestForm,
       x: pos.x,
       y: pos.y,
-      size,
+      size: info.size,
       count: n.count,
       authorLead,
     })

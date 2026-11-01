@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { edgeWidth, nodeSize } from '../src/core/geometry'
+import { edgeWidth, nodeFitSize, nodeSize } from '../src/core/geometry'
 
 describe('geometry', () => {
   it('computes nodeSize according to 4 + 22 * sqrt(count / maxCount)', () => {
@@ -22,5 +22,22 @@ describe('geometry', () => {
     expect(edgeWidth(10, 10)).toBe(1)
     expect(edgeWidth(5, 10)).toBeCloseTo(Math.pow(0.5, 0.6))
     expect(edgeWidth(5, 0)).toBe(0)
+  })
+
+  it('computes nodeFitSize ensuring cell diameter comfortably encloses word text', () => {
+    // Short word
+    const shortSize = nodeFitSize('да', 5, 50, 5)
+    expect(shortSize * 2).toBeGreaterThanOrEqual(2 * 7 + 8)
+
+    // Long word
+    const longSize = nodeFitSize('договорились', 5, 50, 5)
+    expect(longSize * 2).toBeGreaterThanOrEqual(12 * 7 + 8)
+
+    // Longer word is larger than shorter word at same frequency
+    expect(longSize).toBeGreaterThan(shortSize)
+
+    // Higher frequency increases size relative to minCount
+    const highFreqSize = nodeFitSize('договорились', 50, 50, 5)
+    expect(highFreqSize).toBeGreaterThan(longSize)
   })
 })

@@ -91,7 +91,13 @@ export class MapView {
     if (this.renderer) return
 
     this.renderer = new Sigma(this.graph, this.container, {
-      settings: { allowInvalidContainer: true },
+      settings: {
+        allowInvalidContainer: true,
+        itemSizesReference: 'screen',
+        autoRescaleContent: 'nodes',
+        stagePadding: 60,
+        zoomToSizeRatioFunction: (ratio) => Math.pow(ratio, 0.4),
+      },
       customNodeState: { isActive: false },
       customEdgeState: { isActive: false },
       customGraphState: { hasActiveSubgraph: false },
@@ -101,6 +107,11 @@ export class MapView {
             color: { attribute: 'color' },
             size: { attribute: 'size' },
             label: { attribute: 'label' },
+            labelPosition: 'over',
+            labelColor: '#161619',
+            labelFont: 'system-ui, -apple-system, sans-serif',
+            labelSize: 12,
+            labelVisibility: 'visible',
           },
           {
             when: (_a, s, g) =>
@@ -108,9 +119,9 @@ export class MapView {
                 !(s as unknown as { isActive?: boolean }).isActive),
             then: { color: DIM, label: '' },
           },
-          { whenState: 'isHighlighted', then: { depth: 'topNodes', labelVisibility: 'visible' } },
-          { whenState: 'isActive', then: { depth: 'topNodes', labelVisibility: 'visible' } },
-          { whenState: 'isHovered', then: { depth: 'topNodes', labelVisibility: 'visible' } },
+          { whenState: 'isHighlighted', then: { depth: 'topNodes', labelColor: '#ffffff' } },
+          { whenState: 'isActive', then: { depth: 'topNodes', labelColor: '#ffffff' } },
+          { whenState: 'isHovered', then: { depth: 'topNodes', labelColor: '#ffffff' } },
         ],
         edges: [
           { color: { attribute: 'color' }, size: { attribute: 'size' } },
@@ -218,6 +229,8 @@ export class MapView {
 
     if (this.pinnedId !== null) {
       this.pin(this.pinnedId)
+    } else {
+      this.renderer?.getCamera().reset()
     }
   }
 
