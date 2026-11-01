@@ -46,6 +46,6 @@ describe('geometry', () => {
     const strongColor = edgeColor(100, 100)
     expect(weakColor).not.toBe(strongColor)
     expect(strongColor).toBe('#b4cdfff2')
-    expect(edgeColor(0, 100)).toBe('#23253040')
+    expect(edgeColor(0, 100)).toBe('#23253030')
   })
 })

@@ -93,7 +93,7 @@ export class MapView {
         allowInvalidContainer: true,
         itemSizesReference: 'positions',
         autoRescaleContent: 'nodes',
-        stagePadding: 50,
+        stagePadding: 60,
         zoomToSizeRatioFunction: (ratio) => ratio,
       },
       primitives: {
@@ -113,16 +113,16 @@ export class MapView {
             size: { attribute: 'size' },
             label: { attribute: 'label' },
             labelPosition: 'over',
-            labelColor: '#121318',
-            labelFont: 'system-ui, -apple-system, sans-serif',
-            labelSize: 11,
+            labelColor: '#101116',
+            labelFont: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+            labelSize: 10.5,
             labelVisibility: 'visible',
           },
           {
             when: (_a, s, g) =>
               Boolean((g as unknown as { hasActiveSubgraph?: boolean }).hasActiveSubgraph &&
                 !(s as unknown as { isActive?: boolean }).isActive),
-            then: { color: '#222430', labelColor: '#505468' },
+            then: { color: '#1f2029', labelColor: '#4e5267' },
           },
           {
             whenState: 'isHighlighted',
@@ -164,7 +164,7 @@ export class MapView {
             when: (_a, s, g) =>
               Boolean((g as unknown as { hasActiveSubgraph?: boolean }).hasActiveSubgraph &&
                 !(s as unknown as { isActive?: boolean }).isActive),
-            then: { color: '#16171f' },
+            then: { color: '#13141b' },
           },
           { whenState: 'isActive', then: { depth: 'topEdges', color: '#ffffff' } },
         ],
