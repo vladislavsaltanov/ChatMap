@@ -91,10 +91,17 @@ export class MapView {
     this.renderer = new Sigma(this.graph, this.container, {
       settings: {
         allowInvalidContainer: true,
-        itemSizesReference: 'screen',
+        itemSizesReference: 'positions',
         autoRescaleContent: 'nodes',
-        stagePadding: 60,
-        zoomToSizeRatioFunction: (ratio) => Math.pow(ratio, 0.4),
+        stagePadding: 50,
+        zoomToSizeRatioFunction: (ratio) => ratio,
+      },
+      primitives: {
+        nodes: {
+          label: {
+            zoomToLabelSizeRatioFunction: (ratio) => ratio,
+          },
+        },
       },
       customNodeState: { isActive: false },
       customEdgeState: { isActive: false },
@@ -106,7 +113,7 @@ export class MapView {
             size: { attribute: 'size' },
             label: { attribute: 'label' },
             labelPosition: 'over',
-            labelColor: '#161619',
+            labelColor: '#121318',
             labelFont: 'system-ui, -apple-system, sans-serif',
             labelSize: 11,
             labelVisibility: 'visible',
@@ -115,7 +122,7 @@ export class MapView {
             when: (_a, s, g) =>
               Boolean((g as unknown as { hasActiveSubgraph?: boolean }).hasActiveSubgraph &&
                 !(s as unknown as { isActive?: boolean }).isActive),
-            then: { color: '#252632', labelColor: '#5a5e74' },
+            then: { color: '#222430', labelColor: '#505468' },
           },
           {
             whenState: 'isHighlighted',
@@ -124,7 +131,7 @@ export class MapView {
               labelColor: '#ffffff',
               backdropVisibility: 'visible',
               backdropBorderColor: '#ffffff',
-              backdropBorderWidth: 2,
+              backdropBorderWidth: 3,
               backdropArea: 'node',
             },
           },
@@ -135,7 +142,7 @@ export class MapView {
               labelColor: '#ffffff',
               backdropVisibility: 'visible',
               backdropBorderColor: '#ffffff',
-              backdropBorderWidth: 2,
+              backdropBorderWidth: 3,
               backdropArea: 'node',
             },
           },
@@ -146,7 +153,7 @@ export class MapView {
               labelColor: '#ffffff',
               backdropVisibility: 'visible',
               backdropBorderColor: '#ffffff',
-              backdropBorderWidth: 2,
+              backdropBorderWidth: 3,
               backdropArea: 'node',
             },
           },
@@ -157,7 +164,7 @@ export class MapView {
             when: (_a, s, g) =>
               Boolean((g as unknown as { hasActiveSubgraph?: boolean }).hasActiveSubgraph &&
                 !(s as unknown as { isActive?: boolean }).isActive),
-            then: { color: '#1a1b24' },
+            then: { color: '#16171f' },
           },
           { whenState: 'isActive', then: { depth: 'topEdges', color: '#ffffff' } },
         ],

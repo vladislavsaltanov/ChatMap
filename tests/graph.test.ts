@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { layout } from '../src/core/graph'
+import { layout, resolveCollisions } from '../src/core/graph'
 
 describe('layout', () => {
   it('(a) reuses prevXY coordinates when fullRun is false', () => {
@@ -46,5 +46,28 @@ describe('layout', () => {
 
     const resConfigured = layout(nodes, edges, { seed: 1, fullRun: false, iterations: 17 })
     expect(resConfigured.iterationsDone).toBe(17)
+  })
+
+  it('(d) resolveCollisions separates overlapping nodes so distance >= r1 + r2 + padding', () => {
+    // 5 nodes placed closely in a 10x10 square
+    const nodes = [
+      { id: 1, x: 0, y: 0, size: 20 },
+      { id: 2, x: 5, y: 0, size: 20 },
+      { id: 3, x: 0, y: 5, size: 20 },
+      { id: 4, x: 5, y: 5, size: 20 },
+      { id: 5, x: 2, y: 2, size: 25 },
+    ]
+
+    resolveCollisions(nodes, 8, 80)
+
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i]
+        const b = nodes[j]
+        const dist = Math.hypot(b.x - a.x, b.y - a.y)
+        const requiredDist = (a.size || 20) + (b.size || 20) + 7.5 // within floating-point tolerance
+        expect(dist).toBeGreaterThanOrEqual(requiredDist)
+      }
+    }
   })
 })
