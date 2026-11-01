@@ -3,6 +3,7 @@ import forceAtlas2 from 'graphology-layout-forceatlas2'
 
 export type LayoutNodeInput = {
   id: number
+  size?: number
   prevXY?: { x: number; y: number }
 }
 
@@ -49,7 +50,7 @@ export function layout(
       x = (rng() - 0.5) * 100
       y = (rng() - 0.5) * 100
     }
-    graph.addNode(String(node.id), { x, y })
+    graph.addNode(String(node.id), { x, y, size: node.size || 20 })
   }
 
   const existingNodes = new Set(nodes.map((n) => String(n.id)))
@@ -71,8 +72,9 @@ export function layout(
     forceAtlas2.assign(graph, {
       iterations,
       settings: {
-        scalingRatio: 10,
-        gravity: 1,
+        adjustSizes: true,
+        scalingRatio: 20,
+        gravity: 0.8,
         strongGravityMode: false,
         slowDown: 1,
       },
