@@ -40,6 +40,7 @@ function send(msg: WorkerOut) {
 function runPipeline(fullRun: boolean) {
   if (!chat) return
 
+  send({ type: 'progress', done: 40, total: 100, stage: 'Токенизация и фильтрация...' })
   const ia = new Intern()
   const cfg = currentFilterCfg
 
@@ -53,10 +54,12 @@ function runPipeline(fullRun: boolean) {
   }
 
   const rawUnits = buildUnits(chat, ia, dropTok)
+  send({ type: 'progress', done: 60, total: 100, stage: 'Подсчёт частот и связей...' })
   const tallyResult = tally(rawUnits)
 
   let merged: Map<number, number> | undefined
   if (cfg.smartMerge) {
+    send({ type: 'progress', done: 70, total: 100, stage: 'Умные склейки слов...' })
     const freq = new Map<number, number>()
     const idWords = new Map<number, string>()
 
@@ -75,12 +78,14 @@ function runPipeline(fullRun: boolean) {
     merged = smartMerge(freq, idWords)
   }
 
+  send({ type: 'progress', done: 75, total: 100, stage: 'Выборка узлов и рёбер...' })
   const selection = select(
     tallyResult,
     { mode: currentViewMode, topN: cfg.topN, minWeight: cfg.minWeight },
     merged
   )
 
+  send({ type: 'progress', done: 85, total: 100, stage: 'Укладка графа (ForceAtlas2)...' })
   const layoutNodes = selection.nodes.map((n) => {
     const canonStr = ia.getCanon(n.id) || String(n.id)
     return {
@@ -99,6 +104,7 @@ function runPipeline(fullRun: boolean) {
     positionsCache.set(canonStr, pos)
   }
 
+  send({ type: 'progress', done: 95, total: 100, stage: 'Формирование карты...' })
   const nodes: WorkerNode[] = []
   const forms = new Map<number, Array<[string, number]>>()
 
@@ -163,8 +169,9 @@ self.onmessage = (e: MessageEvent<WorkerIn>) => {
   const msg = e.data
   try {
     if (msg.type === 'open') {
-      send({ type: 'progress', done: 10, total: 100 })
+      send({ type: 'progress', done: 5, total: 100, stage: 'Чтение JSON...' })
       chat = parse(msg.json)
+      send({ type: 'progress', done: 30, total: 100, stage: 'Определение авторов...' })
 
       const authorMap = new Map<AuthorId, string>()
       for (const m of chat.messages) {
@@ -179,9 +186,8 @@ self.onmessage = (e: MessageEvent<WorkerIn>) => {
         counts: { messages: chat.messages.length },
       })
 
-      send({ type: 'progress', done: 40, total: 100 })
       runPipeline(true)
-      send({ type: 'progress', done: 100, total: 100 })
+      send({ type: 'progress', done: 100, total: 100, stage: 'Готово' })
     } else if (msg.type === 'update') {
       currentFilterCfg = {
         mat: msg.cfg.mat,

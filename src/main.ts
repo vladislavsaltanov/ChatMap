@@ -48,12 +48,14 @@ controls.onColorChange((colors) => {
 worker.onmessage = (e: MessageEvent<WorkerOut>) => {
   const msg = e.data
   if (msg.type === 'progress') {
-    updateProgress(msg.done, msg.total)
+    updateProgress(msg.done, msg.total, msg.stage)
   } else if (msg.type === 'ready') {
     controls.setAuthors(msg.authors)
   } else if (msg.type === 'map') {
-    mapView.render(msg)
     show('map')
+    requestAnimationFrame(() => {
+      mapView.render(msg)
+    })
   } else if (msg.type === 'error') {
     showError(msg.message)
   }
@@ -61,7 +63,14 @@ worker.onmessage = (e: MessageEvent<WorkerOut>) => {
 
 function sendFile(file: File) {
   show('progress')
+  updateProgress(1, 100, 'Чтение файла с диска...')
   const reader = new FileReader()
+  reader.onprogress = (e) => {
+    if (e.lengthComputable && e.total > 0) {
+      const pct = Math.max(1, Math.round((e.loaded / e.total) * 5))
+      updateProgress(pct, 100, 'Чтение файла с диска...')
+    }
+  }
   reader.onload = () => {
     const text = reader.result as string
     worker.postMessage({ type: 'open', json: text } satisfies WorkerIn)

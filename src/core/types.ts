@@ -30,7 +30,7 @@ export type WorkerIn =
   | { type: 'update'; cfg: FilterCfg & { mode: import('./select').ViewMode } }
 
 export type WorkerOut =
-  | { type: 'progress'; done: number; total: number }
+  | { type: 'progress'; done: number; total: number; stage?: string }
   | { type: 'ready'; authors: Array<{ id: number; name: string }>; counts: { messages: number } }
   | {
       type: 'map'

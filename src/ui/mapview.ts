@@ -91,6 +91,7 @@ export class MapView {
     if (this.renderer) return
 
     this.renderer = new Sigma(this.graph, this.container, {
+      settings: { allowInvalidContainer: true },
       customNodeState: { isActive: false },
       customEdgeState: { isActive: false },
       customGraphState: { hasActiveSubgraph: false },
