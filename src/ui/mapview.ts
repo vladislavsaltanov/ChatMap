@@ -91,19 +91,14 @@ export class MapView {
     this.renderer = new Sigma(this.graph, this.container, {
       settings: {
         allowInvalidContainer: true,
-        itemSizesReference: 'positions',
+        itemSizesReference: 'screen',
         autoRescaleContent: 'nodes',
-        stagePadding: 50,
-        zoomToSizeRatioFunction: (ratio) => ratio,
-        labelRenderedSizeThreshold: 13,
-        labelDensity: 1.0,
-      },
-      primitives: {
-        nodes: {
-          label: {
-            zoomToLabelSizeRatioFunction: (ratio) => ratio,
-          },
-        },
+        stagePadding: 60,
+        labelRenderedSizeThreshold: 0,
+        labelDensity: 1.2,
+        labelPixelSnapping: true,
+        enableCameraRotation: false,
+        enableCameraMouseRotation: false,
       },
       customNodeState: { isActive: false },
       customEdgeState: { isActive: false },
@@ -114,17 +109,22 @@ export class MapView {
             color: { attribute: 'color' },
             size: { attribute: 'size' },
             label: { attribute: 'label' },
-            labelPosition: 'over',
-            labelColor: '#0e1015',
-            labelFont: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-            labelSize: 10,
-            labelVisibility: 'auto',
+            labelPosition: (attrs: any) => ((attrs.size ?? 0) >= 18 ? 'over' : 'right'),
+            labelColor: (attrs: any, state: any) =>
+              (state as any)?.isActive || (state as any)?.isHighlighted
+                ? '#ffffff'
+                : ((attrs.size ?? 0) >= 18 ? '#0e1015' : '#f0f3ff'),
+            labelFont: '600 11.5px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+            labelSize: 11.5,
+            labelVisibility: (attrs: any) => ((attrs.size ?? 0) >= 18 ? 'visible' : 'auto'),
+            labelBackgroundColor: (attrs: any) => ((attrs.size ?? 0) < 18 ? '#15171fe6' : undefined),
+            labelBackgroundPadding: 3,
           },
           {
             when: (_a, s, g) =>
               Boolean((g as unknown as { hasActiveSubgraph?: boolean }).hasActiveSubgraph &&
                 !(s as unknown as { isActive?: boolean }).isActive),
-            then: { color: '#1a1b22', labelColor: '#44485c' },
+            then: { color: '#1a1b22', labelColor: '#44485c', labelBackgroundColor: 'transparent' },
           },
           {
             whenState: 'isHighlighted',
@@ -134,7 +134,7 @@ export class MapView {
               labelColor: '#ffffff',
               backdropVisibility: 'visible',
               backdropBorderColor: '#ffffff',
-              backdropBorderWidth: 3,
+              backdropBorderWidth: 2.5,
               backdropArea: 'node',
             },
           },
@@ -145,8 +145,8 @@ export class MapView {
               labelVisibility: 'visible',
               labelColor: '#ffffff',
               backdropVisibility: 'visible',
-              backdropBorderColor: '#ffffff',
-              backdropBorderWidth: 3,
+              backdropBorderColor: '#68a4ff',
+              backdropBorderWidth: 2,
               backdropArea: 'node',
             },
           },
@@ -157,8 +157,8 @@ export class MapView {
               labelVisibility: 'visible',
               labelColor: '#ffffff',
               backdropVisibility: 'visible',
-              backdropBorderColor: '#ffffff',
-              backdropBorderWidth: 3,
+              backdropBorderColor: '#68a4ff',
+              backdropBorderWidth: 2,
               backdropArea: 'node',
             },
           },
@@ -169,9 +169,9 @@ export class MapView {
             when: (_a, s, g) =>
               Boolean((g as unknown as { hasActiveSubgraph?: boolean }).hasActiveSubgraph &&
                 !(s as unknown as { isActive?: boolean }).isActive),
-            then: { color: '#13141b' },
+            then: { color: '#13141b20' },
           },
-          { whenState: 'isActive', then: { depth: 'topEdges', color: '#ffffff' } },
+          { whenState: 'isActive', then: { depth: 'topEdges', color: '#68a4ff', size: 2.2 } },
         ],
       },
     })
@@ -181,11 +181,20 @@ export class MapView {
       this.hoverLine.textContent = `${attrs.label} · ${attrs.count}`
 
       if (this.pinnedId === null) {
-        this.renderer?.setNodeState(node, { isActive: true })
+        this.renderer?.setNodeState(node, { isActive: true, isHighlighted: true })
+        const neighborsWithWeights: Array<{ neighbor: string; edge: string; weight: number }> = []
         for (const neighbor of this.graph.neighbors(node)) {
-          this.renderer?.setNodeState(neighbor, { isActive: true })
           const edge = this.graph.edge(node, neighbor)
-          if (edge) this.renderer?.setEdgeState(edge, { isActive: true })
+          if (edge) {
+            const weight = (this.graph.getEdgeAttribute(edge, 'weight') as number) || 1
+            neighborsWithWeights.push({ neighbor, edge, weight })
+          }
+        }
+        neighborsWithWeights.sort((a, b) => b.weight - a.weight)
+        const topConnections = neighborsWithWeights.slice(0, 8)
+        for (const conn of topConnections) {
+          this.renderer?.setNodeState(conn.neighbor, { isActive: true })
+          this.renderer?.setEdgeState(conn.edge, { isActive: true })
         }
         this.renderer?.setGraphState({ hasActiveSubgraph: true })
         this.renderer?.refresh({ skipIndexation: true })
@@ -196,7 +205,7 @@ export class MapView {
       if (this.pinnedId === null) {
         this.hoverLine.textContent = 'слово · 0'
         for (const n of this.graph.nodes()) {
-          this.renderer?.setNodeState(n, { isActive: false })
+          this.renderer?.setNodeState(n, { isActive: false, isHighlighted: false })
         }
         for (const e of this.graph.edges()) {
           this.renderer?.setEdgeState(e, { isActive: false })
@@ -337,10 +346,19 @@ export class MapView {
     if (id !== null && this.graph.hasNode(String(id))) {
       const key = String(id)
       this.renderer.setNodeState(key, { isActive: true, isHighlighted: true })
+      const neighborsWithWeights: Array<{ neighbor: string; edge: string; weight: number }> = []
       for (const neighbor of this.graph.neighbors(key)) {
-        this.renderer.setNodeState(neighbor, { isActive: true })
         const edge = this.graph.edge(key, neighbor)
-        if (edge) this.renderer.setEdgeState(edge, { isActive: true })
+        if (edge) {
+          const weight = (this.graph.getEdgeAttribute(edge, 'weight') as number) || 1
+          neighborsWithWeights.push({ neighbor, edge, weight })
+        }
+      }
+      neighborsWithWeights.sort((a, b) => b.weight - a.weight)
+      const topConnections = neighborsWithWeights.slice(0, 12)
+      for (const conn of topConnections) {
+        this.renderer.setNodeState(conn.neighbor, { isActive: true })
+        this.renderer.setEdgeState(conn.edge, { isActive: true })
       }
       this.renderer.setGraphState({ hasActiveSubgraph: true })
       const attrs = this.graph.getNodeAttributes(key)
