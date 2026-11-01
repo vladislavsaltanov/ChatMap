@@ -9,6 +9,14 @@ describe('geometry', () => {
     expect(nodeSize(10, 0)).toBe(4)
   })
 
+  it('computes relative nodeSize with minCount across visible spectrum', () => {
+    expect(nodeSize(10, 100, 10)).toBe(5)
+    expect(nodeSize(100, 100, 10)).toBe(26)
+    const mid = nodeSize(30, 100, 10)
+    expect(mid).toBeGreaterThan(5)
+    expect(mid).toBeLessThan(26)
+  })
+
   it('computes edgeWidth according to (w / wmax)^0.6', () => {
     expect(edgeWidth(0, 10)).toBe(0)
     expect(edgeWidth(10, 10)).toBe(1)

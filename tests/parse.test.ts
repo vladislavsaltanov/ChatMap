@@ -70,4 +70,44 @@ describe('parse', () => {
     expect(byId(108).replyTo).toBe(101)
     expect(byId(101).replyTo).toBeNull()
   })
+
+  it('(h) парсит JSON с UTF-8 BOM, user-префиксами в from_id и строковыми ISO-датами', () => {
+    const rawWithBom = '\uFEFF' + JSON.stringify({
+      name: 'BOM Chat',
+      type: 'personal_chat',
+      messages: [
+        { id: 1, type: 'message', date: '2023-10-25T14:30:00', from: 'Иван', from_id: 'user999', text: 'привет мир' },
+        { id: 2, type: 'message', date_unixtime: '1698244260', from: 'Мария', from_id: 'user888', text: 'и тебе привет' },
+      ],
+    })
+    const parsed = parse(rawWithBom)
+    expect(parsed.name).toBe('BOM Chat')
+    expect(parsed.messages).toHaveLength(2)
+    expect(parsed.messages[0].authorId).toBe(999)
+    expect(parsed.authors?.get(999)).toBe('Иван')
+    expect(parsed.messages[0].dateMs).toBe(Date.parse('2023-10-25T14:30:00'))
+    expect(parsed.messages[1].dateMs).toBe(1698244260000)
+  })
+
+  it('(i) парсит полный экспорт аккаунта с chats.list', () => {
+    const accountExport = JSON.stringify({
+      about: 'Telegram export',
+      chats: {
+        list: [
+          { name: 'Пустой', messages: [] },
+          {
+            name: 'Главный чат',
+            type: 'personal_chat',
+            messages: [
+              { id: 10, type: 'message', date: 1700000000, from: 'Алекс', from_id: 'user777', text: 'сообщение' },
+            ],
+          },
+        ],
+      },
+    })
+    const parsed = parse(accountExport)
+    expect(parsed.name).toBe('Главный чат')
+    expect(parsed.messages).toHaveLength(1)
+    expect(parsed.messages[0].authorId).toBe(777)
+  })
 })

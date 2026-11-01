@@ -1,4 +1,5 @@
 import { isStopword, matchesLaugh, matchesMat } from './filters'
+import { nodeSize } from './geometry'
 import { layout } from './graph'
 import { Intern } from './intern'
 import { parse } from './parse'
@@ -108,6 +109,12 @@ function runPipeline(fullRun: boolean) {
   const nodes: WorkerNode[] = []
   const forms = new Map<number, Array<[string, number]>>()
 
+  let minCount = Infinity
+  for (const n of selection.nodes) {
+    if (n.count < minCount) minCount = n.count
+  }
+  if (minCount === Infinity) minCount = 1
+
   for (const n of selection.nodes) {
     const formMap = ia.forms.get(n.id)
     let bestForm = ia.getCanon(n.id) || String(n.id)
@@ -127,10 +134,7 @@ function runPipeline(fullRun: boolean) {
     }
 
     const pos = layoutResult.positions.get(n.id) || { x: 0, y: 0 }
-    const size =
-      selection.maxCount > 0
-        ? 4 + (26 - 4) * Math.sqrt(n.count / selection.maxCount)
-        : 4
+    const size = nodeSize(n.count, selection.maxCount, minCount)
 
     let authorLead: AuthorId = 0
     let leadCount = 0
@@ -174,9 +178,14 @@ self.onmessage = (e: MessageEvent<WorkerIn>) => {
       send({ type: 'progress', done: 30, total: 100, stage: 'Определение авторов...' })
 
       const authorMap = new Map<AuthorId, string>()
+      if (chat.authors) {
+        for (const [id, name] of chat.authors) {
+          authorMap.set(id, name)
+        }
+      }
       for (const m of chat.messages) {
         if (!authorMap.has(m.authorId)) {
-          authorMap.set(m.authorId, `Author ${m.authorId}`)
+          authorMap.set(m.authorId, `Участник ${m.authorId}`)
         }
       }
 
