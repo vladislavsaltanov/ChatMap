@@ -66,15 +66,18 @@ export function layout(
 
   const iterations = opts.iterations !== undefined
     ? opts.iterations
-    : opts.fullRun ? 100 : 15
+    : opts.fullRun ? 150 : 15
 
   if (iterations > 0 && graph.order > 1) {
     forceAtlas2.assign(graph, {
       iterations,
       settings: {
         adjustSizes: true,
-        scalingRatio: 20,
-        gravity: 0.8,
+        outboundAttractionDistribution: true,
+        barnesHutOptimize: true,
+        barnesHutTheta: 0.5,
+        scalingRatio: 80,
+        gravity: 0.05,
         strongGravityMode: false,
         slowDown: 1,
       },

@@ -52,3 +52,15 @@ export function edgeWidth(w: number, wmax: number): number {
   }
   return Math.pow(w / wmax, 0.6)
 }
+
+export function edgeColor(w: number, maxWeight: number): string {
+  if (maxWeight <= 0 || w <= 0) {
+    return '#262834'
+  }
+  const t = Math.max(0, Math.min(1, Math.pow(w / maxWeight, 0.5)))
+  // Interpolate from deep slate #262834 to bright luminous blue-white #b4c2ff
+  const r = Math.round(38 + (180 - 38) * t)
+  const g = Math.round(40 + (194 - 40) * t)
+  const b = Math.round(52 + (255 - 52) * t)
+  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
+}
