@@ -4,3 +4,7 @@ export type Message = { id: number; kind: 'message'|'service'; authorId: number;
 export type ChatExport = { name: string; chatType: string; messages: Message[] }
 export type FilterCfg = { mat: boolean; laugh: boolean; tech: boolean; digits: boolean; customMat: string[]; customLaugh: string[]; smartMerge: boolean; topN: number; minWeight: number }
 export type AuthorId = number
+
+export type TokClass = 'plain'|'tech'|'digits'
+export type Tok = { word: string; cls: TokClass }
+export type TokUnit = Tok[]
