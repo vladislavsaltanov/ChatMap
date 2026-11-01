@@ -5,8 +5,8 @@ export function nodeFitSize(
   minCount: number = 0
 ): number {
   const len = Math.max(2, word ? word.length : 2)
-  // Text width estimation at ~11px font size with clean breathing room
-  const textWidth = Math.max(24, len * 7.5 + 8)
+  // Text width estimation at 10.5px font size: Cyrillic glyphs + comfortable side margins
+  const textWidth = Math.max(26, len * 7.8 + 12)
   const fitRadius = Math.round(textWidth / 2 + 5)
 
   if (maxCount <= 0 || count <= 0 || maxCount <= minCount) {
@@ -23,8 +23,8 @@ export function nodeFitSize(
   }
 
   const t = Math.max(0, Math.min(1, (logVal - logMin) / (logMax - logMin)))
-  // Scale radius up to +45% for high-frequency landmark words
-  return Math.round(fitRadius * (1 + 0.45 * t))
+  // Scale radius up to +35% for high-frequency landmark words
+  return Math.round(fitRadius * (1 + 0.35 * t))
 }
 
 export function nodeSize(
@@ -54,13 +54,13 @@ export function edgeWidth(w: number, wmax: number): number {
 
 export function edgeColor(w: number, maxWeight: number): string {
   if (maxWeight <= 0 || w <= 0) {
-    return '#23253040'
+    return '#23253030'
   }
-  const t = Math.max(0, Math.min(1, Math.pow(w / maxWeight, 0.5)))
+  const t = Math.max(0, Math.min(1, Math.pow(w / maxWeight, 0.45)))
   // Smoothly grade from subtle slate to luminous blue
-  const r = Math.round(45 + (180 - 45) * t)
-  const g = Math.round(50 + (205 - 50) * t)
-  const b = Math.round(70 + (255 - 70) * t)
-  const a = Math.round((0.25 + 0.7 * t) * 255)
+  const r = Math.round(36 + (180 - 36) * t)
+  const g = Math.round(44 + (205 - 44) * t)
+  const b = Math.round(68 + (255 - 68) * t)
+  const a = Math.round((0.20 + 0.75 * t) * 255)
   return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}${a.toString(16).padStart(2, '0')}`
 }
