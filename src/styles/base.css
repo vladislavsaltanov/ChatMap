@@ -68,6 +68,56 @@
     align-content: center;
   }
 
+  .dropzone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--gap);
+    padding: 32px;
+    margin: var(--gap) 0;
+    border: 1px dashed var(--hairline);
+    max-width: 52ch;
+    text-align: center;
+  }
+
+  .dropzone.dragover {
+    border-color: var(--ink);
+  }
+
+  .file-button {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--touch);
+    padding: 0 16px;
+    border: 1px solid var(--hairline);
+    color: var(--ink);
+    cursor: pointer;
+  }
+
+  .file-button:hover {
+    border-color: var(--ink);
+  }
+
+  .warning-text {
+    color: oklch(0.85 0.15 85);
+    font-size: var(--label-size);
+    letter-spacing: var(--label-track);
+  }
+
+  .instructions {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: var(--gap);
+  }
+
+  .progress-box {
+    display: grid;
+    align-content: center;
+    min-height: 50vh;
+  }
+
   [hidden] {
     display: none !important;
   }
