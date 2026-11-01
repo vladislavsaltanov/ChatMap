@@ -96,7 +96,7 @@ export function layout(
 ): LayoutResult {
   const graph = new Graph()
   const rng = createRng(opts.seed)
-  const spread = Math.max(200, Math.sqrt(nodes.length) * 60)
+  const spread = Math.max(500, Math.sqrt(nodes.length) * 150)
 
   for (const node of nodes) {
     let x: number
@@ -124,7 +124,7 @@ export function layout(
 
   const iterations = opts.iterations !== undefined
     ? opts.iterations
-    : opts.fullRun ? 250 : 20
+    : opts.fullRun ? 300 : 20
 
   if (iterations > 0 && graph.order > 1) {
     forceAtlas2.assign(graph, {
@@ -135,9 +135,9 @@ export function layout(
         outboundAttractionDistribution: true,
         barnesHutOptimize: true,
         barnesHutTheta: 0.5,
-        scalingRatio: 1200,
-        gravity: 0.0008,
-        edgeWeightInfluence: 0.1,
+        scalingRatio: 3000,
+        gravity: 0.0003,
+        edgeWeightInfluence: 0.08,
         strongGravityMode: false,
         slowDown: 1,
       },
@@ -156,7 +156,7 @@ export function layout(
   }
 
   if (iterations > 0) {
-    resolveCollisions(positionedNodes, 20, 80)
+    resolveCollisions(positionedNodes, 12, 80)
   }
 
   const positions = new Map<number, { x: number; y: number }>()
