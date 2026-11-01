@@ -8,9 +8,9 @@ export function renderLanding(
       <h1>ChatMap</h1>
       <p>Экспорт Telegram → карта слов. Локально, без сети.</p>
 
-      <div id="dropzone" class="dropzone" tabindex="0">
-        <p>Перетащи сюда файл result.json или нажми кнопку</p>
-        <label class="file-button">
+      <div id="dropzone" class="dropzone" tabindex="0" role="region" aria-label="Зона загрузки файла экспорта">
+        <p>Перетащи сюда result.json или выбери файл</p>
+        <label class="file-button" tabindex="0" role="button" aria-label="Выбрать файл result.json">
           Выбрать файл
           <input type="file" id="file-input" accept=".json" hidden />
         </label>
@@ -18,15 +18,16 @@ export function renderLanding(
       </div>
 
       <div class="instructions">
-        <p class="label">1. Настройки чата → Экспорт истории чата</p>
-        <p class="label">2. Формат: Машиночитаемый JSON</p>
-        <p class="label">3. Перетащи result.json в окно браузера</p>
+        <p class="label">1. Telegram Desktop → Чат → ⋮ → Экспорт истории чата</p>
+        <p class="label">2. Формат: машиночитаемый JSON, снять галочки с медиа</p>
+        <p class="label">3. Перетащи полученный result.json сюда</p>
       </div>
     </div>
   `
 
   const input = root.querySelector<HTMLInputElement>('#file-input')!
   const dropzone = root.querySelector<HTMLElement>('#dropzone')!
+  const fileButton = root.querySelector<HTMLElement>('.file-button')!
   const warningEl = root.querySelector<HTMLElement>('#size-warning')!
 
   const handleFile = (file: File) => {
@@ -44,6 +45,22 @@ export function renderLanding(
   input.addEventListener('change', () => {
     if (input.files && input.files[0]) {
       handleFile(input.files[0])
+    }
+  })
+
+  const triggerPick = () => input.click()
+
+  fileButton.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      triggerPick()
+    }
+  })
+
+  dropzone.addEventListener('keydown', (e) => {
+    if (e.target === dropzone && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault()
+      triggerPick()
     }
   })
 

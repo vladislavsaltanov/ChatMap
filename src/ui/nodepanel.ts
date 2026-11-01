@@ -60,7 +60,7 @@ export class NodePanel {
       <div class="nodepanel-header">
         <h2 id="node-title">Слово</h2>
         <div class="header-actions">
-          <button type="button" id="auto-btn" class="label-btn" title="Сбросить к исходной форме">Авто</button>
+          <button type="button" id="auto-btn" class="label-btn" aria-label="Сбросить к исходной форме" title="Сбросить к исходной форме">Авто</button>
           <button type="button" id="close-btn" class="icon-btn" aria-label="Закрыть">✕</button>
         </div>
       </div>
