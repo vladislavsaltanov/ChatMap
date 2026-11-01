@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { edgeWidth, nodeFitSize, nodeSize } from '../src/core/geometry'
+import { edgeColor, edgeWidth, nodeFitSize, nodeSize } from '../src/core/geometry'
 
 describe('geometry', () => {
   it('computes nodeSize according to 4 + 22 * sqrt(count / maxCount)', () => {
@@ -39,5 +39,13 @@ describe('geometry', () => {
     // Higher frequency increases size relative to minCount
     const highFreqSize = nodeFitSize('договорились', 50, 50, 5)
     expect(highFreqSize).toBeGreaterThan(longSize)
+  })
+
+  it('computes edgeColor differentiating weak and strong connections', () => {
+    const weakColor = edgeColor(1, 100)
+    const strongColor = edgeColor(100, 100)
+    expect(weakColor).not.toBe(strongColor)
+    expect(strongColor).toBe('#b4c2ff')
+    expect(edgeColor(0, 100)).toBe('#262834')
   })
 })

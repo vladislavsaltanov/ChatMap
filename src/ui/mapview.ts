@@ -1,11 +1,9 @@
 import Graph from 'graphology'
 import Sigma from 'sigma'
 import { downloadAsPNG } from '@sigma/export-image'
-import { edgeWidth } from '../core/geometry'
+import { edgeColor, edgeWidth } from '../core/geometry'
 import type { AuthorId, MapMsg } from '../core/types'
 import { getLabelOverrides, NodePanel, type NodeDetails } from './nodepanel'
-
-const DIM = '#2e2e34'
 
 type CustomNodeState = { isActive: boolean }
 type CustomEdgeState = { isActive: boolean }
@@ -110,18 +108,48 @@ export class MapView {
             labelPosition: 'over',
             labelColor: '#161619',
             labelFont: 'system-ui, -apple-system, sans-serif',
-            labelSize: 12,
+            labelSize: 11,
             labelVisibility: 'visible',
           },
           {
             when: (_a, s, g) =>
               Boolean((g as unknown as { hasActiveSubgraph?: boolean }).hasActiveSubgraph &&
                 !(s as unknown as { isActive?: boolean }).isActive),
-            then: { color: DIM, label: '' },
+            then: { color: '#252632', labelColor: '#5a5e74' },
           },
-          { whenState: 'isHighlighted', then: { depth: 'topNodes', labelColor: '#ffffff' } },
-          { whenState: 'isActive', then: { depth: 'topNodes', labelColor: '#ffffff' } },
-          { whenState: 'isHovered', then: { depth: 'topNodes', labelColor: '#ffffff' } },
+          {
+            whenState: 'isHighlighted',
+            then: {
+              depth: 'topNodes',
+              labelColor: '#ffffff',
+              backdropVisibility: 'visible',
+              backdropBorderColor: '#ffffff',
+              backdropBorderWidth: 2,
+              backdropArea: 'node',
+            },
+          },
+          {
+            whenState: 'isActive',
+            then: {
+              depth: 'topNodes',
+              labelColor: '#ffffff',
+              backdropVisibility: 'visible',
+              backdropBorderColor: '#ffffff',
+              backdropBorderWidth: 2,
+              backdropArea: 'node',
+            },
+          },
+          {
+            whenState: 'isHovered',
+            then: {
+              depth: 'topNodes',
+              labelColor: '#ffffff',
+              backdropVisibility: 'visible',
+              backdropBorderColor: '#ffffff',
+              backdropBorderWidth: 2,
+              backdropArea: 'node',
+            },
+          },
         ],
         edges: [
           { color: { attribute: 'color' }, size: { attribute: 'size' } },
@@ -129,9 +157,9 @@ export class MapView {
             when: (_a, s, g) =>
               Boolean((g as unknown as { hasActiveSubgraph?: boolean }).hasActiveSubgraph &&
                 !(s as unknown as { isActive?: boolean }).isActive),
-            then: { color: DIM },
+            then: { color: '#1a1b24' },
           },
-          { whenState: 'isActive', then: { depth: 'topEdges' } },
+          { whenState: 'isActive', then: { depth: 'topEdges', color: '#ffffff' } },
         ],
       },
     })
@@ -213,9 +241,11 @@ export class MapView {
       const b = String(edge.b)
       if (this.graph.hasNode(a) && this.graph.hasNode(b) && !this.graph.hasEdge(a, b)) {
         const w = edgeWidth(edge.weight, msg.maxWeight)
+        const edgeSize = Math.max(0.6, 0.6 + w * 4.5)
+        const color = edgeColor(edge.weight, msg.maxWeight)
         this.graph.addEdge(a, b, {
-          size: Math.max(0.5, w * 3),
-          color: '#3a3a46',
+          size: edgeSize,
+          color,
           weight: edge.weight,
         })
       }
