@@ -3,8 +3,9 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Карта слов Telegram-чата. Работа строго локально, без отправки данных в сеть." />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <title>ChatMap</title>
+    <title>ChatMap — карта слов Telegram-чата</title>
   </head>
   <body>
     <main>
@@ -14,7 +15,7 @@
     </main>
     <dialog id="error" aria-labelledby="error-text">
       <p id="error-text"></p>
-      <form method="dialog"><button>Закрыть</button></form>
+      <form method="dialog"><button type="submit" aria-label="Закрыть сообщение об ошибке">Закрыть</button></form>
     </dialog>
     <script type="module" src="/src/main.ts"></script>
   </body>

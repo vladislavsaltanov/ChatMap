@@ -1,5 +1,6 @@
 import Graph from 'graphology'
 import Sigma from 'sigma'
+import { downloadAsPNG } from '@sigma/export-image'
 import { edgeWidth } from '../core/geometry'
 import type { AuthorId, MapMsg } from '../core/types'
 import { getLabelOverrides, NodePanel, type NodeDetails } from './nodepanel'
@@ -25,6 +26,7 @@ export class MapView {
     root.innerHTML = `
       <div class="canvas" role="img" aria-label="Карта слов"></div>
       <div class="map-controls">
+        <button type="button" id="export-png" aria-label="Экспорт в PNG" class="num">PNG</button>
         <button type="button" id="zoom-in" aria-label="Приблизить">+</button>
         <button type="button" id="zoom-out" aria-label="Отдалить">−</button>
         <button type="button" id="zoom-reset" aria-label="В центр">⊙</button>
@@ -51,9 +53,22 @@ export class MapView {
       }
     })
 
+    const exportPngBtn = root.querySelector<HTMLButtonElement>('#export-png')!
     const zoomInBtn = root.querySelector<HTMLButtonElement>('#zoom-in')!
     const zoomOutBtn = root.querySelector<HTMLButtonElement>('#zoom-out')!
     const zoomResetBtn = root.querySelector<HTMLButtonElement>('#zoom-reset')!
+
+    exportPngBtn.addEventListener('click', async () => {
+      if (!this.renderer || this.graph.order === 0) return
+      const isoDate = new Date().toISOString().slice(0, 10)
+      await downloadAsPNG(this.renderer as any, {
+        fileName: `chatmap-${isoDate}`,
+        backgroundColor: '#161619',
+        width: 2560,
+        height: 1440,
+        cameraState: { x: 0.5, y: 0.5, ratio: 1, angle: 0 },
+      })
+    })
 
     zoomInBtn.addEventListener('click', () => {
       this.renderer?.getCamera().zoomIn()
