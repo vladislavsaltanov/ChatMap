@@ -155,4 +155,87 @@
     width: 100%;
     accent-color: var(--ink);
   }
+
+  .nodepanel {
+    position: absolute;
+    inset: 16px 16px 16px auto;
+    width: 280px;
+    max-height: calc(100vh - 32px);
+    padding: 16px;
+    border: 1px solid var(--hairline);
+    background: var(--paper);
+    z-index: 20;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap);
+  }
+
+  .nodepanel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .nodepanel-header h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 500;
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .label-btn {
+    padding: 2px 8px;
+    font-size: 11px;
+    min-height: 24px;
+  }
+
+  .icon-btn {
+    padding: 2px 8px;
+    font-size: 14px;
+    min-height: 24px;
+  }
+
+  .panel-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .items-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .neighbor-btn,
+  .form-btn {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 6px 8px;
+    font-size: 13px;
+    border: 1px solid var(--hairline);
+    background: transparent;
+    color: var(--ink);
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .neighbor-btn:hover,
+  .form-btn:hover {
+    border-color: var(--ink);
+  }
+
+  .form-btn.active {
+    border-color: var(--ink);
+    font-weight: 500;
+  }
 }

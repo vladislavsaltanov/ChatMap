@@ -2,6 +2,7 @@ import Graph from 'graphology'
 import Sigma from 'sigma'
 import { edgeWidth } from '../core/geometry'
 import type { AuthorId, MapMsg } from '../core/types'
+import { getLabelOverrides, NodePanel, type NodeDetails } from './nodepanel'
 
 const DIM = '#2e2e34'
 
@@ -17,6 +18,8 @@ export class MapView {
   private pinnedId: number | null = null
   private pinCallbacks: Array<(id: number | null) => void> = []
   private authorColors = new Map<AuthorId, string>()
+  private nodePanel: NodePanel
+  private lastMsg: MapMsg | null = null
 
   constructor(root: HTMLElement) {
     root.innerHTML = `
@@ -32,6 +35,21 @@ export class MapView {
     this.container = root.querySelector<HTMLElement>('.canvas')!
     this.hoverLine = root.querySelector<HTMLElement>('.hover-line')!
     this.graph = new Graph()
+    this.nodePanel = new NodePanel(root)
+
+    this.nodePanel.onSelect((id) => {
+      this.pin(id === -1 ? null : id)
+    })
+
+    this.nodePanel.onOverride((id, label) => {
+      const key = String(id)
+      if (this.graph.hasNode(key)) {
+        this.graph.setNodeAttribute(key, 'label', label)
+        this.renderer?.refresh()
+        const attrs = this.graph.getNodeAttributes(key)
+        this.hoverLine.textContent = `${label} · ${attrs.count}`
+      }
+    })
 
     const zoomInBtn = root.querySelector<HTMLButtonElement>('#zoom-in')!
     const zoomOutBtn = root.querySelector<HTMLButtonElement>('#zoom-out')!
@@ -144,17 +162,22 @@ export class MapView {
   }
 
   render(msg: MapMsg): void {
+    this.lastMsg = msg
     this.graph.clear()
+    const overrides = getLabelOverrides()
 
     for (const node of msg.nodes) {
       const color = this.authorColors.get(node.authorLead) || '#7890cd'
+      const label = overrides[node.label] || node.label
       this.graph.addNode(String(node.id), {
-        label: node.label,
+        label,
+        defaultLabel: node.label,
         x: node.x,
         y: node.y,
         size: node.size,
         color,
         count: node.count,
+        authorLead: node.authorLead,
       })
     }
 
@@ -194,6 +217,41 @@ export class MapView {
     this.renderer?.refresh()
   }
 
+  private getNodeDetails(id: number): NodeDetails | null {
+    const key = String(id)
+    if (!this.graph.hasNode(key)) return null
+
+    const attrs = this.graph.getNodeAttributes(key)
+    const label = attrs.label as string
+    const defaultLabel = (attrs.defaultLabel as string) || label
+    const count = (attrs.count as number) || 0
+
+    const neighborsList: Array<{ id: number; label: string; weight: number }> = []
+    for (const nb of this.graph.neighbors(key)) {
+      const edge = this.graph.edge(key, nb)
+      const weight = edge ? (this.graph.getEdgeAttribute(edge, 'weight') as number) : 0
+      const nbAttrs = this.graph.getNodeAttributes(nb)
+      neighborsList.push({
+        id: Number(nb),
+        label: nbAttrs.label as string,
+        weight,
+      })
+    }
+    neighborsList.sort((a, b) => b.weight - a.weight)
+    const topNeighbors = neighborsList.slice(0, 3)
+
+    const forms = this.lastMsg?.forms?.get(id) || []
+
+    return {
+      id,
+      label,
+      defaultLabel,
+      count,
+      neighbors: topNeighbors,
+      forms,
+    }
+  }
+
   pin(id: number | null): void {
     this.pinnedId = id
     if (!this.renderer) return
@@ -216,9 +274,15 @@ export class MapView {
       this.renderer.setGraphState({ hasActiveSubgraph: true })
       const attrs = this.graph.getNodeAttributes(key)
       this.hoverLine.textContent = `${attrs.label} · ${attrs.count}`
+
+      const details = this.getNodeDetails(id)
+      if (details) {
+        this.nodePanel.show(details)
+      }
     } else {
       this.renderer.setGraphState({ hasActiveSubgraph: false })
       this.hoverLine.textContent = 'слово · 0'
+      this.nodePanel.hide()
     }
 
     this.renderer.refresh({ skipIndexation: true })
@@ -229,6 +293,10 @@ export class MapView {
 
   onPin(cb: (id: number | null) => void): void {
     this.pinCallbacks.push(cb)
+  }
+
+  getRenderer(): Sigma<any, any, any, any, any, any> | null {
+    return this.renderer
   }
 }
 
