@@ -35,7 +35,8 @@ function createRng(seed: number) {
 export function resolveCollisions(
   nodes: Array<{ id: number; x: number; y: number; size?: number }>,
   padding: number = 8,
-  maxIterations: number = 80
+  maxIterations: number = 80,
+  scaleFactor: number = 1
 ): void {
   const count = nodes.length
   if (count <= 1) return
@@ -46,11 +47,11 @@ export function resolveCollisions(
 
     for (let i = 0; i < count; i++) {
       const a = nodes[i]
-      const ra = (a.size || 20) + padding * 0.5
+      const ra = (a.size || 20) * scaleFactor + padding * 0.5
 
       for (let j = i + 1; j < count; j++) {
         const b = nodes[j]
-        const rb = (b.size || 20) + padding * 0.5
+        const rb = (b.size || 20) * scaleFactor + padding * 0.5
         const minDist = ra + rb
 
         let dx = b.x - a.x
@@ -156,7 +157,19 @@ export function layout(
   }
 
   if (iterations > 0) {
-    resolveCollisions(positionedNodes, 12, 80)
+    let minX = Infinity
+    let maxX = -Infinity
+    let minY = Infinity
+    let maxY = -Infinity
+    for (const n of positionedNodes) {
+      if (n.x < minX) minX = n.x
+      if (n.x > maxX) maxX = n.x
+      if (n.y < minY) minY = n.y
+      if (n.y > maxY) maxY = n.y
+    }
+    const span = Math.max(maxX - minX, maxY - minY, 1000)
+    const scaleFactor = Math.max(1, span / 850)
+    resolveCollisions(positionedNodes, 10, 80, scaleFactor)
   }
 
   const positions = new Map<number, { x: number; y: number }>()
