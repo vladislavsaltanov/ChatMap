@@ -35,19 +35,22 @@ export function show(screen: Screen): void {
 const worker = new Worker()
 
 const mapView = renderMap(screens.map)
-renderControls(screens.map)
+const controls = renderControls(screens.map)
+
+controls.onChange((cfg) => {
+  worker.postMessage({ type: 'update', cfg } satisfies WorkerIn)
+})
+
+controls.onColorChange((colors) => {
+  mapView.renderAuthors(colors)
+})
 
 worker.onmessage = (e: MessageEvent<WorkerOut>) => {
   const msg = e.data
   if (msg.type === 'progress') {
     updateProgress(msg.done, msg.total)
   } else if (msg.type === 'ready') {
-    const colors = new Map<number, string>()
-    msg.authors.forEach((a, i) => {
-      const h = ((137.5 * i) % 360)
-      colors.set(a.id, `hsl(${h}, 70%, 65%)`)
-    })
-    mapView.renderAuthors(colors)
+    controls.setAuthors(msg.authors)
   } else if (msg.type === 'map') {
     mapView.render(msg)
     show('map')
