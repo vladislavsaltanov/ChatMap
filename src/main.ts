@@ -34,13 +34,22 @@ export function show(screen: Screen): void {
 
 const worker = new Worker()
 
+const mapView = renderMap(screens.map)
+renderControls(screens.map)
+
 worker.onmessage = (e: MessageEvent<WorkerOut>) => {
   const msg = e.data
   if (msg.type === 'progress') {
     updateProgress(msg.done, msg.total)
   } else if (msg.type === 'ready') {
-    // Ready event received
+    const colors = new Map<number, string>()
+    msg.authors.forEach((a, i) => {
+      const h = ((137.5 * i) % 360)
+      colors.set(a.id, `hsl(${h}, 70%, 65%)`)
+    })
+    mapView.renderAuthors(colors)
   } else if (msg.type === 'map') {
+    mapView.render(msg)
     show('map')
   } else if (msg.type === 'error') {
     showError(msg.message)
@@ -62,8 +71,6 @@ function sendFile(file: File) {
 
 renderLanding(screens.landing, sendFile, () => {})
 renderProgress(screens.progress)
-renderMap(screens.map)
-renderControls(screens.map)
 
 show('landing')
 

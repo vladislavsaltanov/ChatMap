@@ -1,0 +1,18 @@
+import { describe, expect, it } from 'vitest'
+import { edgeWidth, nodeSize } from '../src/core/geometry'
+
+describe('geometry', () => {
+  it('computes nodeSize according to 4 + 22 * sqrt(count / maxCount)', () => {
+    expect(nodeSize(0, 100)).toBe(4)
+    expect(nodeSize(100, 100)).toBe(26)
+    expect(nodeSize(25, 100)).toBe(4 + 22 * 0.5) // 15
+    expect(nodeSize(10, 0)).toBe(4)
+  })
+
+  it('computes edgeWidth according to (w / wmax)^0.6', () => {
+    expect(edgeWidth(0, 10)).toBe(0)
+    expect(edgeWidth(10, 10)).toBe(1)
+    expect(edgeWidth(5, 10)).toBeCloseTo(Math.pow(0.5, 0.6))
+    expect(edgeWidth(5, 0)).toBe(0)
+  })
+})
