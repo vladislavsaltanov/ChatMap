@@ -70,4 +70,26 @@ describe('layout', () => {
       }
     }
   })
+
+  it('(e) places strongly connected nodes closer together than weakly connected nodes', () => {
+    const nodes = [
+      { id: 1, size: 20 },
+      { id: 2, size: 20 },
+      { id: 3, size: 20 },
+    ]
+    // 1-2 has strong weight (20), 1-3 has weak weight (1)
+    const edges = [
+      { a: 1, b: 2, weight: 20 },
+      { a: 1, b: 3, weight: 1 },
+    ]
+    const res = layout(nodes, edges, { seed: 42, fullRun: true, iterations: 150 })
+    const p1 = res.positions.get(1)!
+    const p2 = res.positions.get(2)!
+    const p3 = res.positions.get(3)!
+
+    const distStrong = Math.hypot(p2.x - p1.x, p2.y - p1.y)
+    const distWeak = Math.hypot(p3.x - p1.x, p3.y - p1.y)
+
+    expect(distStrong).toBeLessThan(distWeak)
+  })
 })
