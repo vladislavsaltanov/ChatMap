@@ -22,7 +22,7 @@ Preflight зелёный до следующей задачи: `npm run typechec
 ## § Specs
 Всё планирование живёт в `specs/`. Вердикты верификации — в `specs/verifications/`.
 ADR — в `specs/adr/` (одна страница = одно решение).
-Исходный дизайн-док: `docs/superpowers/specs/2026-10-31-chatmap-design.md` (ревизия 3).
+Документация архитектуры и ТЗ: `HANDOFF.md` и `specs/`.
 
 ## § Тесты
 - Только на чистую логику `src/core/` (vitest). UI и sigma — ручная проверка по критериям этапов.

@@ -19,7 +19,7 @@ Read CONVENTIONS.md before any GitHub or git operation.
 Чистая логика `src/core/` (parse → tokenize → canon/intern → filters → tally) целиком в web worker; graphology + FA2 (фиксированный seed); sigma.js v4 рендерит на main. UI: landing / progress / mapview / controls.
 
 ## Conventions
-- Минимальный код: символ решения документирован в доке (§-ссылки на docs/superpowers/specs/2026-10-31-chatmap-design.md).
+- Минимальный код: символ решения документирован в доке (см. HANDOFF.md и specs/).
 - Тесты только на `src/core/` (чистая логика), vitest.
 - Тяжёлые вычисления — в воркере; main рисует.
 - CSS: `@layer`, custom properties, `oklch()`, `color-scheme: dark`. Без UI-фреймворков.
