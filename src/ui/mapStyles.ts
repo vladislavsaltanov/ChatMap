@@ -55,6 +55,11 @@ function labelRgba(color: string | undefined | null, a: number): string {
   const n = parseInt(tint.slice(1, 7), 16)
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a.toFixed(3)})`
 }
+// Цвет текста по МЕСТУ отрисовки: текст внутри пузыря — контраст к пузырю;
+// пилюля справа — всегда светлая на тёмной плашке (её фон не меняется)
+function labelTextFor(attrs: any): string {
+  return overSize(attrs) !== null ? labelTintFor(attrs.color as string) : LABEL_LIGHT
+}
 
 // mixHex интерполирует #rgb / #rrggbb / #rrggbbaa; кэш по ключу (цвета повторяются на каждый refresh)
 const mixCache = new Map<string, string>()
@@ -139,12 +144,7 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
       labelPosition: (attrs: any) => (overSize(attrs) !== null ? 'over' : 'right'),
       // Черный/белый по светимости пузыря, когда текст внутри (over);
       // пилюля справа всегда светлая на тёмной плашке
-      labelColor: (attrs: any, state: any) =>
-        (state as any)?.isActive || (state as any)?.isHighlighted
-          ? labelTintFor(attrs.color as string)
-          : overSize(attrs) !== null
-            ? labelTintFor(attrs.color as string)
-            : LABEL_LIGHT,
+      labelColor: (attrs: any, _state: any) => labelTextFor(attrs),
       labelSize: (attrs: any, state: any) => {
         if ((state as any)?.isActive || (state as any)?.isHighlighted) return 15
         return overSize(attrs) ?? 13.5
@@ -160,7 +160,8 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
           : (attrs.size ?? 0) >= 18
             ? 'visible'
             : 'auto',
-      labelBackgroundColor: (attrs: any) => ((attrs.size ?? 0) < 18 ? '#242320f5' : undefined),
+      // Плашка пилюли темнее бумаги и почти непрозрачная — чип читается на фоне карты
+      labelBackgroundColor: (attrs: any) => ((attrs.size ?? 0) < 18 ? '#141311f2' : undefined),
       labelBackgroundPadding: 5,
     },
     {
@@ -190,7 +191,7 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
             Math.max((Math.round(16 * (g.dimAlpha ?? 0)) / 16) * 0.82, lodDust((attrs.size ?? 0) as number, g.lodRatio ?? 1)),
           ),
         labelColor: (attrs: any, _s, g: CustomGraphState) =>
-          mixHex(overSize(attrs) !== null ? labelTintFor(attrs.color as string) : LABEL_LIGHT, '#57534a', g.dimAlpha),
+          mixHex(labelTextFor(attrs), '#57534a', g.dimAlpha),
         // В фокус-режиме фоновые подписи прячем совсем, иначе — грязная каша
         labelVisibility: (_a: any, _s: any, g: CustomGraphState) =>
           g.hasActiveSubgraph ? 'hidden' : undefined,
@@ -215,7 +216,7 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
           (g.focusAlpha ?? 0) > 0.02 ? 'visible' : 'auto',
         // Fade в цвет контраста пузыря, а не в белый: светлый пузырь — тёмный текст
         labelColor: (attrs: any, _s: any, g: CustomGraphState) =>
-          labelRgba(attrs.color as string, Math.round(40 * (g.focusAlpha ?? 0)) / 40),
+          labelRgba(labelTextFor(attrs), Math.round(40 * (g.focusAlpha ?? 0)) / 40),
         labelSize: (attrs: any, _s, g: CustomGraphState) =>
           Math.round(((overSize(attrs) ?? 13.5) * (0.7 + 0.3 * (Math.round(4 * (g.focusAlpha ?? 0)) / 4))) * 2) / 2,
         backdropVisibility: 'visible',
@@ -234,7 +235,7 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
         labelVisibility: (_a: any, _s: any, g: CustomGraphState) =>
           (g.focusAlpha ?? 0) > 0.02 ? 'visible' : 'auto',
         labelColor: (attrs: any, _s: any, g: CustomGraphState) =>
-          labelRgba(attrs.color as string, Math.round(40 * (g.focusAlpha ?? 0)) / 40),
+          labelRgba(labelTextFor(attrs), Math.round(40 * (g.focusAlpha ?? 0)) / 40),
         labelSize: (attrs: any, _s, g: CustomGraphState) =>
           Math.round(((overSize(attrs) ?? 13.5) * (0.7 + 0.3 * (Math.round(4 * (g.focusAlpha ?? 0)) / 4))) * 2) / 2,
         backdropVisibility: 'visible',
