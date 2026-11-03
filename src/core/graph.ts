@@ -222,10 +222,10 @@ export function layout(
         outboundAttractionDistribution: true,
         barnesHutOptimize: true,
         barnesHutTheta: 0.5,
-        // Распыление крупным кулаком (отзыв на «рядом только чанки»):
-        // сильнее отталкивание, слабее центр и воздух в коллизиях ниже.
-        scalingRatio: 18000,
-        gravity: 0.00015,
+        // Распыление «как нейросеть» (отзыв «больше дисперсии»): редкие чанки
+        // в разреженном поле — сильное отталкивание и почти нулевая гравитация.
+        scalingRatio: 22000,
+        gravity: 0.0001,
         edgeWeightInfluence: 2.0,
         strongGravityMode: false,
         slowDown: 1,
@@ -269,7 +269,9 @@ export function layout(
       const d = Math.hypot(dx, dy) || 1
       const wobble = shapeNoise(Math.atan2(dy, dx), shapePhases)
       const target = R * (0.06 + 0.94 * Math.sqrt(t)) * (1 + 0.75 * wobble * (0.25 + 0.75 * t))
-      const blend = 0.55 - 0.25 * t
+      // Мягкий бленд к кольцу: FA2-доли (углы) сохраняются — дисперсия выживает,
+      // радиальная формула лишь страхует выбросы. Сильный бленд стягивал всё в диск.
+      const blend = 0.35 - 0.15 * t
       const nr = d + (target - d) * blend
       graph.setNodeAttribute(n, 'x', cx + (dx / d) * nr)
       graph.setNodeAttribute(n, 'y', cy + (dy / d) * nr)
