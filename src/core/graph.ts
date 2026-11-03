@@ -212,10 +212,10 @@ export function layout(
         outboundAttractionDistribution: true,
         barnesHutOptimize: true,
         barnesHutTheta: 0.5,
-        // Распыление крупным кулаком (отзыв на «не так много рядом»):
-        // сильнее отталкивание и слабее центр — держатся только связные чанки.
-        scalingRatio: 13000,
-        gravity: 0.00025,
+        // Распыление крупным кулаком (отзыв на «рядом только чанки»):
+        // сильнее отталкивание, слабее центр и воздух в коллизиях ниже.
+        scalingRatio: 18000,
+        gravity: 0.00015,
         edgeWeightInfluence: 2.0,
         strongGravityMode: false,
         slowDown: 1,
@@ -258,7 +258,7 @@ export function layout(
       const dy = a.y - cy
       const d = Math.hypot(dx, dy) || 1
       const wobble = shapeNoise(Math.atan2(dy, dx), shapePhases)
-      const target = R * (0.06 + 0.94 * Math.sqrt(t)) * (1 + 0.35 * wobble * (0.25 + 0.75 * t))
+      const target = R * (0.06 + 0.94 * Math.sqrt(t)) * (1 + 0.75 * wobble * (0.25 + 0.75 * t))
       const blend = 0.55 - 0.25 * t
       const nr = d + (target - d) * blend
       graph.setNodeAttribute(n, 'x', cx + (dx / d) * nr)
@@ -291,10 +291,9 @@ export function layout(
     }
     const span = Math.max(maxX - minX, maxY - minY, 1000)
     const scaleFactor = Math.min(MAX_SCALE_FACTOR, Math.max(1, span / 850))
-    // Пропорциональный padding: мелочь скучивается плотно, хабам — воздух.
-    // (дефолт resolveCollisions равномерный — тест на separation не трогаем).
-    // Больше воздуха у мелочи: пол пышности 0.2 → 0.3, база 10 → 14
-    const padScale = (s: number): number => 14 * Math.min(1, Math.max(0.3, s / 24))
+    // Пропорциональный padding; дефолт resolveCollisions равномерный — тест
+    // на separation не трогаем. Воздух между всеми пузырями, не только хабами.
+    const padScale = (s: number): number => 18 * Math.min(1, Math.max(0.3, s / 24))
     // Крупным графам — больше проходов: 30 итераций 600 больших пузырей не расталкивают.
     // (collisionIterationsForCount не трогаем — его значения зафиксированы тестами.)
     const passes = Math.max(collisionIterationsForCount(positionedNodes.length), positionedNodes.length > 400 ? 60 : 0)
