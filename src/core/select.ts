@@ -1,4 +1,4 @@
-import type { PairStat, TallyResult } from './tally'
+import { edgeKey, parseEdgeKey, type PairStat, type TallyResult } from './tally'
 import type { AuthorId } from './types'
 
 export type ViewMode =
@@ -54,15 +54,14 @@ export function select(
     }
     counts = remappedCounts
 
-    const remappedPairs = new Map<number, PairStat>()
+    const remappedPairs = new Map<string, PairStat>()
     for (const [key, stat] of pairs) {
-      const b = key % 3001
-      const a = Math.floor(key / 3001)
+      const [a, b] = parseEdgeKey(key)
       const rootA = merged.get(a) ?? a
       const rootB = merged.get(b) ?? b
       if (rootA === rootB) continue
 
-      const newKey = rootA < rootB ? rootA * 3001 + rootB : rootB * 3001 + rootA
+      const newKey = edgeKey(rootA, rootB)
       let targetStat = remappedPairs.get(newKey)
       if (!targetStat) {
         targetStat = { nX: new Map(), nCross: 0 }
@@ -80,8 +79,9 @@ export function select(
   if (cfg.mode.kind === 'cross') {
     for (const [key, stat] of pairs) {
       if (stat.nCross > 0) {
-        crossNodes.add(Math.floor(key / 3001))
-        crossNodes.add(key % 3001)
+        const [a, b] = parseEdgeKey(key)
+        crossNodes.add(a)
+        crossNodes.add(b)
       }
     }
   }
@@ -109,8 +109,7 @@ export function select(
 
   const candidateEdges: SelectionEdge[] = []
   for (const [key, stat] of pairs) {
-    const a = Math.floor(key / 3001)
-    const b = key % 3001
+    const [a, b] = parseEdgeKey(key)
     if (!selectedNodeSet.has(a) || !selectedNodeSet.has(b)) {
       continue
     }
