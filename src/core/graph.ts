@@ -4,6 +4,21 @@ import forceAtlas2 from 'graphology-layout-forceatlas2'
 // shortcut: spans >6800 get capped spacing and may overlap; upgrade if wide graphs look packed
 const MAX_SCALE_FACTOR = 8
 
+// Map keeps insertion order, so delete+set moves a key to the most-recent end.
+export function getLruCache<K, V>(map: Map<K, V>, key: K): V | undefined {
+  if (!map.has(key)) return undefined
+  const value = map.get(key) as V
+  map.delete(key)
+  map.set(key, value)
+  return value
+}
+
+export function setLruCache<K, V>(map: Map<K, V>, key: K, value: V, maxEntries = 2000): void {
+  map.delete(key)
+  map.set(key, value)
+  while (map.size > Math.max(maxEntries, 0)) map.delete(map.keys().next().value as K)
+}
+
 export type LayoutNodeInput = {
   id: number
   size?: number

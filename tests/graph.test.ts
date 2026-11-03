@@ -1,5 +1,49 @@
 import { describe, expect, it } from 'vitest'
-import { collisionIterationsForCount, layout, resolveCollisions } from '../src/core/graph'
+import { collisionIterationsForCount, getLruCache, layout, resolveCollisions, setLruCache } from '../src/core/graph'
+
+describe('LRU cache helpers', () => {
+  it('evicts the least recently set key once maxEntries is exceeded', () => {
+    const map = new Map<string, number>()
+    setLruCache(map, 'a', 1, 2)
+    setLruCache(map, 'b', 2, 2)
+    setLruCache(map, 'c', 3, 2)
+    expect([...map.keys()]).toEqual(['b', 'c'])
+  })
+
+  it('keeps keys that were read or re-set recently', () => {
+    const map = new Map<string, number>()
+    setLruCache(map, 'a', 1, 2)
+    setLruCache(map, 'b', 2, 2)
+    expect(getLruCache(map, 'a')).toBe(1)
+    setLruCache(map, 'c', 3, 2)
+    expect([...map.keys()]).toEqual(['a', 'c'])
+    setLruCache(map, 'a', 10, 2)
+    setLruCache(map, 'd', 4, 2)
+    expect([...map.entries()]).toEqual([['a', 10], ['d', 4]])
+  })
+
+  it('getLruCache returns undefined for a missing key without inserting it', () => {
+    const map = new Map<string, number>([['a', 1]])
+    expect(getLruCache(map, 'missing')).toBeUndefined()
+    expect([...map.keys()]).toEqual(['a'])
+  })
+
+  it('caps at 2000 entries by default', () => {
+    const map = new Map<number, number>()
+    for (let i = 0; i < 2001; i++) setLruCache(map, i, i)
+    expect(map.size).toBe(2000)
+    expect(map.has(0)).toBe(false)
+    expect(map.has(2000)).toBe(true)
+  })
+
+  it('treats a non-positive maxEntries as an empty cache', () => {
+    const map = new Map<number, number>()
+    setLruCache(map, -1, -1, 0)
+    expect(map.size).toBe(0)
+    setLruCache(map, 5, 5, -1)
+    expect(map.size).toBe(0)
+  })
+})
 
 describe('layout', () => {
   it('(a) reuses prevXY coordinates when fullRun is false', () => {
