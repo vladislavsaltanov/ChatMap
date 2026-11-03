@@ -8,8 +8,10 @@ export type ColorChangeCallback = (colors: Map<AuthorId, string>) => void
 
 function hueToHex(hueDegrees: number): string {
   const h = ((hueDegrees % 360) + 360) % 360
-  const s = 0.75
-  const l = 0.65
+  // Живые, но светлые голоса на тёмном тёплом фоне: золотое сечение по hue.
+  // Светлота держит контраст тёмного текста в пузырях, хроматичность — нити.
+  const s = 0.62
+  const l = 0.74
   const c = (1 - Math.abs(2 * l - 1)) * s
   const x = c * (1 - Math.abs(((h / 60) % 2) - 1))
   const m = l - c / 2

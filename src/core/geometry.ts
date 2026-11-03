@@ -46,15 +46,24 @@ export function edgeWidth(w: number, wmax: number): number {
   return Math.pow(w / wmax, 0.6)
 }
 
-export function edgeColor(w: number, maxWeight: number): string {
+export function edgeColor(w: number, maxWeight: number, tint = '#e8e2d6'): string {
+  // Нить в цвете голоса: слабая — призрак бумаги, сильная — светится.
+  // Бумага — приближение --paper (oklch 0.16), чтобы слабое растворялось в фоне.
+  const PAPER: [number, number, number] = [36, 34, 29]
+  const h = (tint.startsWith('#') ? tint.slice(1) : tint).slice(0, 6)
+  const n = parseInt(h.length === 3 ? h.replace(/./g, (c) => c + c) : h, 16)
+  const tcol: [number, number, number] = [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+  const mix = (k: number): [number, number, number] =>
+    [PAPER[0] + (tcol[0] - PAPER[0]) * k, PAPER[1] + (tcol[1] - PAPER[1]) * k, PAPER[2] + (tcol[2] - PAPER[2]) * k].map((v) =>
+      Math.round(v),
+    ) as [number, number, number]
+  const hex = (r: number, g: number, b: number, a: number): string =>
+    `#${[r, g, b, a].map((v) => v.toString(16).padStart(2, '0')).join('')}`
   if (maxWeight <= 0 || w <= 0) {
-    return '#23253030'
+    const [r, g, b] = mix(0.25)
+    return hex(r, g, b, Math.round(0.1 * 255))
   }
   const t = Math.max(0, Math.min(1, Math.pow(w / maxWeight, 0.45)))
-  // Smoothly grade from subtle slate to luminous blue
-  const r = Math.round(36 + (180 - 36) * t)
-  const g = Math.round(44 + (205 - 44) * t)
-  const b = Math.round(68 + (255 - 68) * t)
-  const a = Math.round((0.20 + 0.75 * t) * 255)
-  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}${a.toString(16).padStart(2, '0')}`
+  const [r, g, b] = mix(0.25 + 0.75 * t)
+  return hex(r, g, b, Math.round((0.1 + 0.55 * t) * 255))
 }

@@ -95,7 +95,7 @@ export class MapView {
       const isoDate = new Date().toISOString().slice(0, 10)
       await downloadAsPNG(this.renderer as any, {
         fileName: `chatmap-${isoDate}`,
-        backgroundColor: '#161619',
+        backgroundColor: '#1d1c19',
         width: 2560,
         height: 1440,
       })
@@ -128,6 +128,12 @@ export class MapView {
       customGraphState: { hasActiveSubgraph: false, dimAlpha: 0, focusAlpha: 0 },
       styles: MAP_SIGMA_STYLES,
     })
+    if (import.meta.env.DEV) {
+      // SAFETY: window не типизирован под наш dev-хэндл; единственный каст —
+      // присвоение глобальной ссылки Sigma-рендерера для отладки из консоли
+      const devWindow = window as unknown as { __mapview?: MapView }
+      devWindow.__mapview = this
+    }
 
     this.renderer.on('enterNode', ({ node }) => {
       this.hoverLine.textContent = this.labelLine(Number(node))
@@ -157,7 +163,7 @@ export class MapView {
     const overrides = getLabelOverrides()
 
     for (const node of msg.nodes) {
-      const color = this.authorColors.get(node.authorLead) || '#7890cd'
+      const color = this.authorColors.get(node.authorLead) || '#b8b2a6'
       const label = overrides[node.canon] || node.label
       this.graph.addNode(String(node.id), {
         label,
@@ -177,8 +183,10 @@ export class MapView {
       const b = String(edge.b)
       if (this.graph.hasNode(a) && this.graph.hasNode(b) && !this.graph.hasEdge(a, b)) {
         const w = edgeWidth(edge.weight, msg.maxWeight)
-        const edgeSize = Math.max(0.6, 0.6 + w * 4.5)
-        const color = edgeColor(edge.weight, msg.maxWeight)
+        const edgeSize = Math.max(0.3, 0.3 + w * 0.9)
+        const lead = this.graph.getNodeAttribute(a, 'authorLead') as AuthorId | undefined
+        const tint = (lead !== undefined && this.authorColors.get(lead)) || '#b8b2a6'
+        const color = edgeColor(edge.weight, msg.maxWeight, tint)
         this.graph.addEdge(a, b, {
           size: edgeSize,
           color,
