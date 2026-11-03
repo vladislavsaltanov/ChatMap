@@ -141,13 +141,15 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
         ),
       then: {
         // «Уходящий» узел (смена цели подсветки) плавно сдаёт буст размера по
-        // СВОЕЙ метке времени: быстрые смены цели не подымают буст обратно
-        // (глобальный releaseAlpha на это грешил). 4 ступени — стабильные ключи.
-        size: (attrs: any, s: any, _g: CustomGraphState) => {
+        // СВОЕЙ метке времени. ВАЖНО: правило матчит весь фон карты, поэтому
+        // размер обязан идти через lodScale — сырой attrs.size затирал бы
+        // LOD-затухание базового правила и разносил фон при отдалении.
+        size: (attrs: any, s: any, g: CustomGraphState) => {
           const st = s as CustomNodeState
-          if (!st?.released || !st.releasedAt) return attrs.size ?? 0
+          const base = lodScale((attrs.size ?? 0) as number, g.lodRatio ?? 1)
+          if (!st?.released || !st.releasedAt) return base
           const boost = Math.max(0, 1 - (performance.now() - st.releasedAt) / 170)
-          return (attrs.size ?? 0) * (1 + 0.1 * (Math.round(4 * boost) / 4))
+          return base * (1 + 0.1 * (Math.round(4 * boost) / 4))
         },
         color: (attrs: any, _s, g: CustomGraphState) =>
           mixHex(
@@ -168,9 +170,10 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
         depth: 'topNodes',
         // Рост пузыря подсветки ступенями (4 шага на весь твiн): каждая ступень —
         // один репаш геометрии узла, иначе каждый кадр пина перегружал программу.
-        // Соседи растут тем же твiном focusAlpha — без этого скачут при пине.
+        // Соседи растут тем же твiном focusAlpha; LOD-масштаб сохраняем —
+        // подсвеченные на отдалении не должны всплывать полноразмерными.
         size: (attrs: any, _s, g: CustomGraphState) =>
-          (attrs.size ?? 0) * (1 + 0.1 * (Math.round(4 * (g.focusAlpha ?? 0)) / 4)),
+          lodScale((attrs.size ?? 0) as number, g.lodRatio ?? 1) * (1 + 0.1 * (Math.round(4 * (g.focusAlpha ?? 0)) / 4)),
         // released после затухания здесь может досидеть: победа правила по
         // порядку — isHighlighted перекрывает not-active затухание своим ростом
         // Текст живёт в той же анимации: прозрачность непрерывно (rgba альфа
@@ -192,6 +195,8 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
       whenState: 'isActive',
       then: {
         depth: 'topNodes',
+        // Активные соседи пина: размер только через lodScale (см. isHighlighted)
+        size: (attrs: any, _s, g: CustomGraphState) => lodScale((attrs.size ?? 0) as number, g.lodRatio ?? 1),
         // Соседи хаба: тот же fade+scale текста, что и у центра подсветки
         labelVisibility: (_a: any, _s: any, g: CustomGraphState) =>
           (g.focusAlpha ?? 0) > 0.02 ? 'visible' : 'auto',
