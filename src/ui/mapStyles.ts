@@ -18,10 +18,13 @@ function lodScale(sizePx: number, lodRatio: number): number {
   return lodRatio > 1 ? sizePx * Math.pow(lodRatio, -0.75) : sizePx
 }
 // Степень пыли узла на обзорном зуме: 0 = обычный цвет, до 1 = растворился.
+// Квантуется до 0.02: каждый кадр зума иначе рожал новый ключ цвета —
+// кэш mixHex рос без предела, отдаление лагало (зум-ин давал k=0 и не тратился).
 function lodDust(sizePx: number, lodRatio: number): number {
   const s = lodScale(sizePx, lodRatio)
   if (s >= LOD_DUST) return 0
-  return Math.max(0, Math.min(1, (LOD_DUST - s) / (LOD_DUST - LOD_FLOOR)))
+  const dust = Math.max(0, Math.min(1, (LOD_DUST - s) / (LOD_DUST - LOD_FLOOR)))
+  return Math.round(dust * 50) / 50
 }
 
 // mixHex интерполирует #rgb / #rrggbb / #rrggbbaa; кэш по ключу (цвета повторяются на каждый refresh)
@@ -46,6 +49,9 @@ function mixHex(from: string, to: string, t: number): string {
   const hex2 = (n: number) => n.toString(16).padStart(2, '0')
   const out = `#${hex2(ch(r1, r2))}${hex2(ch(g1, g2))}${hex2(ch(b1, b2))}${hex2(ch(a1, a2))}`
   mixCache.set(key, out)
+  // Предохранитель: длинная сессия с падающими по кадрам значениями
+  // иначе раздувает Map до сотен тысяч строковых ключей
+  if (mixCache.size > 4096) mixCache.clear()
   return out
 }
 
@@ -63,6 +69,9 @@ export const MAP_SIGMA_SETTINGS: Partial<ReturnType<MapSigma['getSettings']>> = 
   // Глубокий зум не раздувает рёбра в «балки»: потолок на утолщение экранного масштаба
   zoomToSizeRatioFunction: (ratio: number) => Math.min(Math.sqrt(ratio), 1),
   minEdgeThickness: 1,
+  // Жест приближения заметно спокойнее дефолта (1.7), отзыв «са более слабая»
+  zoomingRatio: 1.15,
+  doubleClickZoomingRatio: 1.35,
 }
 
 // Кегль слова внутри пузыря: влезает — вернуть размер, нет — null (пилюля).
