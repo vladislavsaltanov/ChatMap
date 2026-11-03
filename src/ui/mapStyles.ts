@@ -49,16 +49,20 @@ function labelTintFor(color: string | undefined | null): string {
   tintCache.set(key, out)
   return out
 }
-// Тот же тинт с альфой — для fade-анимации текста подсветки
+// Альфа для УЖЕ выбранного цвета текста. Не тинтовать повторно: первый
+// аргумент — финальный чёрный/белый от labelTextFor; повторный labelTintFor
+// инвертировал их (белый на светлом пузыре, тёмный на тёмном чипе).
 function labelRgba(color: string | undefined | null, a: number): string {
-  const tint = labelTintFor(color)
-  const n = parseInt(tint.slice(1, 7), 16)
+  const key = String(color ?? LABEL_LIGHT)
+  const h = (key.startsWith('#') ? key.slice(1) : key).slice(0, 6)
+  const n = parseInt(h.length === 3 ? h.replace(/./g, (c) => c + c) : h, 16)
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a.toFixed(3)})`
 }
-// Цвет текста по МЕСТУ отрисовки: текст внутри пузыря — контраст к пузырю;
-// пилюля справа — всегда светлая на тёмной плашке (её фон не меняется)
-function labelTextFor(attrs: any): string {
-  return overSize(attrs) !== null ? labelTintFor(attrs.color as string) : LABEL_LIGHT
+// Кегль подписи по эффективному (после LOD) размеру: влезает — посадочный,
+// не влезает — пилюльный 13.5
+function labelTextSizeFor(attrs: any, g?: CustomGraphState): number {
+  if (!labelFits(attrs, g?.lodRatio)) return 13.5
+  return fitKegel(lodScale((attrs.size ?? 0) as number, g?.lodRatio ?? 1), attrs.label) ?? 13.5
 }
 
 // mixHex интерполирует #rgb / #rrggbb / #rrggbbaa; кэш по ключу (цвета повторяются на каждый refresh)
@@ -113,17 +117,29 @@ export const MAP_SIGMA_SETTINGS: Partial<ReturnType<MapSigma['getSettings']>> = 
   doubleClickZoomingRatio: 1.35,
 }
 
-// Кегль слова внутри пузыря: влезает — вернуть размер, нет — null (пилюля).
-// Ширина слова грубо: 0.6em на символ; текст должен занять ≤85% диаметра.
-// Проверяем ВСЕ пузыри: раньше топы (s>=26) получали 15 без проверки и вылезали.
-// Ниже 12 не жмём — мелкий текст внутри пузыря нечитаем, лучше пилюля на зуме.
-function overSize(attrs: any): number | null {
-  const s = (attrs.size ?? 0) as number
-  if (s < 18) return null
-  const len = Math.max(1, String(attrs.label ?? '').length)
-  const fit = Math.floor(((s * 2 * 0.85) / (len * 0.6)) * 2) / 2
-  const shrunk = Math.min(s >= 26 ? 15 : 14, fit)
+// Кегль, при котором слово влезает в пузырь данного размера: вернуть кегль,
+// иначе null — пилюля. Ширина слова грубо: 0.6em на символ; ≤85% диаметра.
+// Ниже 12 не жмём — мелкий текст нечитаем. Размер — ЭФФЕКТИВНЫЙ (после LOD):
+// на отдалении пузырь ужат и подпись обязана переворачиваться в пилюлю.
+function fitKegel(sizePx: number, label: string | undefined): number | null {
+  if (sizePx < 18) return null
+  const len = Math.max(1, String(label ?? '').length)
+  const fit = Math.floor(((sizePx * 2 * 0.85) / (len * 0.6)) * 2) / 2
+  const shrunk = Math.min(sizePx >= 26 ? 15 : 14, fit)
   return shrunk >= 12 ? shrunk : null
+}
+function overSize(attrs: any): number | null {
+  return fitKegel((attrs.size ?? 0) as number, attrs.label)
+}
+// Влезает ли текст в пузырь при ТЕКУЩЕМ LOD (эффективный размер)
+function labelFits(attrs: any, lodRatio: number | undefined): boolean {
+  const eff = lodScale((attrs.size ?? 0) as number, lodRatio ?? 1)
+  return fitKegel(eff, attrs.label) !== null
+}
+// Цвет текста по МЕСТУ отрисовки: внутри пузыря (влезает при текущем LOD) —
+// контраст к пузырю; пилюля — всегда светлая на тёмной плашке
+function labelTextFor(attrs: any, g?: CustomGraphState): string {
+  return labelFits(attrs, g?.lodRatio) ? labelTintFor(attrs.color as string) : LABEL_LIGHT
 }
 
 export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
@@ -139,15 +155,16 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
         (g.dimAlpha ?? 0) === 0 && lodScale((attrs.size ?? 0) as number, g.lodRatio ?? 1) < LOD_FLOOR
           ? 'hidden'
           : 'visible', // скрывается только уже растворившаяся пыль — переход незаметен
-      // Слово живёт внутри пузыря, только если влезает: иначе — пилюля справа.
-      // Топы (s>=26) строятся под слово; средним кегль жмём до посадки, минимум 10.
-      labelPosition: (attrs: any) => (overSize(attrs) !== null ? 'over' : 'right'),
-      // Черный/белый по светимости пузыря, когда текст внутри (over);
-      // пилюля справа всегда светлая на тёмной плашке
-      labelColor: (attrs: any, _state: any) => labelTextFor(attrs),
-      labelSize: (attrs: any, state: any) => {
+      // Слово живёт внутри пузыря, только если влезает ПРИ ТЕКУЩЕМ LOD:
+      // на отдалении пузыри ужаты и подписи переворачиваются в светлые пилюли.
+      labelPosition: (attrs: any, _s: any, g: CustomGraphState) => (labelFits(attrs, g?.lodRatio) ? 'over' : 'right'),
+      // Черный/белый по светимости пузыря, когда текст внутри;
+      // пилюля всегда светлая на тёмной плашке
+      labelColor: (attrs: any, _state: any, g: CustomGraphState) => labelTextFor(attrs, g),
+      labelSize: (attrs: any, state: any, g: CustomGraphState) => {
         if ((state as any)?.isActive || (state as any)?.isHighlighted) return 15
-        return overSize(attrs) ?? 13.5
+        if (!labelFits(attrs, g?.lodRatio)) return 13.5
+        return fitKegel(lodScale((attrs.size ?? 0) as number, g?.lodRatio ?? 1), attrs.label) ?? 13.5
       },
       // NOTE: sigma parseFontString понимает только «вес семейство» — размер
       // (px) в строке ломает атлас глифов (текст схлопывается в чёрточку).
@@ -160,8 +177,10 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
           : (attrs.size ?? 0) >= 18
             ? 'visible'
             : 'auto',
-      // Плашка пилюли темнее бумаги и почти непрозрачная — чип читается на фоне карты
-      labelBackgroundColor: (attrs: any) => ((attrs.size ?? 0) < 18 ? '#141311f2' : undefined),
+      // Плашка пилюли темнее бумаги и почти непрозрачная — чип читается на фоне
+      // карты; рисуется всегда, когда текст НЕ влез в пузырь (в т.ч. из-за LOD)
+      labelBackgroundColor: (attrs: any, _s: any, g: CustomGraphState) =>
+        labelFits(attrs, g?.lodRatio) ? undefined : '#141311f2',
       labelBackgroundPadding: 5,
     },
     {
@@ -191,7 +210,7 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
             Math.max((Math.round(16 * (g.dimAlpha ?? 0)) / 16) * 0.82, lodDust((attrs.size ?? 0) as number, g.lodRatio ?? 1)),
           ),
         labelColor: (attrs: any, _s, g: CustomGraphState) =>
-          mixHex(labelTextFor(attrs), '#57534a', g.dimAlpha),
+          mixHex(labelTextFor(attrs, g), '#57534a', g.dimAlpha),
         // В фокус-режиме фоновые подписи прячем совсем, иначе — грязная каша
         labelVisibility: (_a: any, _s: any, g: CustomGraphState) =>
           g.hasActiveSubgraph ? 'hidden' : undefined,
@@ -214,11 +233,11 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
         // на каждый промежуточный размер). Скрытие происходит при alpha≈0.
         labelVisibility: (_a: any, _s: any, g: CustomGraphState) =>
           (g.focusAlpha ?? 0) > 0.02 ? 'visible' : 'auto',
-        // Fade в цвет контраста пузыря, а не в белый: светлый пузырь — тёмный текст
+        // Fade в цвет контраста места отрисовки (пузырь/пилюля по LOD)
         labelColor: (attrs: any, _s: any, g: CustomGraphState) =>
-          labelRgba(labelTextFor(attrs), Math.round(40 * (g.focusAlpha ?? 0)) / 40),
+          labelRgba(labelTextFor(attrs, g), Math.round(40 * (g.focusAlpha ?? 0)) / 40),
         labelSize: (attrs: any, _s, g: CustomGraphState) =>
-          Math.round(((overSize(attrs) ?? 13.5) * (0.7 + 0.3 * (Math.round(4 * (g.focusAlpha ?? 0)) / 4))) * 2) / 2,
+          Math.round(((labelTextSizeFor(attrs, g)) * (0.7 + 0.3 * (Math.round(4 * (g.focusAlpha ?? 0)) / 4))) * 2) / 2,
         backdropVisibility: 'visible',
         backdropBorderColor: '#ffffff',
         backdropBorderWidth: (_a, _s, g: CustomGraphState) => 2.5 * g.focusAlpha,
@@ -235,9 +254,9 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
         labelVisibility: (_a: any, _s: any, g: CustomGraphState) =>
           (g.focusAlpha ?? 0) > 0.02 ? 'visible' : 'auto',
         labelColor: (attrs: any, _s: any, g: CustomGraphState) =>
-          labelRgba(labelTextFor(attrs), Math.round(40 * (g.focusAlpha ?? 0)) / 40),
+          labelRgba(labelTextFor(attrs, g), Math.round(40 * (g.focusAlpha ?? 0)) / 40),
         labelSize: (attrs: any, _s, g: CustomGraphState) =>
-          Math.round(((overSize(attrs) ?? 13.5) * (0.7 + 0.3 * (Math.round(4 * (g.focusAlpha ?? 0)) / 4))) * 2) / 2,
+          Math.round(((labelTextSizeFor(attrs, g)) * (0.7 + 0.3 * (Math.round(4 * (g.focusAlpha ?? 0)) / 4))) * 2) / 2,
         backdropVisibility: 'visible',
         backdropBorderColor: '#f0c979',
         backdropBorderWidth: (_a, _s, g: CustomGraphState) => 2 * g.focusAlpha,
