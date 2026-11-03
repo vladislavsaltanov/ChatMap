@@ -160,8 +160,15 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
         // один репаш геометрии узла, иначе каждый кадр пина перегружал программу.
         size: (attrs: any, _s, g: CustomGraphState) =>
           (attrs.size ?? 0) * (1 + 0.1 * (Math.round(4 * (g.focusAlpha ?? 0)) / 4)),
-        labelVisibility: 'visible',
-        labelColor: '#ffffff',
+        // Текст живёт в той же анимации: прозрачность непрерывно (rgba альфа
+        // — не трогает атлас глифов), кегль — 4 ступени (иначе атлас растёт
+        // на каждый промежуточный размер). Скрытие происходит при alpha≈0.
+        labelVisibility: (_a: any, _s: any, g: CustomGraphState) =>
+          (g.focusAlpha ?? 0) > 0.02 ? 'visible' : 'auto',
+        labelColor: (_a: any, _s: any, g: CustomGraphState) =>
+          `rgba(255,255,255,${(Math.round(40 * (g.focusAlpha ?? 0)) / 40).toFixed(3)})`,
+        labelSize: (attrs: any, _s, g: CustomGraphState) =>
+          Math.round(((overSize(attrs) ?? 13.5) * (0.7 + 0.3 * (Math.round(4 * (g.focusAlpha ?? 0)) / 4))) * 2) / 2,
         backdropVisibility: 'visible',
         backdropBorderColor: '#ffffff',
         backdropBorderWidth: (_a, _s, g: CustomGraphState) => 2.5 * g.focusAlpha,
@@ -172,8 +179,13 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
       whenState: 'isActive',
       then: {
         depth: 'topNodes',
-        labelVisibility: 'visible',
-        labelColor: '#ffffff',
+        // Соседи хаба: тот же fade+scale текста, что и у центра подсветки
+        labelVisibility: (_a: any, _s: any, g: CustomGraphState) =>
+          (g.focusAlpha ?? 0) > 0.02 ? 'visible' : 'auto',
+        labelColor: (_a: any, _s: any, g: CustomGraphState) =>
+          `rgba(255,255,255,${(Math.round(40 * (g.focusAlpha ?? 0)) / 40).toFixed(3)})`,
+        labelSize: (attrs: any, _s, g: CustomGraphState) =>
+          Math.round(((overSize(attrs) ?? 13.5) * (0.7 + 0.3 * (Math.round(4 * (g.focusAlpha ?? 0)) / 4))) * 2) / 2,
         backdropVisibility: 'visible',
         backdropBorderColor: '#f0c979',
         backdropBorderWidth: (_a, _s, g: CustomGraphState) => 2 * g.focusAlpha,
@@ -204,6 +216,13 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
         depth: 'topEdges',
         color: (attrs: any, _s, g: CustomGraphState) => mixHex((attrs.color as string) || '#f0c979', '#f0c979', Math.max(g.focusAlpha, 0.5)),
         size: (attrs: any, _s, g: CustomGraphState) => (attrs.size ?? 1) + (2.2 - (attrs.size ?? 1)) * g.focusAlpha,
+        // Соседи хаба: тот же fade+scale текста, что и у центра подсветки
+        labelVisibility: (_a: any, _s: any, g: CustomGraphState) =>
+          (g.focusAlpha ?? 0) > 0.02 ? 'visible' : 'auto',
+        labelColor: (_a: any, _s: any, g: CustomGraphState) =>
+          `rgba(255,255,255,${(Math.round(40 * (g.focusAlpha ?? 0)) / 40).toFixed(3)})`,
+        labelSize: (attrs: any, _s, g: CustomGraphState) =>
+          Math.round(((overSize(attrs) ?? 13.5) * (0.7 + 0.3 * (Math.round(4 * (g.focusAlpha ?? 0)) / 4))) * 2) / 2,
       },
     },
   ],
