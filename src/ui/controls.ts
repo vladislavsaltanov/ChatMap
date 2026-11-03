@@ -1,4 +1,5 @@
 import { debounce } from '../core/debounce'
+import { escapeHtml } from '../core/escapeHtml'
 import type { ViewMode } from '../core/select'
 import type { AuthorId, FilterCfg } from '../core/types'
 
@@ -187,7 +188,7 @@ export class Controls {
       this.authorColors.set(author.id, hex)
 
       const label = document.createElement('label')
-      label.innerHTML = `<input type="radio" name="view-mode" value="author-${author.id}" /> Только ${author.name}`
+      label.innerHTML = `<input type="radio" name="view-mode" value="author-${author.id}" /> Только ${escapeHtml(author.name)}`
       label.querySelector('input')!.addEventListener('change', () => {
         this.currentMode = { kind: 'author', author: author.id }
         this.debouncedTriggerChange()
@@ -198,7 +199,7 @@ export class Controls {
       const colorRow = document.createElement('div')
       colorRow.className = 'author-color-row'
       colorRow.innerHTML = `
-        <span>${author.name}</span>
+        <span>${escapeHtml(author.name)}</span>
         <input type="color" value="${hex}" />
       `
       const colorInput = colorRow.querySelector<HTMLInputElement>('input[type="color"]')!
