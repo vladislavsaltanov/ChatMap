@@ -118,4 +118,46 @@ describe('select', () => {
     expect(selHigh.edges.length).toBe(0)
     expect(selHigh.maxWeight).toBe(0)
   })
+
+  it('(g) edges (1, 3006) and (2, 5) stay distinct, not merged by key collision', () => {
+    const tallyData: TallyResult = {
+      counts: new Map([
+        [1, new Map([[100, 1]])],
+        [2, new Map([[100, 1]])],
+        [5, new Map([[100, 1]])],
+        [3006, new Map([[100, 1]])],
+      ]),
+      pairs: new Map([
+        [edgeKey(1, 3006), { nX: new Map([[100, 4]]), nCross: 0 }],
+        [edgeKey(2, 5), { nX: new Map([[100, 7]]), nCross: 0 }],
+      ]),
+    }
+    const sel = select(tallyData, { mode: { kind: 'together' }, topN: 10, minWeight: 0 })
+    expect(sel.edges).toEqual([
+      { a: 2, b: 5, weight: 7 },
+      { a: 1, b: 3006, weight: 4 },
+    ])
+  })
+
+  it('(h) smartMerge remap folds pairs onto root keys, sums stats, drops self-loops', () => {
+    const tallyData: TallyResult = {
+      counts: new Map([
+        [1, new Map([[100, 1]])],
+        [5, new Map([[100, 1]])],
+        [3006, new Map([[100, 1]])],
+      ]),
+      pairs: new Map([
+        [edgeKey(1, 3006), { nX: new Map([[100, 4]]), nCross: 1 }],
+        [edgeKey(1, 5), { nX: new Map([[100, 2]]), nCross: 0 }],
+        [edgeKey(5, 3006), { nX: new Map([[100, 9]]), nCross: 3 }],
+      ]),
+    }
+    // 3006 merges into 5: (1,3006) and (1,5) fold into (1,5); (5,3006) becomes a self-loop and is dropped
+    const sel = select(tallyData, { mode: { kind: 'together' }, topN: 10, minWeight: 0 }, new Map([[3006, 5]]))
+    expect(sel.nodes).toEqual([
+      { id: 5, count: 2 },
+      { id: 1, count: 1 },
+    ])
+    expect(sel.edges).toEqual([{ a: 1, b: 5, weight: 7 }]) // nX 4+2 + nCross 1
+  })
 })

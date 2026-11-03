@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { Intern } from '../src/core/intern'
-import { buildUnits, edgeKey, tally, type RawUnit } from '../src/core/tally'
+import { buildUnits, edgeKey, parseEdgeKey, tally, type RawUnit } from '../src/core/tally'
 import type { ChatExport } from '../src/core/types'
 
 describe('tally', () => {
-  it('(f) computes edgeKey = a * 3001 + b for a < b', () => {
-    expect(edgeKey(2, 5)).toBe(2 * 3001 + 5)
-    expect(edgeKey(5, 2)).toBe(2 * 3001 + 5)
+  it('(f) edgeKey is "min:max" for either argument order; parseEdgeKey inverts it', () => {
+    expect(edgeKey(2, 5)).toBe('2:5')
+    expect(edgeKey(5, 2)).toBe('2:5')
+    expect(parseEdgeKey(edgeKey(5, 2))).toEqual([2, 5])
+    expect(parseEdgeKey(edgeKey(1, 3006))).toEqual([1, 3006])
   })
 
   it('(a) unit <= 16 tokens produces all N*(N-1)/2 pairs', () => {
@@ -32,8 +34,7 @@ describe('tally', () => {
 
     // Verify distance <= 3
     for (const [key, stat] of res.pairs) {
-      const b = key % 3001
-      const a = Math.floor(key / 3001)
+      const [a, b] = parseEdgeKey(key)
       expect(b - a).toBeGreaterThanOrEqual(1)
       expect(b - a).toBeLessThanOrEqual(3)
       expect(stat.nX.get(10)).toBe(1)
@@ -84,6 +85,16 @@ describe('tally', () => {
     const u2: RawUnit = { authorId: 20, dateMs: 2000, replyTo: null, tokens: new Uint32Array([3, 4]) }
     const res = tally([u1, u2])
     expect(res.pairs.has(edgeKey(1, 3))).toBe(false)
+  })
+
+  it('(h) pairs (1, 3006) and (2, 5) are two distinct edges, not a key collision', () => {
+    const u1: RawUnit = { authorId: 10, dateMs: 1000, replyTo: null, tokens: new Uint32Array([1, 3006]) }
+    const u2: RawUnit = { authorId: 20, dateMs: 2000, replyTo: null, tokens: new Uint32Array([2, 5]) }
+    const res = tally([u1, u2])
+    expect(edgeKey(1, 3006)).not.toBe(edgeKey(2, 5))
+    expect(res.pairs.size).toBe(2)
+    expect(res.pairs.get(edgeKey(1, 3006))?.nX).toEqual(new Map([[10, 1]]))
+    expect(res.pairs.get(edgeKey(2, 5))?.nX).toEqual(new Map([[20, 1]]))
   })
 
   it('buildUnits converts chat messages using intern and drops filtered tokens', () => {

@@ -17,12 +17,17 @@ export type PairStat = {
 }
 
 export type TallyResult = {
-  pairs: Map<number, PairStat>
+  pairs: Map<string, PairStat>
   counts: Map<number, Map<AuthorId, number>>
 }
 
-export function edgeKey(a: number, b: number): number {
-  return a < b ? a * 3001 + b : b * 3001 + a
+export function edgeKey(a: number, b: number): string {
+  return a < b ? `${a}:${b}` : `${b}:${a}`
+}
+
+export function parseEdgeKey(key: string): [number, number] {
+  const [a, b] = key.split(':')
+  return [Number(a), Number(b)]
 }
 
 export function buildUnits(
@@ -68,7 +73,7 @@ type Series = {
 }
 
 export function tally(units: RawUnit[]): TallyResult {
-  const pairs = new Map<number, PairStat>()
+  const pairs = new Map<string, PairStat>()
   const counts = new Map<number, Map<AuthorId, number>>()
   const unitsByMsgId = new Map<number, RawUnit[]>()
 
@@ -140,7 +145,7 @@ export function tally(units: RawUnit[]): TallyResult {
   for (const series of seriesList) {
     const tokens = series.tokens
     const n = tokens.length
-    const seen = new Set<number>()
+    const seen = new Set<string>()
 
     if (n <= 16) {
       for (let i = 0; i < n; i++) {
@@ -173,7 +178,7 @@ export function tally(units: RawUnit[]): TallyResult {
 
     for (const targetUnit of targetUnits) {
       const isCross = unit.authorId !== targetUnit.authorId
-      const seenReply = new Set<number>()
+      const seenReply = new Set<string>()
 
       for (let i = 0; i < unit.tokens.length; i++) {
         const u = unit.tokens[i]
