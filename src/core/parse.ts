@@ -74,6 +74,7 @@ export function parse(src: string): ChatExport {
   let rawMessages: unknown[] | null = null
   let chatName = ''
   let chatType = ''
+  let warn: string | undefined
 
   if (Array.isArray(data)) {
     rawMessages = data
@@ -96,6 +97,9 @@ export function parse(src: string): ChatExport {
         rawMessages = candidateChats[0].messages as unknown[]
         chatName = typeof candidateChats[0].name === 'string' ? candidateChats[0].name : chatName
         chatType = typeof candidateChats[0].type === 'string' ? candidateChats[0].type : chatType
+        if (candidateChats.length > 1) {
+          warn = `Найдено чатов: ${candidateChats.length}. Выбран «${chatName || 'Без названия'}» (${rawMessages.length} сообщ.).`
+        }
       }
     } else if (obj.chat && typeof obj.chat === 'object' && Array.isArray((obj.chat as { messages?: unknown }).messages)) {
       const sub = obj.chat as Record<string, unknown>
@@ -156,5 +160,6 @@ export function parse(src: string): ChatExport {
     chatType: chatType,
     messages,
     authors: authorNames,
+    ...(warn ? { warn } : {}),
   }
 }
