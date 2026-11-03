@@ -233,9 +233,11 @@ export function layout(
     })
   }
 
-  // Radialize по степени (аналог d3 forceRadial): угол — семантика FA2,
-  // радиус — ранг степени. Ядро — топ-хабы, fringe — мелочь. Мягкий бленд
-  // к кольцу ранга, детерминировано (ранг + id, без RNG).
+  // Форма плоскости (после FA2): вытяжка по сеяной оси + выступы/впадины от
+  // многооктавного углового шума. Ранговое кольцо убрано совсем — оно собирало
+  // арки и кругл活 силуэт. Амплитуда шума растёт к fringe (ядро держит чанки)
+  // и масштабируется размером карты: на карманных графах шум читается как
+  // случайность, а не как форма.
   if (iterations > 0 && graph.order > 2) {
     const rank = [...graph.mapNodes((n) => n)]
       .map((n) => [n, graph.degree(n)] as const)
@@ -251,32 +253,39 @@ export function layout(
     })
     cx /= graph.order
     cy /= graph.order
+    // радиус связной части — якорь для изолированных узлов (их FA2 уносит прочь)
     let maxR = 0
     graph.forEachNode((n) => {
+      if (graph.degree(n) === 0) return
       const a = graph.getNodeAttributes(n)
       maxR = Math.max(maxR, Math.hypot(a.x - cx, a.y - cy))
     })
-    const R = Math.max(maxR, 1)
+    maxR = Math.max(maxR, 1)
+    // 1) вытяжка: растянуть вдоль сеяной оси, сжать поперёк (объём ~сохраняем)
+    const stretchAngle = rng() * Math.PI
+    const k = 1.45
+    const ux = Math.cos(stretchAngle)
+    const uy = Math.sin(stretchAngle)
     graph.forEachNode((n) => {
       const a = graph.getNodeAttributes(n)
+      let dx = a.x - cx
+      let dy = a.y - cy
+      const d0 = Math.hypot(dx, dy) || 1
+      if (graph.degree(n) === 0) {
+        dx = (dx / d0) * maxR * 1.02
+        dy = (dy / d0) * maxR * 1.02
+      }
+      const a1 = dx * ux + dy * uy
+      const a2 = -dx * uy + dy * ux
+      const sx = a1 * k * ux + a2 * (1 / k) * -uy
+      const sy = a1 * k * uy + a2 * (1 / k) * ux
+      // 2) выступы/впадины: угловой шум радиуса, амплитуда растёт к fringe
+      const d1 = Math.hypot(sx, sy) || 1
       const t = (rankOf.get(n) ?? 0) / Math.max(1, graph.order - 1)
-      // Корень — равномерность по площади: линейный ранг втискивал полграфа
-      // в 22% площади диска (ядро давилось). Так плотность равномерна везде.
-      // Прицельный радиус дышит шумом формы (реф 2): амплитуда растёт к fringe,
-      // бленд к кольцу у fringe мягче — контур плоскости выходит неровным.
-      const dx = a.x - cx
-      const dy = a.y - cy
-      const d = Math.hypot(dx, dy) || 1
-      const wobble = shapeNoise(Math.atan2(dy, dx), shapePhases)
-      const target = R * (0.06 + 0.94 * Math.sqrt(t)) * (1 + 0.75 * wobble * (0.25 + 0.75 * t))
-      // Кольцо — страховка, не форма: связным узлам почти чистый FA2 (доли,
-      // пустоты, рваный контур), иначе ранговое кольцо собирает арки и круглит.
-      // Изолированные (без рёбер) FA2 уносит в бесконечность — их сажаем на кольцо.
-      const isolated = graph.degree(n) === 0 ? 1 : 0
-      const blend = isolated ? 1 : 0.12
-      const nr = d + (target - d) * blend
-      graph.setNodeAttribute(n, 'x', cx + (dx / d) * nr)
-      graph.setNodeAttribute(n, 'y', cy + (dy / d) * nr)
+      const amp = (0.18 + 0.5 * t) * Math.min(1, graph.order / 30)
+      const r2 = d1 * (1 + amp * shapeNoise(Math.atan2(sy, sx), shapePhases))
+      graph.setNodeAttribute(n, 'x', cx + (sx / d1) * r2)
+      graph.setNodeAttribute(n, 'y', cy + (sy / d1) * r2)
     })
   }
 
