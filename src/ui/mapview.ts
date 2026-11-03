@@ -26,7 +26,7 @@ export class MapView {
   private lodPending: number | null = null
   private lodRaf: number | null = null
   private animator = new SubgraphAnimator((v) => {
-    this.renderer?.setGraphState({ dimAlpha: v.dim, focusAlpha: v.focus })
+    this.renderer?.setGraphState({ dimAlpha: v.dim, focusAlpha: v.focus, releaseAlpha: v.release })
     this.renderer?.refresh({ skipIndexation: true })
   })
 
@@ -117,6 +117,9 @@ export class MapView {
 
   private focusSubgraph(key: string, topN: number): void {
     this.highlight.swap(this.renderer, key, topN)
+    // Уходящие узлы сдают буст размера через release-твин (иначе снап на середине)
+    this.animator.jump('release', 1)
+    this.animator.to('release', 0, 170, () => this.highlight.flushReleased(this.renderer))
     this.animator.to('focus', 1, 140)
     this.animator.to('dim', 1, 180)
   }
@@ -132,7 +135,7 @@ export class MapView {
       settings: MAP_SIGMA_SETTINGS,
       customNodeState: { isActive: false },
       customEdgeState: { isActive: false },
-      customGraphState: { hasActiveSubgraph: false, dimAlpha: 0, focusAlpha: 0, lodRatio: 1 },
+      customGraphState: { hasActiveSubgraph: false, dimAlpha: 0, focusAlpha: 0, lodRatio: 1, releaseAlpha: 0 },
       styles: MAP_SIGMA_STYLES,
     })
 

@@ -6,9 +6,12 @@ type MapRenderer = Sigma<any, any, any, CustomNodeState, CustomEdgeState, Custom
 
 // Трекинг активного эго-подграфа (hover/pin). Смена цели — диф-обменом:
 // снимаются только ушедшие узлы/рёбра, иначе на кадр виден всплеск всех цветов.
+// Ушедшие узлы не сбрасываются мгновенно: они получают флаг released, а буст
+// размера плавно сдаёт через graph-state releaseAlpha (mapview запускает твин).
 export class SubgraphHighlight {
   private nodes: string[] = []
   private edges: string[] = []
+  private released: string[] = []
 
   constructor(private readonly graph: Graph) {}
 
@@ -19,6 +22,15 @@ export class SubgraphHighlight {
   reset(): void {
     this.nodes = []
     this.edges = []
+    this.released = []
+  }
+
+  // Снять флаг released после затухания releaseAlpha (состояние уходит в базу)
+  flushReleased(renderer: MapRenderer | null): void {
+    for (const n of this.released) {
+      if (this.graph.hasNode(n)) renderer?.setNodeState(n, { isActive: false, isHighlighted: false, released: false })
+    }
+    this.released = []
   }
 
   clear(renderer: MapRenderer | null): void {
@@ -48,13 +60,18 @@ export class SubgraphHighlight {
       nextNodes.add(conn.neighbor)
       nextEdges.add(conn.edge)
     }
+    // Ушедшие из подсветки: сбрасываем активности мгновенно, но помечаем
+    // released — размер/цвет дожимаются мягко (см. правило not-active в mapStyles)
     for (const n of this.nodes) {
-      if (!nextNodes.has(n)) renderer.setNodeState(n, { isActive: false, isHighlighted: false })
+      if (!nextNodes.has(n)) {
+        renderer.setNodeState(n, { isActive: false, isHighlighted: false, released: true })
+        this.released.push(n)
+      }
     }
     for (const e of this.edges) {
       if (!nextEdges.has(e)) renderer.setEdgeState(e, { isActive: false })
     }
-    renderer.setNodeState(key, { isActive: true, isHighlighted: true })
+    renderer.setNodeState(key, { isActive: true, isHighlighted: true, released: false })
     for (const conn of this.weightedTop(neighborsWithWeights, topN)) {
       renderer.setNodeState(conn.neighbor, { isActive: true, isHighlighted: false })
       renderer.setEdgeState(conn.edge, { isActive: true })

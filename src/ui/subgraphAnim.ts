@@ -1,13 +1,15 @@
-// rAF-твины граф-состояний sigma: стили-функции читают dim/focus на каждом refresh,
-// поэтому интерполяция значений даёт покадровое сглаживание подсветки узлов.
-// Все твины живут в одном rAF-цикле и применяются одной порцией за кадр —
-// два одновременных твина иначе дёргали refresh дважды за кадр (пропуски кадров).
-export type TweenField = 'dim' | 'focus'
+// rAF-твины граф-состояний sigma: стили-функции читают dim/focus/release на
+// каждом refresh, поэтому интерполяция значений даёт покадровое сглаживание
+// подсветки узлов. Все твины живут в одном rAF-цикле и применяются одной
+// порцией за кадр — два одновременных твина иначе дёргали refresh дважды за
+// кадр (пропуски кадров). release — затухание размеров «уходящих» узлов при
+// смене цели подсветки: без него старый узел снапается в базовый размер.
+export type TweenField = 'dim' | 'focus' | 'release'
 
 type Tween = { from: number; to: number; t0: number; dur: number; onDone?: () => void }
 
 export class SubgraphAnimator {
-  private vals: Record<TweenField, number> = { dim: 0, focus: 0 }
+  private vals: Record<TweenField, number> = { dim: 0, focus: 0, release: 0 }
   private tweens: Partial<Record<TweenField, Tween>> = {}
   private raf: number | null = null
 
@@ -16,6 +18,14 @@ export class SubgraphAnimator {
   value(field: TweenField): number {
     return this.vals[field]
   }
+
+  // Мгновенно выставить значение и сразу применить (стартовые условия твина)
+  jump(field: TweenField, value: number): void {
+    delete this.tweens[field]
+    this.vals[field] = value
+    this.apply({ ...this.vals })
+  }
+
 
   to(field: TweenField, target: number, duration: number, onDone?: () => void): void {
     const current = this.tweens[field]
@@ -35,7 +45,8 @@ export class SubgraphAnimator {
   private step = (now: number): void => {
     this.raf = null
     let settled: Array<() => void> = []
-    for (const field of ['dim', 'focus'] as const) {
+    // Обходим снимок ключей: твины удаляются внутри цикла
+    for (const field of Object.keys(this.tweens) as TweenField[]) {
       const tw = this.tweens[field]
       if (!tw) continue
       const p = Math.min(1, (now - tw.t0) / tw.dur)
