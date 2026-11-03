@@ -9,19 +9,19 @@ type MapSigma = Sigma<any, any, any, CustomNodeState, CustomEdgeState, CustomGra
 
 const DIM_NODE = '#26241f'
 
-// LOD обзора (реф 1): при отдалении экранная величина гасится к точке; ниже
-// 3 px пузырь прячем совсем, а «пыль» (3…7 px) не исчезает, а приглушается в
-// цвет фона: силуэт и нити сохраняются, ячейкӑ-каша уходит.
-const LOD_FLOOR = 3
+// LOD обзора (реф 1): при отдалении экранная величина гасится к точке, а
+// «пыль» (2…7 px) плавно тает в цвет фона и лишь почти невидимой прячется
+// совсем (2 px). Без этого лёгкое отдаление резко проскакивало на порогe.
+const LOD_FLOOR = 2
 const LOD_DUST = 7
 function lodScale(sizePx: number, lodRatio: number): number {
   return lodRatio > 1 ? sizePx * Math.pow(lodRatio, -0.75) : sizePx
 }
-// Степень пыли узла на обзорном зуме: 0 = обычный цвет, до 0.7 = тает в фон.
+// Степень пыли узла на обзорном зуме: 0 = обычный цвет, до 1 = растворился.
 function lodDust(sizePx: number, lodRatio: number): number {
   const s = lodScale(sizePx, lodRatio)
   if (s >= LOD_DUST) return 0
-  return Math.max(0, Math.min(1, (LOD_DUST - s) / (LOD_DUST - LOD_FLOOR))) * 0.7
+  return Math.max(0, Math.min(1, (LOD_DUST - s) / (LOD_DUST - LOD_FLOOR)))
 }
 
 // mixHex интерполирует #rgb / #rrggbb / #rrggbbaa; кэш по ключу (цвета повторяются на каждый refresh)
@@ -90,7 +90,7 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
       visibility: (attrs: any, _s: any, g: CustomGraphState) =>
         (g.dimAlpha ?? 0) === 0 && lodScale((attrs.size ?? 0) as number, g.lodRatio ?? 1) < LOD_FLOOR
           ? 'hidden'
-          : 'visible',
+          : 'visible', // скрывается только уже растворившаяся пыль — переход незаметен
       // Слово живёт внутри пузыря, только если влезает: иначе — пилюля справа.
       // Топы (s>=26) строятся под слово; средним кегль жмём до посадки, минимум 10.
       labelPosition: (attrs: any) => (overSize(attrs) !== null ? 'over' : 'right'),
