@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { collisionIterationsForCount, getLruCache, layout, resolveCollisions, setLruCache } from '../src/core/graph'
+import { collisionIterationsForCount, getLruCache, layout, resolveCollisions, setLruCache, shapeNoise } from '../src/core/graph'
 
 describe('LRU cache helpers', () => {
   it('evicts the least recently set key once maxEntries is exceeded', () => {
@@ -166,5 +166,39 @@ describe('layout', () => {
       { seed: 1, fullRun: false, iterations: 10, onStage: (done, stage) => calls.push([done, stage]) }
     )
     expect(calls).toContainEqual([92, 'Разведение пересечений...'])
+  })
+
+  it('(f) shapeNoise is deterministic, bounded and varies with angle', () => {
+    const phases: [number, number, number] = [0.7, 2.1, 4.4]
+    for (const angle of [0, 0.5, 1.1, 2.3, 3.4, 4.9, 5.8]) {
+      expect(shapeNoise(angle, phases)).toBe(shapeNoise(angle, phases))
+      expect(Math.abs(shapeNoise(angle, phases))).toBeLessThanOrEqual(1)
+    }
+    const values = [0, 0.9, 1.8, 2.7].map((a) => shapeNoise(a, phases))
+    const spread = Math.max(...values) - Math.min(...values)
+    expect(spread).toBeGreaterThan(0.3)
+  })
+
+  it('(g) fringe silhouette is noise-wobbled, not a smooth ring', () => {
+    // Звезда: хаб плюс 24 листа; после FA2 и radialize листья лежат у края —
+    // без шума их прицельный радиус задавался бы только рангом степени.
+    const nodes = Array.from({ length: 25 }, (_, i) => ({ id: i + 1 }))
+    const edges = nodes.slice(1).map((n) => ({ a: 1, b: n.id, weight: 5 }))
+    const res = layout(nodes, edges, { seed: 1337, fullRun: true, iterations: 200 })
+    const [, cx, cy] = [...res.positions.values()].reduce(
+      (acc, p, idx) => {
+        let x = acc[1] + (p.x - acc[1]) / (idx + 1)
+        let y = acc[2] + (p.y - acc[2]) / (idx + 1)
+        return [0, x, y]
+      },
+      [0, 0, 0] as [number, number, number]
+    )
+    const radii = [...res.positions.values()].map((p) => Math.hypot(p.x - cx, p.y - cy))
+    const maxR = Math.max(...radii)
+    // 24 листа на разных фазах шума угла (радиусы модулированы ±0.35·blend 0.3)
+    expect(maxR).toBeGreaterThan(0)
+    const fringe = radii.filter((r) => r > maxR * 0.55)
+    const spread = Math.max(...fringe) - Math.min(...fringe)
+    expect(spread / maxR).toBeGreaterThan(0.04)
   })
 })

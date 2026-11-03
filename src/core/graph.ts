@@ -51,6 +51,16 @@ function createRng(seed: number) {
   }
 }
 
+// Гармонический шум формы плоскости (реф 2, NOISE): три нечётные октавы угла.
+// Фазы от seed: тот же граф — тот же неровный контур, детерминировано. |n| <= 1.
+export function shapeNoise(angle: number, phases: [number, number, number]): number {
+  return (
+    0.5 * Math.sin(2 * angle + phases[0]) +
+    0.33 * Math.sin(3 * angle + phases[1]) +
+    0.17 * Math.sin(5 * angle + phases[2])
+  )
+}
+
 // shortcut: 30 passes above 400 nodes may leave overlaps; upgrade if large graphs look packed
 export function collisionIterationsForCount(nodeCount: number): number {
   return nodeCount <= 400 ? 80 : 30
@@ -130,6 +140,8 @@ export function layout(
   const graph = new Graph()
   const rng = createRng(opts.seed)
   const spread = Math.max(500, Math.sqrt(nodes.length) * 150)
+  // Фазы шума формы: до расходования rng на позиции, для устойчивого детерминизма
+  const shapePhases: [number, number, number] = [rng() * Math.PI * 2, rng() * Math.PI * 2, rng() * Math.PI * 2]
 
   // Радиальный degree-aware старт: хабы рождаются в ядре, мелочь — на fringe.
   // Угол — золотая спираль + seeded jitter, радиус убывает со степенью узла.
@@ -154,8 +166,13 @@ export function layout(
     } else {
       const deg = degree.get(String(node.id)) ?? 0
       const t = maxDegree > 0 ? deg / maxDegree : 0
-      const radius = (spread / 2) * (1 - 0.85 * Math.pow(t, 0.7)) * (0.9 + 0.2 * rng())
       const angle = index * GOLDEN_ANGLE + (rng() - 0.5) * 0.6
+      // Стартовый радиус дышит той же гармоникой: рождения — уже не ровное кольцо
+      const radius =
+        (spread / 2) *
+        (1 - 0.85 * Math.pow(t, 0.7)) *
+        (1 + 0.25 * shapeNoise(angle, shapePhases)) *
+        (0.9 + 0.2 * rng())
       x = Math.cos(angle) * radius
       y = Math.sin(angle) * radius
     }
@@ -233,11 +250,15 @@ export function layout(
       const t = (rankOf.get(n) ?? 0) / Math.max(1, graph.order - 1)
       // Корень — равномерность по площади: линейный ранг втискивал полграфа
       // в 22% площади диска (ядро давилось). Так плотность равномерна везде.
-      const target = R * (0.06 + 0.94 * Math.sqrt(t))
+      // Прицельный радиус дышит шумом формы (реф 2): амплитуда растёт к fringe,
+      // бленд к кольцу у fringe мягче — контур плоскости выходит неровным.
       const dx = a.x - cx
       const dy = a.y - cy
       const d = Math.hypot(dx, dy) || 1
-      const nr = d + (target - d) * 0.55
+      const wobble = shapeNoise(Math.atan2(dy, dx), shapePhases)
+      const target = R * (0.06 + 0.94 * Math.sqrt(t)) * (1 + 0.35 * wobble * (0.25 + 0.75 * t))
+      const blend = 0.55 - 0.25 * t
+      const nr = d + (target - d) * blend
       graph.setNodeAttribute(n, 'x', cx + (dx / d) * nr)
       graph.setNodeAttribute(n, 'y', cy + (dy / d) * nr)
     })

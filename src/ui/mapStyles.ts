@@ -2,11 +2,19 @@ import type Sigma from 'sigma'
 
 export type CustomNodeState = { isActive: boolean }
 export type CustomEdgeState = { isActive: boolean }
-export type CustomGraphState = { hasActiveSubgraph: boolean; dimAlpha: number; focusAlpha: number }
+// lodRatio — camera.ratio: >1 = отдаление (пузыри гаснут к точкам, реф 1)
+export type CustomGraphState = { hasActiveSubgraph: boolean; dimAlpha: number; focusAlpha: number; lodRatio: number }
 
 type MapSigma = Sigma<any, any, any, CustomNodeState, CustomEdgeState, CustomGraphState>
 
 const DIM_NODE = '#26241f'
+
+// LOD обзора (реф 1): при отдалении экранная величина гасится к точке; ниже
+// 2.5 px пузырь прячем совсем — остаются только крупные узлы и нити.
+const LOD_FLOOR = 2.5
+function lodScale(sizePx: number, lodRatio: number): number {
+  return lodRatio > 1 ? sizePx * Math.pow(lodRatio, -0.75) : sizePx
+}
 
 // mixHex интерполирует #rgb / #rrggbb / #rrggbbaa; кэш по ключу (цвета повторяются на каждый refresh)
 const mixCache = new Map<string, string>()
@@ -66,8 +74,12 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
   nodes: [
     {
       color: { attribute: 'color' },
-      size: { attribute: 'size' },
+      size: (attrs: any, _s: any, g: CustomGraphState) => lodScale((attrs.size ?? 0) as number, g.lodRatio ?? 1),
       label: { attribute: 'label' },
+      visibility: (attrs: any, _s: any, g: CustomGraphState) =>
+        (g.dimAlpha ?? 0) === 0 && lodScale((attrs.size ?? 0) as number, g.lodRatio ?? 1) < LOD_FLOOR
+          ? 'hidden'
+          : 'visible',
       // Слово живёт внутри пузыря, только если влезает: иначе — пилюля справа.
       // Топы (s>=26) строятся под слово; средним кегль жмём до посадки, минимум 10.
       labelPosition: (attrs: any) => (overSize(attrs) !== null ? 'over' : 'right'),
@@ -83,7 +95,13 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
       // (px) в строке ломает атлас глифов (текст схлопывается в чёрточку).
       // Кегль задаётся через labelSize выше.
       labelFont: '600 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-      labelVisibility: (attrs: any) => ((attrs.size ?? 0) >= 18 ? 'visible' : 'auto'),
+      // На обзорном зуме подписи прячем целиком: остаются точки и нити (реф 1)
+      labelVisibility: (attrs: any, _s: any, g: CustomGraphState) =>
+        (g.lodRatio ?? 1) > 1.15
+          ? 'hidden'
+          : (attrs.size ?? 0) >= 18
+            ? 'visible'
+            : 'auto',
       labelBackgroundColor: (attrs: any) => ((attrs.size ?? 0) < 18 ? '#242320f5' : undefined),
       labelBackgroundPadding: 5,
     },
@@ -132,7 +150,14 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
     },
   ],
   edges: [
-    { color: { attribute: 'color' }, size: { attribute: 'size' } },
+    // path/curvature — переменные программы pathCurved (объявляются primitives
+    // в MapView); through spread: тип StylesDeclaration не знает о нестандартных
+    // переменных. Все нити — дуги (рефы 1 и 4); кривизна — атрибут ребра.
+    {
+      color: { attribute: 'color' },
+      size: { attribute: 'size' },
+      ...({ path: 'curved', curvature: { attribute: 'curvature', defaultValue: 0.15 } } as Record<string, unknown>),
+    },
     {
       // SAFETY: sigma passes untyped state/graph here; keys match types above.
       when: (_a, s) => !(s as unknown as CustomEdgeState)?.isActive,
