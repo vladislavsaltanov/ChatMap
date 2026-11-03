@@ -1,4 +1,5 @@
 import { escapeHtml } from '../core/escapeHtml'
+import type Graph from 'graphology'
 import { parseLabelOverrides } from '../core/labelOverrides'
 
 const STORAGE_KEY = 'chatmap.labels'
@@ -39,6 +40,27 @@ export type NodeDetails = {
   count: number
   neighbors: Array<{ id: number; label: string; weight: number }>
   forms: Array<[form: string, count: number]>
+}
+
+export function buildNodeDetails(graph: Graph, id: number, forms: NodeDetails['forms']): NodeDetails | null {
+  const key = String(id)
+  if (!graph.hasNode(key)) return null
+
+  const attrs = graph.getNodeAttributes(key)
+  const label = attrs.label as string
+  const defaultLabel = (attrs.defaultLabel as string) || label
+  const canon = (attrs.canon as string) || defaultLabel
+  const count = (attrs.count as number) || 0
+
+  const neighborsList: Array<{ id: number; label: string; weight: number }> = []
+  for (const nb of graph.neighbors(key)) {
+    const edge = graph.edge(key, nb)
+    const weight = edge ? (graph.getEdgeAttribute(edge, 'weight') as number) : 0
+    neighborsList.push({ id: Number(nb), label: graph.getNodeAttribute(nb, 'label') as string, weight })
+  }
+  neighborsList.sort((a, b) => b.weight - a.weight)
+
+  return { id, label, defaultLabel, canon, count, neighbors: neighborsList.slice(0, 3), forms }
 }
 
 export class NodePanel {
