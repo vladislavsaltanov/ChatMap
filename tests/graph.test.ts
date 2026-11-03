@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { layout, resolveCollisions } from '../src/core/graph'
+import { collisionIterationsForCount, layout, resolveCollisions } from '../src/core/graph'
 
 describe('layout', () => {
   it('(a) reuses prevXY coordinates when fullRun is false', () => {
@@ -91,6 +91,27 @@ describe('layout', () => {
     const distWeak = Math.hypot(p3.x - p1.x, p3.y - p1.y)
 
     expect(distStrong).toBeLessThan(distWeak)
+  })
+
+  it('clamps scaleFactor above 8 to 8 in resolveCollisions', () => {
+    const padding = 10
+    const separation = (scaleFactor: number) => {
+      const nodes = [
+        { id: 1, x: 0, y: 0, size: 20 },
+        { id: 2, x: 0, y: 0, size: 20 },
+      ]
+      resolveCollisions(nodes, padding, 80, scaleFactor)
+      return Math.hypot(nodes[1].x - nodes[0].x, nodes[1].y - nodes[0].y)
+    }
+    const expected = 2 * (20 * 8 + padding * 0.5)
+    expect(separation(8)).toBeCloseTo(expected, 6)
+    expect(separation(100)).toBeCloseTo(expected, 6)
+  })
+
+  it('collisionIterationsForCount uses 80 iterations up to 400 nodes and 30 above', () => {
+    expect(collisionIterationsForCount(400)).toBe(80)
+    expect(collisionIterationsForCount(401)).toBe(30)
+    expect(collisionIterationsForCount(1000)).toBe(30)
   })
 
   it('calls onStage(92, stage) when iterations > 0', () => {
