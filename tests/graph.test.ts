@@ -92,4 +92,14 @@ describe('layout', () => {
 
     expect(distStrong).toBeLessThan(distWeak)
   })
+
+  it('calls onStage(92, stage) when iterations > 0', () => {
+    const calls: Array<[number, string]> = []
+    layout(
+      [{ id: 1 }, { id: 2 }],
+      [{ a: 1, b: 2, weight: 1 }],
+      { seed: 1, fullRun: false, iterations: 10, onStage: (done, stage) => calls.push([done, stage]) }
+    )
+    expect(calls).toContainEqual([92, 'Разведение пересечений...'])
+  })
 })

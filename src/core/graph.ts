@@ -17,6 +17,7 @@ export type LayoutOpts = {
   seed: number
   fullRun: boolean
   iterations?: number
+  onStage?: (done: number, stage: string) => void
 }
 
 export type LayoutResult = {
@@ -157,6 +158,7 @@ export function layout(
   }
 
   if (iterations > 0) {
+    opts.onStage?.(92, 'Разведение пересечений...')
     let minX = Infinity
     let maxX = -Infinity
     let minY = Infinity

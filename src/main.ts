@@ -38,6 +38,7 @@ const mapView = renderMap(screens.map)
 const controls = renderControls(screens.map)
 
 controls.onChange((cfg) => {
+  if (!screens.map.hidden) mapView.showProgress(75, 100, 'Выборка узлов и рёбер...')
   worker.postMessage({ type: 'update', cfg } satisfies WorkerIn)
 })
 
@@ -49,12 +50,14 @@ worker.onmessage = (e: MessageEvent<WorkerOut>) => {
   const msg = e.data
   if (msg.type === 'progress') {
     updateProgress(msg.done, msg.total, msg.stage)
+    if (!screens.map.hidden) mapView.showProgress(msg.done, msg.total, msg.stage)
   } else if (msg.type === 'ready') {
     controls.setAuthors(msg.authors)
   } else if (msg.type === 'map') {
     show('map')
     requestAnimationFrame(() => {
       mapView.render(msg)
+      mapView.hideProgress()
     })
   } else if (msg.type === 'error') {
     showError(msg.message)

@@ -12,6 +12,7 @@ type CustomGraphState = { hasActiveSubgraph: boolean }
 export class MapView {
   private container: HTMLElement
   private hoverLine: HTMLElement
+  private progressEl: HTMLElement
   private graph: Graph
   private renderer: Sigma<any, any, any, CustomNodeState, CustomEdgeState, CustomGraphState> | null = null
   private pinnedId: number | null = null
@@ -24,7 +25,7 @@ export class MapView {
 
   constructor(root: HTMLElement) {
     root.innerHTML = `
-      <div class="canvas" role="img" aria-label="Карта слов"></div>
+      <div class="canvas" role="img" aria-label="Карта слов"><div class="map-progress" hidden></div></div>
       <div class="map-controls">
         <button type="button" id="export-png" aria-label="Экспорт в PNG" class="num">PNG</button>
         <button type="button" id="zoom-in" aria-label="Приблизить">+</button>
@@ -36,6 +37,7 @@ export class MapView {
 
     this.container = root.querySelector<HTMLElement>('.canvas')!
     this.hoverLine = root.querySelector<HTMLElement>('.hover-line')!
+    this.progressEl = this.container.querySelector<HTMLElement>('.map-progress')!
     this.graph = new Graph()
     this.nodePanel = new NodePanel(root)
 
@@ -398,6 +400,28 @@ export class MapView {
 
   onPin(cb: (id: number | null) => void): void {
     this.pinCallbacks.push(cb)
+  }
+
+  public showProgress(done: number, total: number, stage?: string): void {
+    const pct = Math.min(100, Math.max(0, Math.round((done / Math.max(1, total)) * 100)))
+    this.container.setAttribute('aria-busy', 'true')
+    this.progressEl.hidden = false
+    this.progressEl.style.width = `${pct}%`
+    this.hoverLine.textContent = stage
+      ? `Обновление · ${stage.replace(/\.\.\.$/, '')} · ${pct}%`
+      : `Обновление · ${pct}%`
+  }
+
+  public hideProgress(): void {
+    this.progressEl.hidden = true
+    this.progressEl.style.width = '0%'
+    this.container.removeAttribute('aria-busy')
+    if (this.pinnedId !== null && this.graph.hasNode(String(this.pinnedId))) {
+      const attrs = this.graph.getNodeAttributes(String(this.pinnedId))
+      this.hoverLine.textContent = `${attrs.label} · ${attrs.count}`
+    } else {
+      this.hoverLine.textContent = 'слово · 0'
+    }
   }
 
   getRenderer(): Sigma<any, any, any, any, any, any> | null {

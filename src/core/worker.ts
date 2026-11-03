@@ -105,6 +105,7 @@ function runPipeline(fullRun: boolean) {
   const layoutResult = layout(layoutNodes, backboneEdges, {
     seed: 1337,
     fullRun,
+    onStage: (done, stage) => send({ type: 'progress', done, total: 100, stage }),
   })
 
   for (const [id, pos] of layoutResult.positions) {
