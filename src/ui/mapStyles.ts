@@ -58,6 +58,11 @@ function mixHex(from: string, to: string, t: number): string {
 export const MAP_SIGMA_SETTINGS: Partial<ReturnType<MapSigma['getSettings']>> = {
   allowInvalidContainer: true,
   itemSizesReference: 'screen',
+  // Нормализация экстента считается один раз после пересборки графа ('once');
+  // иначе рост размера подсвеченного узла при hover/пине каждый кадр втягивает
+  // размеры в extent, нормализация едет — карта сдвигается под курсором,
+  // наведение срывается: текст пропадает и пузырь рывком возвращается.
+  autoRescale: 'once',
   autoRescaleContent: 'nodes',
   stagePadding: 60,
   labelRenderedSizeThreshold: 18,
@@ -69,8 +74,8 @@ export const MAP_SIGMA_SETTINGS: Partial<ReturnType<MapSigma['getSettings']>> = 
   // Глубокий зум не раздувает рёбра в «балки»: потолок на утолщение экранного масштаба
   zoomToSizeRatioFunction: (ratio: number) => Math.min(Math.sqrt(ratio), 1),
   minEdgeThickness: 1,
-  // Жест приближения спокойнее дефолта (1.7), но не вялый: отзыв «жест посильнее»
-  zoomingRatio: 1.25,
+  // Жест приближения: отзыв «жест посильнее» (1.42), всё ещё мягче дефолта 1.7
+  zoomingRatio: 1.42,
   doubleClickZoomingRatio: 1.35,
 }
 
