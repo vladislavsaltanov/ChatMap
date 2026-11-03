@@ -68,7 +68,6 @@ export class MapView {
         backgroundColor: '#161619',
         width: 2560,
         height: 1440,
-        cameraState: { x: 0.5, y: 0.5, ratio: 1, angle: 0 },
       })
     })
 
