@@ -269,9 +269,11 @@ export function layout(
       const d = Math.hypot(dx, dy) || 1
       const wobble = shapeNoise(Math.atan2(dy, dx), shapePhases)
       const target = R * (0.06 + 0.94 * Math.sqrt(t)) * (1 + 0.75 * wobble * (0.25 + 0.75 * t))
-      // Мягкий бленд к кольцу: FA2-доли (углы) сохраняются — дисперсия выживает,
-      // радиальная формула лишь страхует выбросы. Сильный бленд стягивал всё в диск.
-      const blend = 0.35 - 0.15 * t
+      // Кольцо — страховка, не форма: связным узлам почти чистый FA2 (доли,
+      // пустоты, рваный контур), иначе ранговое кольцо собирает арки и круглит.
+      // Изолированные (без рёбер) FA2 уносит в бесконечность — их сажаем на кольцо.
+      const isolated = graph.degree(n) === 0 ? 1 : 0
+      const blend = isolated ? 1 : 0.12
       const nr = d + (target - d) * blend
       graph.setNodeAttribute(n, 'x', cx + (dx / d) * nr)
       graph.setNodeAttribute(n, 'y', cy + (dy / d) * nr)
