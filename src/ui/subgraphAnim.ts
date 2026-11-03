@@ -40,8 +40,12 @@ export class SubgraphAnimator {
       if (!tw) continue
       const p = Math.min(1, (now - tw.t0) / tw.dur)
       const eased = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2
-      this.vals[field] = tw.from + (tw.to - tw.from) * eased
+      // Квантование до 1/40: непрерывные значения иначе рожали новые ключи
+      // цветов/размеров КАЖДЫЙ кадр (600 узлов × 60 fps) — анимация пина
+      // проседала и дёергала на середине.
+      this.vals[field] = Math.round((tw.from + (tw.to - tw.from) * eased) * 40) / 40
       if (p >= 1) {
+        this.vals[field] = tw.to
         delete this.tweens[field]
         if (tw.onDone) settled.push(tw.onDone)
       }

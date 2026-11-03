@@ -69,8 +69,8 @@ export const MAP_SIGMA_SETTINGS: Partial<ReturnType<MapSigma['getSettings']>> = 
   // Глубокий зум не раздувает рёбра в «балки»: потолок на утолщение экранного масштаба
   zoomToSizeRatioFunction: (ratio: number) => Math.min(Math.sqrt(ratio), 1),
   minEdgeThickness: 1,
-  // Жест приближения заметно спокойнее дефолта (1.7), отзыв «са более слабая»
-  zoomingRatio: 1.15,
+  // Жест приближения спокойнее дефолта (1.7), но не вялый: отзыв «жест посильнее»
+  zoomingRatio: 1.25,
   doubleClickZoomingRatio: 1.35,
 }
 
@@ -138,7 +138,7 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
           mixHex(
             (attrs.color as string) || DIM_NODE,
             DIM_NODE,
-            Math.max(g.dimAlpha * 0.82, lodDust((attrs.size ?? 0) as number, g.lodRatio ?? 1)),
+            Math.max((Math.round(16 * (g.dimAlpha ?? 0)) / 16) * 0.82, lodDust((attrs.size ?? 0) as number, g.lodRatio ?? 1)),
           ),
         labelColor: (attrs: any, _s, g: CustomGraphState) =>
           mixHex((attrs.size ?? 0) >= 18 ? '#1c1a16' : '#f4f2ec', '#57534a', g.dimAlpha),
@@ -151,7 +151,10 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
       whenState: 'isHighlighted',
       then: {
         depth: 'topNodes',
-        size: (attrs: any, _s, g: CustomGraphState) => (attrs.size ?? 0) * (1 + 0.1 * g.focusAlpha),
+        // Рост пузыря подсветки ступенями (4 шага на весь твiн): каждая ступень —
+        // один репаш геометрии узла, иначе каждый кадр пина перегружал программу.
+        size: (attrs: any, _s, g: CustomGraphState) =>
+          (attrs.size ?? 0) * (1 + 0.1 * (Math.round(4 * (g.focusAlpha ?? 0)) / 4)),
         labelVisibility: 'visible',
         labelColor: '#ffffff',
         backdropVisibility: 'visible',
