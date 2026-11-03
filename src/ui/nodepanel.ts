@@ -138,7 +138,12 @@ export class NodePanel {
       const btn = document.createElement('button')
       btn.type = 'button'
       btn.className = 'neighbor-btn'
-      btn.innerHTML = `<span>${escapeHtml(nb.label)}</span><span class="num">${nb.weight}</span>`
+      const labelEl = document.createElement('span')
+      labelEl.textContent = nb.label
+      const weightEl = document.createElement('span')
+      weightEl.className = 'num'
+      weightEl.textContent = String(Number(nb.weight.toFixed(1)))
+      btn.append(labelEl, weightEl)
       btn.addEventListener('click', () => {
         if (this.onSelectCallback) {
           this.onSelectCallback(nb.id)
