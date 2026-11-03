@@ -60,11 +60,18 @@ export function resolveCollisions(
   nodes: Array<{ id: number; x: number; y: number; size?: number }>,
   padding: number = 8,
   maxIterations: number = 80,
-  scaleFactor: number = 1
+  scaleFactor: number = 1,
+  // padScale: плотность fringe. null = равномерный padding (дефолт, тесты).
+  // Пропорциональный размеру даёт плотные скопления мелочи и воздух у хабов.
+  padScale: ((size: number) => number) | null = null
 ): void {
   const count = nodes.length
   if (count <= 1) return
   const scale = Math.min(scaleFactor, MAX_SCALE_FACTOR)
+  const padFor = (size: number | undefined): number => {
+    const s = size || 20
+    return padScale ? padScale(s) : padding
+  }
 
   for (let iter = 0; iter < maxIterations; iter++) {
     let hasCollision = false
@@ -72,11 +79,11 @@ export function resolveCollisions(
 
     for (let i = 0; i < count; i++) {
       const a = nodes[i]
-      const ra = (a.size || 20) * scale + padding * 0.5
+      const ra = (a.size || 20) * scale + padFor(a.size) * 0.5
 
       for (let j = i + 1; j < count; j++) {
         const b = nodes[j]
-        const rb = (b.size || 20) * scale + padding * 0.5
+        const rb = (b.size || 20) * scale + padFor(b.size) * 0.5
         const minDist = ra + rb
 
         let dx = b.x - a.x
@@ -124,15 +131,33 @@ export function layout(
   const rng = createRng(opts.seed)
   const spread = Math.max(500, Math.sqrt(nodes.length) * 150)
 
-  for (const node of nodes) {
+  // Радиальный degree-aware старт: хабы рождаются в ядре, мелочь — на fringe.
+  // Угол — золотая спираль + seeded jitter, радиус убывает со степенью узла.
+  // Детерминировано тем же seed; prevXY-кэш для инкремента не трогаем.
+  const degree = new Map<string, number>()
+  for (const edge of edges) {
+    const a = String(edge.a)
+    const b = String(edge.b)
+    degree.set(a, (degree.get(a) ?? 0) + 1)
+    degree.set(b, (degree.get(b) ?? 0) + 1)
+  }
+  let maxDegree = 0
+  for (const d of degree.values()) if (d > maxDegree) maxDegree = d
+  const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5))
+
+  for (const [index, node] of nodes.entries()) {
     let x: number
     let y: number
     if (!opts.fullRun && node.prevXY) {
       x = node.prevXY.x
       y = node.prevXY.y
     } else {
-      x = (rng() - 0.5) * spread
-      y = (rng() - 0.5) * spread
+      const deg = degree.get(String(node.id)) ?? 0
+      const t = maxDegree > 0 ? deg / maxDegree : 0
+      const radius = (spread / 2) * (1 - 0.85 * Math.pow(t, 0.7)) * (0.9 + 0.2 * rng())
+      const angle = index * GOLDEN_ANGLE + (rng() - 0.5) * 0.6
+      x = Math.cos(angle) * radius
+      y = Math.sin(angle) * radius
     }
     graph.addNode(String(node.id), { x, y, size: node.size || 20 })
   }
@@ -150,23 +175,71 @@ export function layout(
 
   const iterations = opts.iterations !== undefined
     ? opts.iterations
-    : opts.fullRun ? 300 : 20
+    : opts.fullRun ? 1200 : 20
 
   if (iterations > 0 && graph.order > 1) {
     forceAtlas2.assign(graph, {
       iterations,
       settings: {
+        // lin-lin: притяжение пропорционально дистанции — rim-старт сходится
+        // за разумные итерации (тест «сильная связь ближе слабой»). Тугость
+        // кластеров добираем edgeWeightInfluence, а не linLog: у lin-log
+        // логарифмическое притяжение, дальние узлы стягиваются слишком медленно.
         linLogMode: false,
+        // NOTE: adjustSizes в graphology-FA2 размеры игнорирует (апстрим-баг #404);
+        // перекрытия крупных пузырей честно разруливает resolveCollisions ниже.
         adjustSizes: true,
-        outboundAttractionDistribution: false,
+        // OAD=true: хабы слабее притягивают и выдавливаются к границам —
+        // шар распадается на доли, плоскость заполняется (Gephi: Dissuade Hubs).
+        // Ядро держит radialize-постпасс ниже, так что тест (e) не страдает.
+        outboundAttractionDistribution: true,
         barnesHutOptimize: true,
         barnesHutTheta: 0.5,
-        scalingRatio: 2800,
-        gravity: 0.0004,
-        edgeWeightInfluence: 1.4,
+        scalingRatio: 9000,
+        gravity: 0.0005,
+        edgeWeightInfluence: 2.0,
         strongGravityMode: false,
         slowDown: 1,
       },
+    })
+  }
+
+  // Radialize по степени (аналог d3 forceRadial): угол — семантика FA2,
+  // радиус — ранг степени. Ядро — топ-хабы, fringe — мелочь. Мягкий бленд
+  // к кольцу ранга, детерминировано (ранг + id, без RNG).
+  if (iterations > 0 && graph.order > 2) {
+    const rank = [...graph.mapNodes((n) => n)]
+      .map((n) => [n, graph.degree(n)] as const)
+      .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+      .map(([n]) => n)
+    const rankOf = new Map(rank.map((n, i) => [n, i]))
+    let cx = 0
+    let cy = 0
+    graph.forEachNode((n) => {
+      const a = graph.getNodeAttributes(n)
+      cx += a.x
+      cy += a.y
+    })
+    cx /= graph.order
+    cy /= graph.order
+    let maxR = 0
+    graph.forEachNode((n) => {
+      const a = graph.getNodeAttributes(n)
+      maxR = Math.max(maxR, Math.hypot(a.x - cx, a.y - cy))
+    })
+    const R = Math.max(maxR, 1)
+    graph.forEachNode((n) => {
+      const a = graph.getNodeAttributes(n)
+      const t = (rankOf.get(n) ?? 0) / Math.max(1, graph.order - 1)
+      // Корень — равномерность по площади: линейный ранг втискивал полграфа
+      // в 22% площади диска (ядро давилось). Так плотность равномерна везде.
+      const target = R * (0.06 + 0.94 * Math.sqrt(t))
+      const dx = a.x - cx
+      const dy = a.y - cy
+      const d = Math.hypot(dx, dy) || 1
+      const nr = d + (target - d) * 0.55
+      graph.setNodeAttribute(n, 'x', cx + (dx / d) * nr)
+      graph.setNodeAttribute(n, 'y', cy + (dy / d) * nr)
     })
   }
 
@@ -195,7 +268,13 @@ export function layout(
     }
     const span = Math.max(maxX - minX, maxY - minY, 1000)
     const scaleFactor = Math.min(MAX_SCALE_FACTOR, Math.max(1, span / 850))
-    resolveCollisions(positionedNodes, 10, collisionIterationsForCount(positionedNodes.length), scaleFactor)
+    // Пропорциональный padding: мелочь скучивается плотно, хабам — воздух.
+    // (дефолт resolveCollisions равномерный — тест на separation не трогаем).
+    const padScale = (s: number): number => 10 * Math.min(1, Math.max(0.2, s / 24))
+    // Крупным графам — больше проходов: 30 итераций 600 больших пузырей не расталкивают.
+    // (collisionIterationsForCount не трогаем — его значения зафиксированы тестами.)
+    const passes = Math.max(collisionIterationsForCount(positionedNodes.length), positionedNodes.length > 400 ? 60 : 0)
+    resolveCollisions(positionedNodes, 6, passes, scaleFactor, padScale)
   }
 
   const positions = new Map<number, { x: number; y: number }>()

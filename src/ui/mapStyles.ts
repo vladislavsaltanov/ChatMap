@@ -6,7 +6,7 @@ export type CustomGraphState = { hasActiveSubgraph: boolean; dimAlpha: number; f
 
 type MapSigma = Sigma<any, any, any, CustomNodeState, CustomEdgeState, CustomGraphState>
 
-const DIM_NODE = '#1a1b22'
+const DIM_NODE = '#26241f'
 
 // mixHex интерполирует #rgb / #rrggbb / #rrggbbaa; кэш по ключу (цвета повторяются на каждый refresh)
 const mixCache = new Map<string, string>()
@@ -38,11 +38,28 @@ export const MAP_SIGMA_SETTINGS: Partial<ReturnType<MapSigma['getSettings']>> = 
   itemSizesReference: 'screen',
   autoRescaleContent: 'nodes',
   stagePadding: 60,
-  labelRenderedSizeThreshold: 0,
-  labelDensity: 1.2,
+  labelRenderedSizeThreshold: 18,
+  labelDensity: 4,
+  labelGridCellSize: 128,
   labelPixelSnapping: true,
   enableCameraRotation: false,
   enableCameraMouseRotation: false,
+  // Глубокий зум не раздувает рёбра в «балки»: потолок на утолщение экранного масштаба
+  zoomToSizeRatioFunction: (ratio: number) => Math.min(Math.sqrt(ratio), 1),
+  minEdgeThickness: 1,
+}
+
+// Кегль слова внутри пузыря: влезает — вернуть размер, нет — null (пилюля).
+// Ширина слова грубо: 0.6em на символ; текст должен занять ≤85% диаметра.
+// Проверяем ВСЕ пузыри: раньше топы (s>=26) получали 15 без проверки и вылезали.
+// Ниже 12 не жмём — мелкий текст внутри пузыря нечитаем, лучше пилюля на зуме.
+function overSize(attrs: any): number | null {
+  const s = (attrs.size ?? 0) as number
+  if (s < 18) return null
+  const len = Math.max(1, String(attrs.label ?? '').length)
+  const fit = Math.floor(((s * 2 * 0.85) / (len * 0.6)) * 2) / 2
+  const shrunk = Math.min(s >= 26 ? 15 : 14, fit)
+  return shrunk >= 12 ? shrunk : null
 }
 
 export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
@@ -51,16 +68,24 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
       color: { attribute: 'color' },
       size: { attribute: 'size' },
       label: { attribute: 'label' },
-      labelPosition: (attrs: any) => ((attrs.size ?? 0) >= 18 ? 'over' : 'right'),
+      // Слово живёт внутри пузыря, только если влезает: иначе — пилюля справа.
+      // Топы (s>=26) строятся под слово; средним кегль жмём до посадки, минимум 10.
+      labelPosition: (attrs: any) => (overSize(attrs) !== null ? 'over' : 'right'),
       labelColor: (attrs: any, state: any) =>
         (state as any)?.isActive || (state as any)?.isHighlighted
           ? '#ffffff'
-          : ((attrs.size ?? 0) >= 18 ? '#0e1015' : '#f0f3ff'),
-      labelFont: '600 11.5px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-      labelSize: 11.5,
+          : ((attrs.size ?? 0) >= 18 ? '#1c1a16' : '#f4f2ec'),
+      labelSize: (attrs: any, state: any) => {
+        if ((state as any)?.isActive || (state as any)?.isHighlighted) return 15
+        return overSize(attrs) ?? 13.5
+      },
+      // NOTE: sigma parseFontString понимает только «вес семейство» — размер
+      // (px) в строке ломает атлас глифов (текст схлопывается в чёрточку).
+      // Кегль задаётся через labelSize выше.
+      labelFont: '600 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
       labelVisibility: (attrs: any) => ((attrs.size ?? 0) >= 18 ? 'visible' : 'auto'),
-      labelBackgroundColor: (attrs: any) => ((attrs.size ?? 0) < 18 ? '#15171fe6' : undefined),
-      labelBackgroundPadding: 3,
+      labelBackgroundColor: (attrs: any) => ((attrs.size ?? 0) < 18 ? '#242320f5' : undefined),
+      labelBackgroundPadding: 5,
     },
     {
       // SAFETY: sigma passes untyped state here; keys match CustomNodeState above.
@@ -74,7 +99,10 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
         color: (attrs: any, _s, g: CustomGraphState) =>
           mixHex((attrs.color as string) || DIM_NODE, DIM_NODE, g.dimAlpha * 0.82),
         labelColor: (attrs: any, _s, g: CustomGraphState) =>
-          mixHex((attrs.size ?? 0) >= 18 ? '#0e1015' : '#f0f3ff', '#3b3f52', g.dimAlpha),
+          mixHex((attrs.size ?? 0) >= 18 ? '#1c1a16' : '#f4f2ec', '#57534a', g.dimAlpha),
+        // В фокус-режиме фоновые подписи прячем совсем, иначе — грязная каша
+        labelVisibility: (_a: any, _s: any, g: CustomGraphState) =>
+          g.hasActiveSubgraph ? 'hidden' : undefined,
       },
     },
     {
@@ -97,7 +125,7 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
         labelVisibility: 'visible',
         labelColor: '#ffffff',
         backdropVisibility: 'visible',
-        backdropBorderColor: '#68a4ff',
+        backdropBorderColor: '#f0c979',
         backdropBorderWidth: (_a, _s, g: CustomGraphState) => 2 * g.focusAlpha,
         backdropArea: 'node',
       },
@@ -110,14 +138,14 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
       when: (_a, s) => !(s as unknown as CustomEdgeState)?.isActive,
       then: {
         color: (attrs: any, _s, g: CustomGraphState) =>
-          mixHex((attrs.color as string) || '#232530', '#13141b', g.dimAlpha * 0.88),
+          mixHex((attrs.color as string) || '#232530', '#1b1a17', g.dimAlpha * 0.88),
       },
     },
     {
       whenState: 'isActive',
       then: {
         depth: 'topEdges',
-        color: (attrs: any, _s, g: CustomGraphState) => mixHex((attrs.color as string) || '#68a4ff', '#68a4ff', Math.max(g.focusAlpha, 0.5)),
+        color: (attrs: any, _s, g: CustomGraphState) => mixHex((attrs.color as string) || '#f0c979', '#f0c979', Math.max(g.focusAlpha, 0.5)),
         size: (attrs: any, _s, g: CustomGraphState) => (attrs.size ?? 1) + (2.2 - (attrs.size ?? 1)) * g.focusAlpha,
       },
     },
