@@ -123,7 +123,7 @@ export class Controls {
           </label>
           <label class="slider-label" for="slider-min-weight">
             <span>Мин. вес ребра: <span id="min-weight-val" class="num">0</span></span>
-            <input type="range" id="slider-min-weight" min="0" max="10" step="1" value="0" />
+            <input type="range" id="slider-min-weight" min="0" max="10" step="0.5" value="0" />
           </label>
         </fieldset>
 
