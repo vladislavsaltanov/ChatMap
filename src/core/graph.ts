@@ -314,12 +314,13 @@ export function layout(
     }
     const span = Math.max(maxX - minX, maxY - minY, 1000)
     const scaleFactor = Math.min(MAX_SCALE_FACTOR, Math.max(1, span / 850))
-    // Пропорциональный padding; дефолт resolveCollisions равномерный — тест
-    // на separation не трогаем. Воздух между всеми пузырями, не только хабами.
-    const padScale = (s: number): number => 18 * Math.min(1, Math.max(0.3, s / 24))
-    // Крупным графам — больше проходов: 30 итераций 600 больших пузырей не расталкивают.
-    // (collisionIterationsForCount не трогаем — его значения зафиксированы тестами.)
-    const passes = Math.max(collisionIterationsForCount(positionedNodes.length), positionedNodes.length > 400 ? 60 : 0)
+    // Паддинг растёт вместе с дисперсией карты (×scaleFactor): зазор между краями
+    // узлов — фиксированная доля мира. Раньше паддинг был в абсолютных юнитах —
+    // span вырос от дисперсии, и зазор ужался почти в ноль пикселей.
+    const padScale = (s: number): number => 26 * scaleFactor * Math.min(1, Math.max(0.45, s / 24))
+    // Крупным графам — больше проходов: с большим зазором 600 узлов не
+    // расходятся за 60. (collisionIterationsForCount не трогаем — тестами зафиксирован.)
+    const passes = Math.max(collisionIterationsForCount(positionedNodes.length), positionedNodes.length > 400 ? 120 : 0)
     resolveCollisions(positionedNodes, 6, passes, scaleFactor, padScale)
   }
 
