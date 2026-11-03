@@ -1,5 +1,6 @@
 import Graph from 'graphology'
 import Sigma from 'sigma'
+import { pathCurved, pathLine } from 'sigma/rendering'
 import { downloadAsPNG } from '@sigma/export-image'
 import { edgeColor, edgeWidth } from '../core/geometry'
 import type { AuthorId, MapMsg } from '../core/types'
@@ -22,6 +23,7 @@ export class MapView {
   private nodePanel: NodePanel
   private lastMsg: MapMsg | null = null
   private subgraphKey: string | null = null
+  private lodTimer: number | null = null
   private animator = new SubgraphAnimator((v) => {
     this.renderer?.setGraphState({ dimAlpha: v.dim, focusAlpha: v.focus })
     this.renderer?.refresh({ skipIndexation: true })
@@ -122,11 +124,30 @@ export class MapView {
     if (this.renderer) return
 
     this.renderer = new Sigma(this.graph, this.container, {
+      // Нити-дуги: line даже не нужен напрямую, но держим первым для дефолта
+      primitives: {
+        edges: { paths: [pathLine(), pathCurved()] },
+      },
       settings: MAP_SIGMA_SETTINGS,
       customNodeState: { isActive: false },
       customEdgeState: { isActive: false },
-      customGraphState: { hasActiveSubgraph: false, dimAlpha: 0, focusAlpha: 0 },
+      customGraphState: { hasActiveSubgraph: false, dimAlpha: 0, focusAlpha: 0, lodRatio: 1 },
       styles: MAP_SIGMA_STYLES,
+    })
+
+    // LOD (реф 1): ratio камеры > 1 гасит мелкие пузыри к точкам. Обновляем
+    // graph-state после успокоения камеры — не на каждый кадр зума.
+    this.renderer.getCamera().on('updated', () => {
+      const ratio = this.renderer?.getCamera().getState().ratio ?? 1
+      if (this.lodTimer !== null) window.clearTimeout(this.lodTimer)
+      this.lodTimer = window.setTimeout(() => {
+        this.lodTimer = null
+        if (!this.renderer) return
+        const applied = this.renderer.getGraphState().lodRatio ?? 1
+        if (Math.abs(ratio - applied) / Math.max(ratio, applied) < 0.08) return
+        this.renderer.setGraphState({ lodRatio: ratio })
+        this.renderer.refresh({ skipIndexation: true })
+      }, 140)
     })
     if (import.meta.env.DEV) {
       // SAFETY: window не типизирован под наш dev-хэндл; единственный каст —
@@ -191,6 +212,7 @@ export class MapView {
           size: edgeSize,
           color,
           weight: edge.weight,
+          curvature: edgeCurvature(edge.a, edge.b),
         })
       }
     }
@@ -275,6 +297,18 @@ export class MapView {
   getRenderer(): Sigma<any, any, any, any, any, any> | null {
     return this.renderer
   }
+}
+
+// Детерминированный хэш (a, b) → знак и амплитуда дуги (рефы 1 и 4: все нити —
+// плавные кривые). Параллельные рёбра расходятся спредом sigma.
+function edgeCurvature(a: number, b: number): number {
+  const h =
+    (Math.imul(a, 0x9e3779b1) ^
+      Math.imul(b, 0x85ebca6b) ^
+      Math.imul(a ^ b, 0xc2b2ae35)) >>>
+    0
+  const mag = 0.08 + 0.16 * (((h >>> 8) % 32) / 32)
+  return (h & 1) === 0 ? mag : -mag
 }
 
 let mapInstance: MapView | null = null
