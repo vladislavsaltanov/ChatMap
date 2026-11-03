@@ -140,6 +140,7 @@ function runPipeline(fullRun: boolean) {
     nodes.push({
       id: n.id,
       label: info.bestForm,
+      canon: ia.getCanon(n.id) || String(n.id),
       x: pos.x,
       y: pos.y,
       size: info.size,

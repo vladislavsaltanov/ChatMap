@@ -18,6 +18,7 @@ export type TokUnit = Tok[]
 export type WorkerNode = {
   id: number
   label: string
+  canon: string
   x: number
   y: number
   size: number
