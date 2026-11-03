@@ -8,9 +8,7 @@ function extractTrigrams(word: string): Set<string> {
 
 export function smartMerge(
   freq: Map<number, number>,
-  idWords: Map<number, string>,
-  // Optional pair weights lookup for custom edge reweighting
-  _pairWeights?: (a: number, b: number) => number
+  idWords: Map<number, string>
 ): Map<number, number> {
   const partition = new Map<number, number>()
 
