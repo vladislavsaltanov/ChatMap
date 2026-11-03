@@ -28,6 +28,34 @@ function lodDust(sizePx: number, lodRatio: number): number {
   return Math.round(dust * 50) / 50
 }
 
+// Контраст подписи против цвета пузыря: тёмный текст на светлых голосах,
+// светлый — на тёмных. По относительной светимости WCAG, не по размеру узла
+// (пользовательские цвета авторов бывают любыми). Кэш по цвету.
+const tintCache = new Map<string, string>()
+const LABEL_DARK = '#1c1a16'
+const LABEL_LIGHT = '#f4f2ec'
+function labelTintFor(color: string | undefined | null): string {
+  const key = String(color ?? '').slice(0, 7)
+  const cached = tintCache.get(key)
+  if (cached) return cached
+  const h = (key.startsWith('#') ? key.slice(1) : key).slice(0, 6)
+  const n = parseInt(h.length === 3 ? h.replace(/./g, (c) => c + c) : h, 16)
+  const ch = (v: number): number => {
+    const c = v / 255
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
+  }
+  const lum = 0.2126 * ch((n >> 16) & 255) + 0.7152 * ch((n >> 8) & 255) + 0.0722 * ch(n & 255)
+  const out = lum > 0.35 ? LABEL_DARK : LABEL_LIGHT
+  tintCache.set(key, out)
+  return out
+}
+// Тот же тинт с альфой — для fade-анимации текста подсветки
+function labelRgba(color: string | undefined | null, a: number): string {
+  const tint = labelTintFor(color)
+  const n = parseInt(tint.slice(1, 7), 16)
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a.toFixed(3)})`
+}
+
 // mixHex интерполирует #rgb / #rrggbb / #rrggbbaa; кэш по ключу (цвета повторяются на каждый refresh)
 const mixCache = new Map<string, string>()
 
@@ -109,10 +137,14 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
       // Слово живёт внутри пузыря, только если влезает: иначе — пилюля справа.
       // Топы (s>=26) строятся под слово; средним кегль жмём до посадки, минимум 10.
       labelPosition: (attrs: any) => (overSize(attrs) !== null ? 'over' : 'right'),
+      // Черный/белый по светимости пузыря, когда текст внутри (over);
+      // пилюля справа всегда светлая на тёмной плашке
       labelColor: (attrs: any, state: any) =>
         (state as any)?.isActive || (state as any)?.isHighlighted
-          ? '#ffffff'
-          : ((attrs.size ?? 0) >= 18 ? '#1c1a16' : '#f4f2ec'),
+          ? labelTintFor(attrs.color as string)
+          : overSize(attrs) !== null
+            ? labelTintFor(attrs.color as string)
+            : LABEL_LIGHT,
       labelSize: (attrs: any, state: any) => {
         if ((state as any)?.isActive || (state as any)?.isHighlighted) return 15
         return overSize(attrs) ?? 13.5
@@ -158,7 +190,7 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
             Math.max((Math.round(16 * (g.dimAlpha ?? 0)) / 16) * 0.82, lodDust((attrs.size ?? 0) as number, g.lodRatio ?? 1)),
           ),
         labelColor: (attrs: any, _s, g: CustomGraphState) =>
-          mixHex((attrs.size ?? 0) >= 18 ? '#1c1a16' : '#f4f2ec', '#57534a', g.dimAlpha),
+          mixHex(overSize(attrs) !== null ? labelTintFor(attrs.color as string) : LABEL_LIGHT, '#57534a', g.dimAlpha),
         // В фокус-режиме фоновые подписи прячем совсем, иначе — грязная каша
         labelVisibility: (_a: any, _s: any, g: CustomGraphState) =>
           g.hasActiveSubgraph ? 'hidden' : undefined,
@@ -181,8 +213,9 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
         // на каждый промежуточный размер). Скрытие происходит при alpha≈0.
         labelVisibility: (_a: any, _s: any, g: CustomGraphState) =>
           (g.focusAlpha ?? 0) > 0.02 ? 'visible' : 'auto',
-        labelColor: (_a: any, _s: any, g: CustomGraphState) =>
-          `rgba(255,255,255,${(Math.round(40 * (g.focusAlpha ?? 0)) / 40).toFixed(3)})`,
+        // Fade в цвет контраста пузыря, а не в белый: светлый пузырь — тёмный текст
+        labelColor: (attrs: any, _s: any, g: CustomGraphState) =>
+          labelRgba(attrs.color as string, Math.round(40 * (g.focusAlpha ?? 0)) / 40),
         labelSize: (attrs: any, _s, g: CustomGraphState) =>
           Math.round(((overSize(attrs) ?? 13.5) * (0.7 + 0.3 * (Math.round(4 * (g.focusAlpha ?? 0)) / 4))) * 2) / 2,
         backdropVisibility: 'visible',
@@ -200,8 +233,8 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
         // Соседи хаба: тот же fade+scale текста, что и у центра подсветки
         labelVisibility: (_a: any, _s: any, g: CustomGraphState) =>
           (g.focusAlpha ?? 0) > 0.02 ? 'visible' : 'auto',
-        labelColor: (_a: any, _s: any, g: CustomGraphState) =>
-          `rgba(255,255,255,${(Math.round(40 * (g.focusAlpha ?? 0)) / 40).toFixed(3)})`,
+        labelColor: (attrs: any, _s: any, g: CustomGraphState) =>
+          labelRgba(attrs.color as string, Math.round(40 * (g.focusAlpha ?? 0)) / 40),
         labelSize: (attrs: any, _s, g: CustomGraphState) =>
           Math.round(((overSize(attrs) ?? 13.5) * (0.7 + 0.3 * (Math.round(4 * (g.focusAlpha ?? 0)) / 4))) * 2) / 2,
         backdropVisibility: 'visible',
