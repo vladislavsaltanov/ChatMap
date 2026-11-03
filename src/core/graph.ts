@@ -1,6 +1,9 @@
 import Graph from 'graphology'
 import forceAtlas2 from 'graphology-layout-forceatlas2'
 
+// shortcut: spans >6800 get capped spacing and may overlap; upgrade if wide graphs look packed
+const MAX_SCALE_FACTOR = 8
+
 export type LayoutNodeInput = {
   id: number
   size?: number
@@ -33,6 +36,11 @@ function createRng(seed: number) {
   }
 }
 
+// shortcut: 30 passes above 400 nodes may leave overlaps; upgrade if large graphs look packed
+export function collisionIterationsForCount(nodeCount: number): number {
+  return nodeCount <= 400 ? 80 : 30
+}
+
 export function resolveCollisions(
   nodes: Array<{ id: number; x: number; y: number; size?: number }>,
   padding: number = 8,
@@ -41,6 +49,7 @@ export function resolveCollisions(
 ): void {
   const count = nodes.length
   if (count <= 1) return
+  const scale = Math.min(scaleFactor, MAX_SCALE_FACTOR)
 
   for (let iter = 0; iter < maxIterations; iter++) {
     let hasCollision = false
@@ -48,11 +57,11 @@ export function resolveCollisions(
 
     for (let i = 0; i < count; i++) {
       const a = nodes[i]
-      const ra = (a.size || 20) * scaleFactor + padding * 0.5
+      const ra = (a.size || 20) * scale + padding * 0.5
 
       for (let j = i + 1; j < count; j++) {
         const b = nodes[j]
-        const rb = (b.size || 20) * scaleFactor + padding * 0.5
+        const rb = (b.size || 20) * scale + padding * 0.5
         const minDist = ra + rb
 
         let dx = b.x - a.x
@@ -170,8 +179,8 @@ export function layout(
       if (n.y > maxY) maxY = n.y
     }
     const span = Math.max(maxX - minX, maxY - minY, 1000)
-    const scaleFactor = Math.max(1, span / 850)
-    resolveCollisions(positionedNodes, 10, 80, scaleFactor)
+    const scaleFactor = Math.min(MAX_SCALE_FACTOR, Math.max(1, span / 850))
+    resolveCollisions(positionedNodes, 10, collisionIterationsForCount(positionedNodes.length), scaleFactor)
   }
 
   const positions = new Map<number, { x: number; y: number }>()
