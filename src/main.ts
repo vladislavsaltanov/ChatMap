@@ -70,7 +70,7 @@ worker.onmessage = (e: MessageEvent<WorkerOut>) => {
   const msg = e.data
   if (msg.type === 'progress') {
     updateProgress(msg.done, msg.total, msg.stage)
-    if (!screens.map.hidden) mapView.showProgress(msg.done, msg.total, msg.stage)
+    if (!screens.map.hidden && msg.done < msg.total) mapView.showProgress(msg.done, msg.total, msg.stage)
   } else if (msg.type === 'ready') {
     controls.setAuthors(msg.authors)
   } else if (msg.type === 'map') {
