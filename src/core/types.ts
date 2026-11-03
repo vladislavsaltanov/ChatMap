@@ -38,7 +38,7 @@ export type WorkerIn =
 
 export type WorkerOut =
   | { type: 'progress'; done: number; total: number; stage?: string }
-  | { type: 'ready'; authors: Array<{ id: number; name: string }>; counts: { messages: number } }
+  | { type: 'ready'; authors: Array<{ id: number; name: string; wordCount: number }>; counts: { messages: number } }
   | {
       type: 'map'
       nodes: WorkerNode[]
