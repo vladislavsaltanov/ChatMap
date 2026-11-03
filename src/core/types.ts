@@ -6,6 +6,7 @@ export type ChatExport = {
   chatType: string
   messages: Message[]
   authors?: Map<AuthorId, string>
+  warn?: string
 }
 export type FilterCfg = { mat: boolean; laugh: boolean; tech: boolean; digits: boolean; customMat: string[]; customLaugh: string[]; smartMerge: boolean; topN: number; minWeight: number }
 export type AuthorId = number
