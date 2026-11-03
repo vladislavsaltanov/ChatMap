@@ -167,7 +167,7 @@ export class Controls {
     this.sliderMinWeight.addEventListener('input', onInputChange)
   }
 
-  setAuthors(authors: Array<{ id: AuthorId; name: string }>): void {
+  setAuthors(authors: Array<{ id: AuthorId; name: string; wordCount?: number }>): void {
     this.authorColors.clear()
     this.authorsColors.innerHTML = ''
     this.modesContainer.innerHTML = ''
@@ -198,11 +198,16 @@ export class Controls {
       // Color picker
       const colorRow = document.createElement('div')
       colorRow.className = 'author-color-row'
-      colorRow.innerHTML = `
-        <span>${escapeHtml(author.name)}</span>
-        <input type="color" value="${hex}" />
-      `
-      const colorInput = colorRow.querySelector<HTMLInputElement>('input[type="color"]')!
+      const legend = document.createElement('span')
+      legend.append(`${author.name} — `)
+      const countEl = document.createElement('span')
+      countEl.className = 'num'
+      countEl.textContent = String(author.wordCount ?? 0)
+      legend.append(countEl, ' слов')
+      const colorInput = document.createElement('input')
+      colorInput.type = 'color'
+      colorInput.value = hex
+      colorRow.append(legend, ' ', colorInput)
       colorInput.addEventListener('input', () => {
         this.authorColors.set(author.id, colorInput.value)
         for (const cb of this.colorCallbacks) {

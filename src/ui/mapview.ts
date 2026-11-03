@@ -38,6 +38,10 @@ export class MapView {
     this.container = root.querySelector<HTMLElement>('.canvas')!
     this.hoverLine = root.querySelector<HTMLElement>('.hover-line')!
     this.progressEl = this.container.querySelector<HTMLElement>('.map-progress')!
+    this.container.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault()
+      this.hoverLine.textContent = 'WebGL-контекст потерян — обнови страницу'
+    }, true)
     this.graph = new Graph()
     this.nodePanel = new NodePanel(root)
 

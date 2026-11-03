@@ -36,7 +36,7 @@ function send(msg: WorkerOut) {
   self.postMessage(msg)
 }
 
-function runPipeline(fullRun: boolean) {
+function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
   if (!chat) return
 
   const cfg = currentFilterCfg
@@ -53,6 +53,25 @@ function runPipeline(fullRun: boolean) {
     onTallyStart: () => send({ type: 'progress', done: 60, total: 100, stage: 'Подсчёт частот и связей...' }),
     onMergeStart: () => send({ type: 'progress', done: 70, total: 100, stage: 'Умные склейки слов...' }),
   })
+
+  // 'ready' needs the tallied counts, so it goes out here (full run only) and before any 'map'
+  if (fullRun && authorNames) {
+    const wordCounts = new Map<AuthorId, number>()
+    for (const tokenAuthors of tallyResult.counts.values()) {
+      for (const [authorId, cnt] of tokenAuthors) {
+        wordCounts.set(authorId, (wordCounts.get(authorId) || 0) + cnt)
+      }
+    }
+    send({
+      type: 'ready',
+      authors: Array.from(authorNames.entries()).map(([id, name]) => ({
+        id,
+        name,
+        wordCount: wordCounts.get(id) || 0,
+      })),
+      counts: { messages: chat.messages.length },
+    })
+  }
 
   send({ type: 'progress', done: 75, total: 100, stage: 'Выборка узлов и рёбер...' })
   const selection = select(
@@ -181,13 +200,7 @@ self.onmessage = (e: MessageEvent<WorkerIn>) => {
         }
       }
 
-      send({
-        type: 'ready',
-        authors: Array.from(authorMap.entries()).map(([id, name]) => ({ id, name })),
-        counts: { messages: chat.messages.length },
-      })
-
-      runPipeline(true)
+      runPipeline(true, authorMap)
       send({ type: 'progress', done: 100, total: 100, stage: 'Готово' })
     } else if (msg.type === 'update') {
       currentFilterCfg = {
