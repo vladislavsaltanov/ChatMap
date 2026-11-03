@@ -1,9 +1,10 @@
 import type Sigma from 'sigma'
 
-export type CustomNodeState = { isActive: boolean }
+export type CustomNodeState = { isActive: boolean; released?: boolean; releasedAt?: number }
 export type CustomEdgeState = { isActive: boolean }
-// lodRatio — camera.ratio: >1 = отдаление (пузыри гаснут к точкам, реф 1)
-export type CustomGraphState = { hasActiveSubgraph: boolean; dimAlpha: number; focusAlpha: number; lodRatio: number }
+// lodRatio — camera.ratio: >1 = отдаление (пузыри гаснут к точкам, реф 1);
+// releaseAlpha — затухание буста размера «уходящих» узлов при смене цели
+export type CustomGraphState = { hasActiveSubgraph: boolean; dimAlpha: number; focusAlpha: number; lodRatio: number; releaseAlpha: number }
 
 type MapSigma = Sigma<any, any, any, CustomNodeState, CustomEdgeState, CustomGraphState>
 
@@ -139,6 +140,15 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
             !(s as unknown as { isHighlighted?: boolean })?.isHighlighted,
         ),
       then: {
+        // «Уходящий» узел (смена цели подсветки) плавно сдаёт буст размера по
+        // СВОЕЙ метке времени: быстрые смены цели не подымают буст обратно
+        // (глобальный releaseAlpha на это грешил). 4 ступени — стабильные ключи.
+        size: (attrs: any, s: any, _g: CustomGraphState) => {
+          const st = s as CustomNodeState
+          if (!st?.released || !st.releasedAt) return attrs.size ?? 0
+          const boost = Math.max(0, 1 - (performance.now() - st.releasedAt) / 170)
+          return (attrs.size ?? 0) * (1 + 0.1 * (Math.round(4 * boost) / 4))
+        },
         color: (attrs: any, _s, g: CustomGraphState) =>
           mixHex(
             (attrs.color as string) || DIM_NODE,
