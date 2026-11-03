@@ -3,7 +3,7 @@ import { nodeFitSize } from './geometry'
 import { layout } from './graph'
 import { Intern } from './intern'
 import { parse } from './parse'
-import { select, type ViewMode } from './select'
+import { pruneBackbone, select, type ViewMode } from './select'
 import { smartMerge } from './smart-merge'
 import { buildUnits, tally } from './tally'
 import type {
@@ -125,22 +125,8 @@ function runPipeline(fullRun: boolean) {
     }
   })
 
-  // Prune weak incidental noise to form a clean, legible network backbone
-  const MAX_PER_NODE = 4
-  const nodeDegrees = new Map<number, number>()
-  const backboneEdges: typeof selection.edges = []
-  for (const edge of selection.edges) {
-    const degA = nodeDegrees.get(edge.a) || 0
-    const degB = nodeDegrees.get(edge.b) || 0
-    if (degA < MAX_PER_NODE || degB < MAX_PER_NODE || edge.weight >= 4) {
-      backboneEdges.push(edge)
-      nodeDegrees.set(edge.a, degA + 1)
-      nodeDegrees.set(edge.b, degB + 1)
-      if (backboneEdges.length >= Math.max(300, selection.nodes.length * 3.5)) {
-        break
-      }
-    }
-  }
+  // Serrano disparity backbone; every node keeps its 2 strongest edges
+  const backboneEdges = pruneBackbone(selection.edges, selection.nodes.length)
 
   const layoutResult = layout(layoutNodes, backboneEdges, {
     seed: 1337,
