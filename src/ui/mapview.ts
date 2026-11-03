@@ -15,6 +15,8 @@ export class MapView {
   private graph: Graph
   private renderer: Sigma<any, any, any, CustomNodeState, CustomEdgeState, CustomGraphState> | null = null
   private pinnedId: number | null = null
+  private activeNodes: string[] = []
+  private activeEdges: string[] = []
   private pinCallbacks: Array<(id: number | null) => void> = []
   private authorColors = new Map<AuthorId, string>()
   private nodePanel: NodePanel
@@ -83,6 +85,21 @@ export class MapView {
         this.pin(null)
       }
     })
+  }
+
+  private clearActiveSubgraph(): void {
+    for (const n of this.activeNodes) {
+      if (this.graph.hasNode(n)) {
+        this.renderer?.setNodeState(n, { isActive: false, isHighlighted: false })
+      }
+    }
+    for (const e of this.activeEdges) {
+      if (this.graph.hasEdge(e)) {
+        this.renderer?.setEdgeState(e, { isActive: false })
+      }
+    }
+    this.activeNodes = []
+    this.activeEdges = []
   }
 
   private initRenderer(): void {
@@ -181,7 +198,9 @@ export class MapView {
       this.hoverLine.textContent = `${attrs.label} · ${attrs.count}`
 
       if (this.pinnedId === null) {
+        this.clearActiveSubgraph()
         this.renderer?.setNodeState(node, { isActive: true, isHighlighted: true })
+        this.activeNodes.push(node)
         const neighborsWithWeights: Array<{ neighbor: string; edge: string; weight: number }> = []
         for (const neighbor of this.graph.neighbors(node)) {
           const edge = this.graph.edge(node, neighbor)
@@ -195,6 +214,8 @@ export class MapView {
         for (const conn of topConnections) {
           this.renderer?.setNodeState(conn.neighbor, { isActive: true })
           this.renderer?.setEdgeState(conn.edge, { isActive: true })
+          this.activeNodes.push(conn.neighbor)
+          this.activeEdges.push(conn.edge)
         }
         this.renderer?.setGraphState({ hasActiveSubgraph: true })
         this.renderer?.refresh({ skipIndexation: true })
@@ -204,12 +225,7 @@ export class MapView {
     this.renderer.on('leaveNode', () => {
       if (this.pinnedId === null) {
         this.hoverLine.textContent = 'слово · 0'
-        for (const n of this.graph.nodes()) {
-          this.renderer?.setNodeState(n, { isActive: false, isHighlighted: false })
-        }
-        for (const e of this.graph.edges()) {
-          this.renderer?.setEdgeState(e, { isActive: false })
-        }
+        this.clearActiveSubgraph()
         this.renderer?.setGraphState({ hasActiveSubgraph: false })
         this.renderer?.refresh({ skipIndexation: true })
       } else {
@@ -240,6 +256,8 @@ export class MapView {
   render(msg: MapMsg): void {
     this.lastMsg = msg
     this.graph.clear()
+    this.activeNodes = []
+    this.activeEdges = []
     const overrides = getLabelOverrides()
 
     for (const node of msg.nodes) {
@@ -336,16 +354,12 @@ export class MapView {
     this.pinnedId = id
     if (!this.renderer) return
 
-    for (const nodeKey of this.graph.nodes()) {
-      this.renderer.setNodeState(nodeKey, { isActive: false, isHighlighted: false })
-    }
-    for (const edgeKey of this.graph.edges()) {
-      this.renderer.setEdgeState(edgeKey, { isActive: false })
-    }
+    this.clearActiveSubgraph()
 
     if (id !== null && this.graph.hasNode(String(id))) {
       const key = String(id)
       this.renderer.setNodeState(key, { isActive: true, isHighlighted: true })
+      this.activeNodes.push(key)
       const neighborsWithWeights: Array<{ neighbor: string; edge: string; weight: number }> = []
       for (const neighbor of this.graph.neighbors(key)) {
         const edge = this.graph.edge(key, neighbor)
@@ -359,6 +373,8 @@ export class MapView {
       for (const conn of topConnections) {
         this.renderer.setNodeState(conn.neighbor, { isActive: true })
         this.renderer.setEdgeState(conn.edge, { isActive: true })
+        this.activeNodes.push(conn.neighbor)
+        this.activeEdges.push(conn.edge)
       }
       this.renderer.setGraphState({ hasActiveSubgraph: true })
       const attrs = this.graph.getNodeAttributes(key)
