@@ -86,7 +86,8 @@ export class Controls {
   constructor(root: HTMLElement) {
     const details = document.createElement('details')
     details.className = 'drawer'
-    details.open = true
+    // На узких экранах панель скрыта по умолчанию — не съедает карту целиком
+    details.open = window.matchMedia('(min-width: 720px)').matches
     details.setAttribute('aria-label', 'Параметры')
     details.innerHTML = `
       <summary class="label">Параметры</summary>

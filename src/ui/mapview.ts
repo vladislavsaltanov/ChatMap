@@ -5,6 +5,8 @@ import { edgeColor, edgeWidth } from '../core/geometry'
 import type { AuthorId, MapMsg } from '../core/types'
 import { buildNodeDetails, getLabelOverrides, NodePanel } from './nodepanel'
 import { MAP_SIGMA_SETTINGS, MAP_SIGMA_STYLES } from './mapStyles'
+import { SubgraphAnimator } from './subgraphAnim'
+import { SubgraphHighlight } from './subgraphHighlight'
 import type { CustomEdgeState, CustomGraphState, CustomNodeState } from './mapStyles'
 
 export class MapView {
@@ -14,12 +16,37 @@ export class MapView {
   private graph: Graph
   private renderer: Sigma<any, any, any, CustomNodeState, CustomEdgeState, CustomGraphState> | null = null
   private pinnedId: number | null = null
-  private activeNodes: string[] = []
-  private activeEdges: string[] = []
+  private highlight: SubgraphHighlight
   private pinCallbacks: Array<(id: number | null) => void> = []
   private authorColors = new Map<AuthorId, string>()
   private nodePanel: NodePanel
   private lastMsg: MapMsg | null = null
+  private subgraphKey: string | null = null
+  private animator = new SubgraphAnimator((v) => {
+    this.renderer?.setGraphState({ dimAlpha: v.dim, focusAlpha: v.focus })
+    this.renderer?.refresh({ skipIndexation: true })
+  })
+
+  private labelLine(id: number): string {
+    const key = String(id)
+    if (!this.graph.hasNode(key)) return 'слово · 0'
+    const attrs = this.graph.getNodeAttributes(key)
+    return `${attrs.label} · ${attrs.count}`
+  }
+
+  // Плавный выход в холостое состояние: подсветка деградает за 140–170 мс,
+  // состояния подграфа снимаются в конце затухания, чтобы кольцо не исчезало рывком.
+  private fadeToIdle(): void {
+    this.subgraphKey = null
+    this.animator.to('focus', 0, 130)
+    this.animator.to('dim', 0, 170, () => {
+      if (this.subgraphKey === null) {
+        this.highlight.clear(this.renderer)
+        this.renderer?.setGraphState({ hasActiveSubgraph: false })
+        this.renderer?.refresh({ skipIndexation: true })
+      }
+    })
+  }
 
   constructor(root: HTMLElement) {
     root.innerHTML = `
@@ -41,6 +68,7 @@ export class MapView {
       this.hoverLine.textContent = 'WebGL-контекст потерян — обнови страницу'
     }, true)
     this.graph = new Graph()
+    this.highlight = new SubgraphHighlight(this.graph)
     this.nodePanel = new NodePanel(root)
 
     this.nodePanel.onSelect((id) => {
@@ -73,9 +101,9 @@ export class MapView {
       })
     })
 
-    zoomInBtn.addEventListener('click', () => this.renderer?.getCamera().zoomIn())
-    zoomOutBtn.addEventListener('click', () => this.renderer?.getCamera().zoomOut())
-    zoomResetBtn.addEventListener('click', () => this.renderer?.getCamera().reset())
+    zoomInBtn.addEventListener('click', () => this.renderer?.getCamera().zoomIn({ duration: 260 }))
+    zoomOutBtn.addEventListener('click', () => this.renderer?.getCamera().zoomOut({ duration: 260 }))
+    zoomResetBtn.addEventListener('click', () => this.renderer?.getCamera().reset({ duration: 320 }))
 
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && this.pinnedId !== null) {
@@ -84,41 +112,10 @@ export class MapView {
     })
   }
 
-  private clearActiveSubgraph(): void {
-    for (const n of this.activeNodes) {
-      if (this.graph.hasNode(n)) {
-        this.renderer?.setNodeState(n, { isActive: false, isHighlighted: false })
-      }
-    }
-    for (const e of this.activeEdges) {
-      if (this.graph.hasEdge(e)) {
-        this.renderer?.setEdgeState(e, { isActive: false })
-      }
-    }
-    this.activeNodes = []
-    this.activeEdges = []
-  }
-
-  // Highlights `key` plus its `topN` strongest neighbours (by edge weight) and their edges
-  private activateSubgraph(key: string, topN: number): void {
-    this.renderer?.setNodeState(key, { isActive: true, isHighlighted: true })
-    this.activeNodes.push(key)
-    const neighborsWithWeights: Array<{ neighbor: string; edge: string; weight: number }> = []
-    for (const neighbor of this.graph.neighbors(key)) {
-      const edge = this.graph.edge(key, neighbor)
-      if (edge) {
-        const weight = (this.graph.getEdgeAttribute(edge, 'weight') as number) || 1
-        neighborsWithWeights.push({ neighbor, edge, weight })
-      }
-    }
-    neighborsWithWeights.sort((a, b) => b.weight - a.weight)
-    for (const conn of neighborsWithWeights.slice(0, topN)) {
-      this.renderer?.setNodeState(conn.neighbor, { isActive: true })
-      this.renderer?.setEdgeState(conn.edge, { isActive: true })
-      this.activeNodes.push(conn.neighbor)
-      this.activeEdges.push(conn.edge)
-    }
-    this.renderer?.setGraphState({ hasActiveSubgraph: true })
+  private focusSubgraph(key: string, topN: number): void {
+    this.highlight.swap(this.renderer, key, topN)
+    this.animator.to('focus', 1, 140)
+    this.animator.to('dim', 1, 180)
   }
 
   private initRenderer(): void {
@@ -128,33 +125,22 @@ export class MapView {
       settings: MAP_SIGMA_SETTINGS,
       customNodeState: { isActive: false },
       customEdgeState: { isActive: false },
-      customGraphState: { hasActiveSubgraph: false },
+      customGraphState: { hasActiveSubgraph: false, dimAlpha: 0, focusAlpha: 0 },
       styles: MAP_SIGMA_STYLES,
     })
 
     this.renderer.on('enterNode', ({ node }) => {
-      const attrs = this.graph.getNodeAttributes(node)
-      this.hoverLine.textContent = `${attrs.label} · ${attrs.count}`
-
-      if (this.pinnedId === null) {
-        this.clearActiveSubgraph()
-        this.activateSubgraph(node, 8)
-        this.renderer?.refresh({ skipIndexation: true })
+      this.hoverLine.textContent = this.labelLine(Number(node))
+      if (this.pinnedId === null && this.subgraphKey !== node) {
+        this.subgraphKey = node
+        this.focusSubgraph(node, 8)
       }
     })
 
     this.renderer.on('leaveNode', () => {
       if (this.pinnedId === null) {
         this.hoverLine.textContent = 'слово · 0'
-        this.clearActiveSubgraph()
-        this.renderer?.setGraphState({ hasActiveSubgraph: false })
-        this.renderer?.refresh({ skipIndexation: true })
-      } else {
-        const key = String(this.pinnedId)
-        if (this.graph.hasNode(key)) {
-          const attrs = this.graph.getNodeAttributes(key)
-          this.hoverLine.textContent = `${attrs.label} · ${attrs.count}`
-        }
+        if (this.subgraphKey !== null) this.fadeToIdle()
       }
     })
 
@@ -167,8 +153,7 @@ export class MapView {
   render(msg: MapMsg): void {
     this.lastMsg = msg
     this.graph.clear()
-    this.activeNodes = []
-    this.activeEdges = []
+    this.highlight.reset()
     const overrides = getLabelOverrides()
 
     for (const node of msg.nodes) {
@@ -231,20 +216,18 @@ export class MapView {
     this.pinnedId = id
     if (!this.renderer) return
 
-    this.clearActiveSubgraph()
-
     if (id !== null && this.graph.hasNode(String(id))) {
       const key = String(id)
-      this.activateSubgraph(key, 12)
-      const attrs = this.graph.getNodeAttributes(key)
-      this.hoverLine.textContent = `${attrs.label} · ${attrs.count}`
+      this.subgraphKey = key
+      this.focusSubgraph(key, 12)
+      this.hoverLine.textContent = this.labelLine(id)
 
       const details = buildNodeDetails(this.graph, id, this.lastMsg?.forms?.get(id) || [])
       if (details) {
         this.nodePanel.show(details)
       }
     } else {
-      this.renderer.setGraphState({ hasActiveSubgraph: false })
+      this.fadeToIdle()
       this.hoverLine.textContent = 'слово · 0'
       this.nodePanel.hide()
     }
