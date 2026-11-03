@@ -1,5 +1,5 @@
 import { nodeFitSize } from './geometry'
-import { layout } from './graph'
+import { getLruCache, layout, setLruCache } from './graph'
 import { parse } from './parse'
 import { pruneBackbone, select, type ViewMode } from './select'
 import { PipelineCache } from './tally'
@@ -14,6 +14,7 @@ import type {
 
 let chat: ChatExport | null = null
 const positionsCache = new Map<string, { x: number; y: number }>()
+const MAX_POS_CACHE = 2000
 let pipelineCache = new PipelineCache()
 
 const DEFAULT_FILTER_CFG: FilterCfg = {
@@ -95,7 +96,7 @@ function runPipeline(fullRun: boolean) {
     return {
       id: n.id,
       size: info?.size,
-      prevXY: positionsCache.get(canonStr),
+      prevXY: getLruCache(positionsCache, canonStr),
     }
   })
 
@@ -110,7 +111,7 @@ function runPipeline(fullRun: boolean) {
 
   for (const [id, pos] of layoutResult.positions) {
     const canonStr = ia.getCanon(id) || String(id)
-    positionsCache.set(canonStr, pos)
+    setLruCache(positionsCache, canonStr, pos, MAX_POS_CACHE)
   }
 
   send({ type: 'progress', done: 95, total: 100, stage: 'Формирование карты...' })
