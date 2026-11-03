@@ -1,11 +1,11 @@
 import { escapeHtml } from '../core/escapeHtml'
+import { parseLabelOverrides } from '../core/labelOverrides'
 
 const STORAGE_KEY = 'chatmap.labels'
 
 export function getLabelOverrides(): Record<string, string> {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? JSON.parse(raw) : {}
+    return parseLabelOverrides(localStorage.getItem(STORAGE_KEY))
   } catch {
     return {}
   }
@@ -35,6 +35,7 @@ export type NodeDetails = {
   id: number
   label: string
   defaultLabel: string
+  canon: string
   count: number
   neighbors: Array<{ id: number; label: string; weight: number }>
   forms: Array<[form: string, count: number]>
@@ -97,7 +98,7 @@ export class NodePanel {
 
     this.autoBtn.addEventListener('click', () => {
       if (!this.currentDetails) return
-      clearLabelOverride(this.currentDetails.defaultLabel)
+      clearLabelOverride(this.currentDetails.canon)
       this.currentDetails.label = this.currentDetails.defaultLabel
       this.titleEl.textContent = this.currentDetails.label
       this.renderForms()
@@ -166,7 +167,7 @@ export class NodePanel {
         if (!this.currentDetails) return
         this.currentDetails.label = form
         this.titleEl.textContent = form
-        saveLabelOverride(this.currentDetails.defaultLabel, form)
+        saveLabelOverride(this.currentDetails.canon, form)
         this.renderForms()
         if (this.onOverrideCallback) {
           this.onOverrideCallback(this.currentDetails.id, form)

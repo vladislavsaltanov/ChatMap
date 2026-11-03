@@ -263,10 +263,11 @@ export class MapView {
 
     for (const node of msg.nodes) {
       const color = this.authorColors.get(node.authorLead) || '#7890cd'
-      const label = overrides[node.label] || node.label
+      const label = overrides[node.canon] || node.label
       this.graph.addNode(String(node.id), {
         label,
         defaultLabel: node.label,
+        canon: node.canon,
         x: node.x,
         y: node.y,
         size: node.size,
@@ -323,6 +324,7 @@ export class MapView {
     const attrs = this.graph.getNodeAttributes(key)
     const label = attrs.label as string
     const defaultLabel = (attrs.defaultLabel as string) || label
+    const canon = (attrs.canon as string) || defaultLabel
     const count = (attrs.count as number) || 0
 
     const neighborsList: Array<{ id: number; label: string; weight: number }> = []
@@ -345,6 +347,7 @@ export class MapView {
       id,
       label,
       defaultLabel,
+      canon,
       count,
       neighbors: topNeighbors,
       forms,
