@@ -53,12 +53,15 @@ function createRng(seed: number) {
 
 // Гармонический шум формы плоскости (реф 2, NOISE): три нечётные октавы угла.
 // Фазы от seed: тот же граф — тот же неровный контур, детерминировано. |n| <= 1.
-export function shapeNoise(angle: number, phases: [number, number, number]): number {
-  return (
-    0.5 * Math.sin(2 * angle + phases[0]) +
-    0.33 * Math.sin(3 * angle + phases[1]) +
-    0.17 * Math.sin(5 * angle + phases[2])
-  )
+export function shapeNoise(angle: number, phases: readonly number[]): number {
+  // Шесть октав: крупные доли + детальная рвань края (реф 2, NOISE)
+  const oct = [2, 3, 5, 8, 12, 16]
+  const wts = [0.4, 0.24, 0.14, 0.1, 0.07, 0.05]
+  let n = 0
+  for (let i = 0; i < oct.length; i++) {
+    n += wts[i] * Math.sin(oct[i] * angle + (phases[i] ?? 0))
+  }
+  return n
 }
 
 // shortcut: 30 passes above 400 nodes may leave overlaps; upgrade if large graphs look packed
@@ -141,7 +144,14 @@ export function layout(
   const rng = createRng(opts.seed)
   const spread = Math.max(500, Math.sqrt(nodes.length) * 150)
   // Фазы шума формы: до расходования rng на позиции, для устойчивого детерминизма
-  const shapePhases: [number, number, number] = [rng() * Math.PI * 2, rng() * Math.PI * 2, rng() * Math.PI * 2]
+  const shapePhases = [
+    rng() * Math.PI * 2,
+    rng() * Math.PI * 2,
+    rng() * Math.PI * 2,
+    rng() * Math.PI * 2,
+    rng() * Math.PI * 2,
+    rng() * Math.PI * 2,
+  ]
 
   // Радиальный degree-aware старт: хабы рождаются в ядре, мелочь — на fringe.
   // Угол — золотая спираль + seeded jitter, радиус убывает со степенью узла.
@@ -171,7 +181,7 @@ export function layout(
       const radius =
         (spread / 2) *
         (1 - 0.85 * Math.pow(t, 0.7)) *
-        (1 + 0.25 * shapeNoise(angle, shapePhases)) *
+        (1 + 0.35 * shapeNoise(angle, shapePhases)) *
         (0.9 + 0.2 * rng())
       x = Math.cos(angle) * radius
       y = Math.sin(angle) * radius

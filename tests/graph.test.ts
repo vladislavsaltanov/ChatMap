@@ -169,7 +169,7 @@ describe('layout', () => {
   })
 
   it('(f) shapeNoise is deterministic, bounded and varies with angle', () => {
-    const phases: [number, number, number] = [0.7, 2.1, 4.4]
+    const phases = [0.7, 2.1, 4.4, 1.2, 5.0, 2.8]
     for (const angle of [0, 0.5, 1.1, 2.3, 3.4, 4.9, 5.8]) {
       expect(shapeNoise(angle, phases)).toBe(shapeNoise(angle, phases))
       expect(Math.abs(shapeNoise(angle, phases))).toBeLessThanOrEqual(1)
