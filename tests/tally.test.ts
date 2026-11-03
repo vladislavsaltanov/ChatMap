@@ -1,7 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { isStopword, matchesLaugh, matchesMat } from '../src/core/filters'
 import { Intern } from '../src/core/intern'
-import { buildUnits, edgeKey, parseEdgeKey, tally, type PairStat, type RawUnit } from '../src/core/tally'
-import type { ChatExport } from '../src/core/types'
+import { buildUnits, edgeKey, filterCacheKey, mergeCacheKey, parseEdgeKey, PipelineCache, tally, type PairStat, type RawUnit } from '../src/core/tally'
+import { tokenize } from '../src/core/tokenize'
+import type { ChatExport, FilterCfg, Message, Tok } from '../src/core/types'
+
+// pass-through spy so tests can count tokenize() calls
+vi.mock('../src/core/tokenize', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/core/tokenize')>()
+  return { ...actual, tokenize: vi.fn(actual.tokenize) }
+})
 
 // total edge weight as select.ts sums it: nX over authors + nCross
 const total = (s: PairStat | undefined): number =>
@@ -188,5 +196,194 @@ describe('tally', () => {
     expect(units[0].authorId).toBe(111)
     expect(units[0].tokens.length).toBe(1) // 'привет'
     expect(units[1].tokens.length).toBe(1) // 'дела' ('как' dropped)
+  })
+})
+
+const textMsg = (id: number, authorId: number, text: string, dateMs = id * 1000): Message => ({
+  id,
+  kind: 'message',
+  authorId,
+  dateMs,
+  parts: [{ text, entity: 'plain' }],
+  replyTo: null,
+})
+
+const CFG: FilterCfg = {
+  mat: false,
+  laugh: false,
+  tech: false,
+  digits: false,
+  customMat: [],
+  customLaugh: [],
+  smartMerge: false,
+  topN: 600,
+  minWeight: 0,
+}
+
+// uncached oracle: buildUnits + tally with the same drop rules as worker.ts runPipeline
+const dropFor = (cfg: FilterCfg) => (t: Tok) =>
+  (!cfg.tech && t.cls === 'tech') ||
+  (!cfg.digits && t.cls === 'digits') ||
+  isStopword(t.word) ||
+  (!cfg.mat && matchesMat(t.word, cfg.customMat)) ||
+  (!cfg.laugh && matchesLaugh(t.word, cfg.customLaugh))
+
+const oracle = (chat: ChatExport, cfg: FilterCfg) => {
+  const ia = new Intern()
+  return { ia, tallyResult: tally(buildUnits(chat, ia, dropFor(cfg))) }
+}
+
+describe('buildUnits progress', () => {
+  it('calls onProgress(doneMsgs, totalMsgs) at every 5000th message index', () => {
+    const chatOf = (n: number): ChatExport => ({
+      name: 'big',
+      chatType: 'personal_chat',
+      messages: Array.from({ length: n }, (_, i) => textMsg(i + 1, 1, 'слово', 1000 + i)),
+    })
+    const onProgress = vi.fn()
+    const units = buildUnits(chatOf(5005), new Intern(), () => false, onProgress)
+    expect(units.length).toBe(5005)
+    expect(onProgress.mock.calls).toEqual([[5000, 5005]])
+
+    const onProgress2 = vi.fn()
+    buildUnits(chatOf(10_005), new Intern(), () => false, onProgress2)
+    expect(onProgress2.mock.calls).toEqual([[5000, 10005], [10000, 10005]])
+  })
+})
+
+describe('cache keys', () => {
+  it('filterCacheKey ignores topN, minWeight and smartMerge, and keeps custom lists apart', () => {
+    const key = filterCacheKey(CFG)
+    expect(filterCacheKey({ ...CFG, topN: 5, minWeight: 2, smartMerge: true })).toBe(key)
+    expect(filterCacheKey({ ...CFG, mat: true })).not.toBe(key)
+    expect(filterCacheKey({ ...CFG, customMat: ['a', 'b'] })).not.toBe(filterCacheKey({ ...CFG, customMat: ['a,b'] }))
+  })
+
+  it('mergeCacheKey is the filter key plus smartMerge', () => {
+    expect(mergeCacheKey({ ...CFG, smartMerge: true, topN: 9 })).toBe(mergeCacheKey({ ...CFG, smartMerge: true }))
+    expect(mergeCacheKey({ ...CFG, smartMerge: true })).not.toBe(mergeCacheKey(CFG))
+    expect(mergeCacheKey({ ...CFG, mat: true })).not.toBe(mergeCacheKey(CFG))
+  })
+})
+
+describe('PipelineCache', () => {
+  const tokenizeSpy = vi.mocked(tokenize)
+  // block body: mockClear() returns the spy, and vitest would call a returned function as teardown
+  beforeEach(() => {
+    tokenizeSpy.mockClear()
+  })
+
+  // 3 text messages; the service message is skipped and never tokenized
+  const chat: ChatExport = {
+    name: 'pipe',
+    chatType: 'personal_chat',
+    messages: [
+      textMsg(1, 1, 'блять ну лол разговоры про котиков'),
+      textMsg(2, 2, 'разговоры продолжаются котики 2024 ок'),
+      { id: 3, kind: 'service', authorId: 1, dateMs: 3000, parts: [], replyTo: null },
+      textMsg(4, 1, 'лол разговор'),
+    ],
+  }
+
+  it('changing only topN/minWeight reuses tokens, tally and merge', () => {
+    const cache = new PipelineCache()
+    const cfg = { ...CFG, smartMerge: true }
+    const first = cache.resolve(chat, cfg)
+    const onStart = vi.fn()
+    const second = cache.resolve(chat, { ...cfg, topN: 10, minWeight: 0.5 }, {
+      onTokenizeStart: onStart,
+      onTallyStart: onStart,
+      onMergeStart: onStart,
+    })
+    expect(onStart).not.toHaveBeenCalled()
+    expect(tokenizeSpy).toHaveBeenCalledTimes(3)
+    expect(second).toMatchObject({ tallyCached: true, mergeCached: true })
+    expect(first.merged).toBeInstanceOf(Map)
+    expect(second.ia).toBe(first.ia)
+    expect(second.tallyResult).toBe(first.tallyResult)
+    expect(second.merged).toBe(first.merged)
+  })
+
+  it('toggling smartMerge recomputes only the merge', () => {
+    const cache = new PipelineCache()
+    const off = cache.resolve(chat, CFG)
+    expect(off.merged).toBeUndefined()
+
+    const onTally = vi.fn()
+    const onMerge = vi.fn()
+    const on = cache.resolve(chat, { ...CFG, smartMerge: true }, { onTallyStart: onTally, onMergeStart: onMerge })
+    expect(onTally).not.toHaveBeenCalled()
+    expect(onMerge).toHaveBeenCalledTimes(1)
+    expect(on).toMatchObject({ tallyCached: true, mergeCached: false })
+    expect(on.tallyResult).toBe(off.tallyResult)
+    expect(on.ia).toBe(off.ia)
+    expect(on.merged).toBeInstanceOf(Map)
+
+    // switching off keeps the tally; switching back on reuses the stored merge
+    const offAgain = cache.resolve(chat, CFG)
+    expect(offAgain.merged).toBeUndefined()
+    expect(offAgain).toMatchObject({ tallyCached: true, mergeCached: true })
+    const onAgain = cache.resolve(chat, { ...CFG, smartMerge: true })
+    expect(onAgain).toMatchObject({ tallyCached: true, mergeCached: true })
+    expect(onAgain.merged).toBe(on.merged)
+  })
+
+  it('toggling a filter recomputes tally and merge without re-tokenizing', () => {
+    const cache = new PipelineCache()
+    const cfg = { ...CFG, smartMerge: true }
+    const before = cache.resolve(chat, cfg)
+
+    const onTokenize = vi.fn()
+    const onTally = vi.fn()
+    const onMerge = vi.fn()
+    const after = cache.resolve(chat, { ...cfg, mat: true }, {
+      onTokenizeStart: onTokenize,
+      onTallyStart: onTally,
+      onMergeStart: onMerge,
+    })
+    expect(onTokenize).not.toHaveBeenCalled()
+    expect(tokenizeSpy).toHaveBeenCalledTimes(3)
+    expect(onTally).toHaveBeenCalledTimes(1)
+    expect(onMerge).toHaveBeenCalledTimes(1)
+    expect(after).toMatchObject({ tallyCached: false, mergeCached: false })
+    // 'блять' is kept now, so the tally must actually change
+    expect(after.tallyResult).not.toEqual(before.tallyResult)
+    expect(after.tallyResult).toEqual(oracle(chat, { ...cfg, mat: true }).tallyResult)
+  })
+
+  it('a different ChatExport object tokenizes again', () => {
+    const cache = new PipelineCache()
+    cache.resolve(chat, CFG)
+    const onTokenize = vi.fn()
+    cache.resolve({ ...chat }, CFG, { onTokenizeStart: onTokenize })
+    expect(onTokenize).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports tokenize progress every 5000 messages', () => {
+    const big: ChatExport = {
+      name: 'big',
+      chatType: 'personal_chat',
+      messages: Array.from({ length: 5005 }, (_, i) => textMsg(i + 1, 1, 'слово', 1000 + i)),
+    }
+    const onTokenizeProgress = vi.fn()
+    new PipelineCache().resolve(big, CFG, { onTokenizeProgress })
+    expect(onTokenizeProgress.mock.calls).toEqual([[5000, 5005]])
+  })
+
+  it('matches the uncached buildUnits + tally result across a sequence of filter changes', () => {
+    const cache = new PipelineCache()
+    const cfgs: FilterCfg[] = [
+      CFG,
+      { ...CFG, mat: true },
+      { ...CFG, laugh: true, customMat: ['разговор'] },
+      { ...CFG, mat: true, laugh: true, tech: true, digits: true, customLaugh: ['ок'] },
+      CFG,
+    ]
+    for (const cfg of cfgs) {
+      const got = cache.resolve(chat, cfg)
+      const want = oracle(chat, cfg)
+      expect(got.tallyResult).toEqual(want.tallyResult)
+      expect(got.ia.idToCanon).toEqual(want.ia.idToCanon)
+    }
   })
 })

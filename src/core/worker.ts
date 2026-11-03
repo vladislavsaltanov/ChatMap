@@ -1,16 +1,12 @@
-import { isStopword, matchesLaugh, matchesMat } from './filters'
 import { nodeFitSize } from './geometry'
 import { layout } from './graph'
-import { Intern } from './intern'
 import { parse } from './parse'
 import { pruneBackbone, select, type ViewMode } from './select'
-import { smartMerge } from './smart-merge'
-import { buildUnits, tally } from './tally'
+import { PipelineCache } from './tally'
 import type {
   AuthorId,
   ChatExport,
   FilterCfg,
-  Tok,
   WorkerIn,
   WorkerNode,
   WorkerOut,
@@ -18,6 +14,7 @@ import type {
 
 let chat: ChatExport | null = null
 const positionsCache = new Map<string, { x: number; y: number }>()
+let pipelineCache = new PipelineCache()
 
 const DEFAULT_FILTER_CFG: FilterCfg = {
   mat: false,
@@ -41,43 +38,20 @@ function send(msg: WorkerOut) {
 function runPipeline(fullRun: boolean) {
   if (!chat) return
 
-  send({ type: 'progress', done: 40, total: 100, stage: 'Токенизация и фильтрация...' })
-  const ia = new Intern()
   const cfg = currentFilterCfg
-
-  const dropTok = (tok: Tok): boolean => {
-    if (!cfg.tech && tok.cls === 'tech') return true
-    if (!cfg.digits && tok.cls === 'digits') return true
-    if (isStopword(tok.word)) return true
-    if (!cfg.mat && matchesMat(tok.word, cfg.customMat)) return true
-    if (!cfg.laugh && matchesLaugh(tok.word, cfg.customLaugh)) return true
-    return false
-  }
-
-  const rawUnits = buildUnits(chat, ia, dropTok)
-  send({ type: 'progress', done: 60, total: 100, stage: 'Подсчёт частот и связей...' })
-  const tallyResult = tally(rawUnits)
-
-  let merged: Map<number, number> | undefined
-  if (cfg.smartMerge) {
-    send({ type: 'progress', done: 70, total: 100, stage: 'Умные склейки слов...' })
-    const freq = new Map<number, number>()
-    const idWords = new Map<number, string>()
-
-    for (const [id, authorMap] of tallyResult.counts) {
-      let sum = 0
-      for (const cnt of authorMap.values()) sum += cnt
-      freq.set(id, sum)
-
-      const cls = ia.getCls(id)
-      if (cls === 'plain') {
-        const word = ia.getCanon(id)
-        if (word) idWords.set(id, word)
-      }
-    }
-
-    merged = smartMerge(freq, idWords)
-  }
+  // cache hits skip the stages they reuse, so their ticks never show
+  const { ia, tallyResult, merged } = pipelineCache.resolve(chat, cfg, {
+    onTokenizeStart: () => send({ type: 'progress', done: 35, total: 100, stage: 'Токенизация и фильтрация...' }),
+    onTokenizeProgress: (doneMsgs, totalMsgs) =>
+      send({
+        type: 'progress',
+        done: 35 + Math.round((doneMsgs / totalMsgs) * 20),
+        total: 100,
+        stage: `Токенизация: ${doneMsgs} / ${totalMsgs} сообщ.`,
+      }),
+    onTallyStart: () => send({ type: 'progress', done: 60, total: 100, stage: 'Подсчёт частот и связей...' }),
+    onMergeStart: () => send({ type: 'progress', done: 70, total: 100, stage: 'Умные склейки слов...' }),
+  })
 
   send({ type: 'progress', done: 75, total: 100, stage: 'Выборка узлов и рёбер...' })
   const selection = select(
@@ -188,6 +162,7 @@ self.onmessage = (e: MessageEvent<WorkerIn>) => {
     if (msg.type === 'open') {
       send({ type: 'progress', done: 5, total: 100, stage: 'Чтение JSON...' })
       chat = parse(msg.json)
+      pipelineCache = new PipelineCache()
       send({ type: 'progress', done: 30, total: 100, stage: 'Определение авторов...' })
 
       const authorMap = new Map<AuthorId, string>()
