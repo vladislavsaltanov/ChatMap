@@ -39,24 +39,6 @@ export function nodeFitSize(
   return Math.round(minHub + (target - minHub) * Math.pow(p, 0.6))
 }
 
-export function nodeSize(
-  count: number,
-  maxCount: number,
-  minCount: number = 0
-): number {
-  if (maxCount <= 0 || count <= 0) {
-    return 4
-  }
-  if (minCount > 0 && maxCount > minCount) {
-    const logMin = Math.log(1 + minCount)
-    const logMax = Math.log(1 + maxCount)
-    const logVal = Math.log(1 + count)
-    const t = Math.max(0, Math.min(1, (logVal - logMin) / (logMax - logMin)))
-    return 5 + 21 * t
-  }
-  return 4 + 22 * Math.sqrt(count / maxCount)
-}
-
 export function edgeWidth(w: number, wmax: number): number {
   if (wmax <= 0 || w <= 0) {
     return 0

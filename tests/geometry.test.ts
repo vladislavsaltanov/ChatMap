@@ -1,22 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { edgeColor, edgeWidth, nodeFitSize, nodeSize } from '../src/core/geometry'
+import { edgeColor, edgeWidth, nodeFitSize } from '../src/core/geometry'
 
 describe('geometry', () => {
-  it('computes nodeSize according to 4 + 22 * sqrt(count / maxCount)', () => {
-    expect(nodeSize(0, 100)).toBe(4)
-    expect(nodeSize(100, 100)).toBe(26)
-    expect(nodeSize(25, 100)).toBe(4 + 22 * 0.5) // 15
-    expect(nodeSize(10, 0)).toBe(4)
-  })
-
-  it('computes relative nodeSize with minCount across visible spectrum', () => {
-    expect(nodeSize(10, 100, 10)).toBe(5)
-    expect(nodeSize(100, 100, 10)).toBe(26)
-    const mid = nodeSize(30, 100, 10)
-    expect(mid).toBeGreaterThan(5)
-    expect(mid).toBeLessThan(26)
-  })
-
   it('computes edgeWidth according to (w / wmax)^0.6', () => {
     expect(edgeWidth(0, 10)).toBe(0)
     expect(edgeWidth(10, 10)).toBe(1)
