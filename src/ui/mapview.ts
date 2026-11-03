@@ -23,7 +23,8 @@ export class MapView {
   private nodePanel: NodePanel
   private lastMsg: MapMsg | null = null
   private subgraphKey: string | null = null
-  private lodTimer: number | null = null
+  private lodPending: number | null = null
+  private lodRaf: number | null = null
   private animator = new SubgraphAnimator((v) => {
     this.renderer?.setGraphState({ dimAlpha: v.dim, focusAlpha: v.focus })
     this.renderer?.refresh({ skipIndexation: true })
@@ -135,15 +136,19 @@ export class MapView {
       styles: MAP_SIGMA_STYLES,
     })
 
-    // LOD (реф 1): ratio камеры > 1 гасит мелкие пузыри к точкам. Обновляем
-    // graph-state после успокоения камеры — не на каждый кадр зума.
+    // LOD (реф 1): ratio камеры > 1 гасит мелкие пузыри к точкам. Раевремя
+    // через rAF: не чаще кадра, порог чувствительности 1% (замер пересчёта
+    // стилей ~5 мс на 600 узлов — в бюджет кадра помещается).
     this.renderer.getCamera().on('updated', () => {
-      const ratio = this.renderer?.getCamera().getState().ratio ?? 1
-      if (this.lodTimer !== null) window.clearTimeout(this.lodTimer)
-      this.lodTimer = window.setTimeout(() => {
-        this.lodTimer = null
-        this.applyLod(ratio)
-      }, 140)
+      this.lodPending = this.renderer?.getCamera().getState().ratio ?? 1
+      if (this.lodRaf === null) {
+        this.lodRaf = requestAnimationFrame(() => {
+          this.lodRaf = null
+          const r = this.lodPending
+          this.lodPending = null
+          if (r !== null) this.applyLod(r)
+        })
+      }
     })
     if (import.meta.env.DEV) {
       // SAFETY: window не типизирован под наш dev-хэндл; единственный каст —
@@ -184,7 +189,7 @@ export class MapView {
     if (!this.renderer) return
     const effective = ratio * this.lodBoost()
     const applied = this.renderer.getGraphState().lodRatio ?? 1
-    if (Math.abs(effective - applied) / Math.max(effective, applied) < 0.08) return
+    if (Math.abs(effective - applied) / Math.max(effective, applied) < 0.01) return
     this.renderer.setGraphState({ lodRatio: effective })
     this.renderer.refresh({ skipIndexation: true })
   }
