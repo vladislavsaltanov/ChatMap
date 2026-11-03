@@ -12,6 +12,9 @@ export class SubgraphHighlight {
   private nodes: string[] = []
   private edges: string[] = []
   private released: string[] = []
+  // Бывший центр подсветки: только он носил +10% буст размера и потому
+  // нуждается в плавном затухании; соседи размер не меняли — уходят мгновенно.
+  private center: string | null = null
 
   constructor(private readonly graph: Graph) {}
 
@@ -23,6 +26,7 @@ export class SubgraphHighlight {
     this.nodes = []
     this.edges = []
     this.released = []
+    this.center = null
   }
 
   // Снять флаг released после затухания releaseAlpha (состояние уходит в базу)
@@ -60,12 +64,16 @@ export class SubgraphHighlight {
       nextNodes.add(conn.neighbor)
       nextEdges.add(conn.edge)
     }
-    // Ушедшие из подсветки: сбрасываем активности мгновенно, но помечаем
-    // released — размер/цвет дожимаются мягко (см. правило not-active в mapStyles)
+    // Ушедшие из подсветки: бывший центр сдаёт буст размера плавно (released),
+    // соседи уходят мгновенно — их размер не менялся, буст им не начисляется
     for (const n of this.nodes) {
       if (!nextNodes.has(n)) {
-        renderer.setNodeState(n, { isActive: false, isHighlighted: false, released: true })
-        this.released.push(n)
+        if (n === this.center) {
+          renderer.setNodeState(n, { isActive: false, isHighlighted: false, released: true, releasedAt: performance.now() })
+          this.released.push(n)
+        } else {
+          renderer.setNodeState(n, { isActive: false, isHighlighted: false, released: false })
+        }
       }
     }
     for (const e of this.edges) {
@@ -78,6 +86,7 @@ export class SubgraphHighlight {
     }
     this.nodes = [...nextNodes]
     this.edges = [...nextEdges]
+    this.center = key
     renderer.setGraphState({ hasActiveSubgraph: true })
   }
 
