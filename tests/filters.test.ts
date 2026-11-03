@@ -31,6 +31,26 @@ describe('filters', () => {
       expect(matchesMat('сукно', [])).toBe(false)
     })
 
+    it('does not flag innocent words that share a prefix with a short mat root (regression)', () => {
+      const innocent = ['мудрый', 'мудрость', 'мудрец', 'херсон', 'херес', 'херувим', 'сукно', 'бляха', 'бляшка']
+      expect(innocent.filter((word) => matchesMat(word, []))).toEqual([])
+    })
+
+    it('flags stems and forms that replaced short mat roots (regression)', () => {
+      const profane = ['мудак', 'мудила', 'мудацкий', 'хер', 'херня', 'херовый', 'бля', 'блядь', 'сучка', 'сучара', 'сука', 'блять', 'нахуй', 'ебать', 'ебёшь']
+      expect(profane.filter((word) => !matchesMat(word, []))).toEqual([])
+    })
+
+    it('flags forms the short roots used to catch (regression)', () => {
+      const profane = ['ёб', 'еб', 'ебена', 'ебёна', 'ебись', 'ебитесь', 'сукин', 'сукины', 'мудоеб', 'мудозвон']
+      expect(profane.filter((word) => !matchesMat(word, []))).toEqual([])
+    })
+
+    it('keeps custom roots working for allowlisted prefixes', () => {
+      expect(matchesMat('мудрец', ['мудр-'])).toBe(true)
+      expect(matchesMat('бляха', ['бляха'])).toBe(true)
+    })
+
     it('supports custom roots with hyphen suffix', () => {
       expect(matchesMat('нушая', ['нуш-'])).toBe(true)
       expect(matchesMat('другое', ['нуш-'])).toBe(false)
