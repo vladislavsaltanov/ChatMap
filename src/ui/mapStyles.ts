@@ -10,10 +10,18 @@ type MapSigma = Sigma<any, any, any, CustomNodeState, CustomEdgeState, CustomGra
 const DIM_NODE = '#26241f'
 
 // LOD обзора (реф 1): при отдалении экранная величина гасится к точке; ниже
-// 2.5 px пузырь прячем совсем — остаются только крупные узлы и нити.
-const LOD_FLOOR = 2.5
+// 3 px пузырь прячем совсем, а «пыль» (3…7 px) не исчезает, а приглушается в
+// цвет фона: силуэт и нити сохраняются, ячейкӑ-каша уходит.
+const LOD_FLOOR = 3
+const LOD_DUST = 7
 function lodScale(sizePx: number, lodRatio: number): number {
   return lodRatio > 1 ? sizePx * Math.pow(lodRatio, -0.75) : sizePx
+}
+// Степень пыли узла на обзорном зуме: 0 = обычный цвет, до 0.7 = тает в фон.
+function lodDust(sizePx: number, lodRatio: number): number {
+  const s = lodScale(sizePx, lodRatio)
+  if (s >= LOD_DUST) return 0
+  return Math.max(0, Math.min(1, (LOD_DUST - s) / (LOD_DUST - LOD_FLOOR))) * 0.7
 }
 
 // mixHex интерполирует #rgb / #rrggbb / #rrggbbaa; кэш по ключу (цвета повторяются на каждый refresh)
@@ -73,7 +81,10 @@ function overSize(attrs: any): number | null {
 export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
   nodes: [
     {
-      color: { attribute: 'color' },
+      color: (attrs: any, _s: any, g: CustomGraphState) => {
+        const dust = lodDust((attrs.size ?? 0) as number, g.lodRatio ?? 1)
+        return dust > 0 ? mixHex((attrs.color as string) || DIM_NODE, DIM_NODE, dust) : attrs.color
+      },
       size: (attrs: any, _s: any, g: CustomGraphState) => lodScale((attrs.size ?? 0) as number, g.lodRatio ?? 1),
       label: { attribute: 'label' },
       visibility: (attrs: any, _s: any, g: CustomGraphState) =>
@@ -115,7 +126,11 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
         ),
       then: {
         color: (attrs: any, _s, g: CustomGraphState) =>
-          mixHex((attrs.color as string) || DIM_NODE, DIM_NODE, g.dimAlpha * 0.82),
+          mixHex(
+            (attrs.color as string) || DIM_NODE,
+            DIM_NODE,
+            Math.max(g.dimAlpha * 0.82, lodDust((attrs.size ?? 0) as number, g.lodRatio ?? 1)),
+          ),
         labelColor: (attrs: any, _s, g: CustomGraphState) =>
           mixHex((attrs.size ?? 0) >= 18 ? '#1c1a16' : '#f4f2ec', '#57534a', g.dimAlpha),
         // В фокус-режиме фоновые подписи прячем совсем, иначе — грязная каша

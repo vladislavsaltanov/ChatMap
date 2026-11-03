@@ -142,11 +142,7 @@ export class MapView {
       if (this.lodTimer !== null) window.clearTimeout(this.lodTimer)
       this.lodTimer = window.setTimeout(() => {
         this.lodTimer = null
-        if (!this.renderer) return
-        const applied = this.renderer.getGraphState().lodRatio ?? 1
-        if (Math.abs(ratio - applied) / Math.max(ratio, applied) < 0.08) return
-        this.renderer.setGraphState({ lodRatio: ratio })
-        this.renderer.refresh({ skipIndexation: true })
+        this.applyLod(ratio)
       }, 140)
     })
     if (import.meta.env.DEV) {
@@ -175,6 +171,22 @@ export class MapView {
     this.renderer.on('clickStage', () => {
       if (this.pinnedId !== null) this.pin(null)
     })
+  }
+
+  // Плотный чат (>300 слов) получает LOD уже на первом экране: плотность
+  // добавляется к ratio камеры внутри graph-state lodRatio.
+  private lodBoost(): number {
+    const order = this.graph.order
+    return order > 300 ? Math.pow(order / 300, 0.8) : 1
+  }
+
+  private applyLod(ratio: number): void {
+    if (!this.renderer) return
+    const effective = ratio * this.lodBoost()
+    const applied = this.renderer.getGraphState().lodRatio ?? 1
+    if (Math.abs(effective - applied) / Math.max(effective, applied) < 0.08) return
+    this.renderer.setGraphState({ lodRatio: effective })
+    this.renderer.refresh({ skipIndexation: true })
   }
 
   render(msg: MapMsg): void {
@@ -228,6 +240,8 @@ export class MapView {
     } else {
       this.renderer?.getCamera().reset()
     }
+    // Первый экран без кадра-кляксы: LOD обычно применяется через 140 мс
+    this.applyLod(this.renderer?.getCamera().getState().ratio ?? 1)
   }
 
   renderAuthors(colors: Map<AuthorId, string>): void {
