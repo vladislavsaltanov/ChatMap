@@ -97,6 +97,27 @@ describe('tally', () => {
     expect(res.pairs.get(edgeKey(2, 5))?.nX).toEqual(new Map([[20, 1]]))
   })
 
+  it('(i) undated units (dateMs 0) never glue into one series, in either order', () => {
+    const u1: RawUnit = { authorId: 10, dateMs: 0, replyTo: null, tokens: new Uint32Array([1, 2]) }
+    const u2: RawUnit = { authorId: 10, dateMs: 0, replyTo: null, tokens: new Uint32Array([3, 4]) }
+    const u3: RawUnit = { authorId: 10, dateMs: 1000, replyTo: null, tokens: new Uint32Array([5, 6]) }
+    const res = tally([u1, u2])
+    expect(res.pairs.has(edgeKey(1, 2))).toBe(true)
+    expect(res.pairs.has(edgeKey(3, 4))).toBe(true)
+    expect(res.pairs.has(edgeKey(1, 3))).toBe(false)
+    // a dated unit right after an undated one must not glue either
+    expect(tally([u1, u3]).pairs.has(edgeKey(1, 5))).toBe(false)
+  })
+
+  it('(j) out-of-order timestamps (second dateMs < first) never glue into one series', () => {
+    const u1: RawUnit = { authorId: 10, dateMs: 61000, replyTo: null, tokens: new Uint32Array([1, 2]) }
+    const u2: RawUnit = { authorId: 10, dateMs: 1000, replyTo: null, tokens: new Uint32Array([3, 4]) }
+    const res = tally([u1, u2])
+    expect(res.pairs.has(edgeKey(1, 2))).toBe(true)
+    expect(res.pairs.has(edgeKey(3, 4))).toBe(true)
+    expect(res.pairs.has(edgeKey(1, 3))).toBe(false)
+  })
+
   it('buildUnits converts chat messages using intern and drops filtered tokens', () => {
     const ia = new Intern()
     const chat: ChatExport = {

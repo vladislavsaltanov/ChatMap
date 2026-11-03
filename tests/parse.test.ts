@@ -110,4 +110,28 @@ describe('parse', () => {
     expect(parsed.messages).toHaveLength(1)
     expect(parsed.messages[0].authorId).toBe(777)
   })
+
+  it('(j) id: отсутствует / null / "" / "bad" → -(idx+1), не NaN и не 0; числовая строка сохраняется', () => {
+    const chat = parse(JSON.stringify({
+      messages: [
+        { type: 'message', from_id: 'user1', text: 'a' },
+        { id: 'bad', type: 'message', from_id: 'user1', text: 'b' },
+        { id: null, type: 'message', from_id: 'user1', text: 'c' },
+        { id: '', type: 'message', from_id: 'user1', text: 'd' },
+        { id: '42', type: 'message', from_id: 'user1', text: 'e' },
+      ],
+    }))
+    expect(chat.messages.map((m) => m.id)).toEqual([-1, -2, -3, -4, 42])
+  })
+
+  it('(k) from_id с префиксом и подчёркиванием: user_123, channel_45, chat_789 → 123, 45, 789', () => {
+    const chat = parse(JSON.stringify({
+      messages: [
+        { id: 1, type: 'message', from_id: 'user_123', text: 'a' },
+        { id: 2, type: 'message', from_id: 'channel_45', text: 'b' },
+        { id: 3, type: 'message', from_id: 'chat_789', text: 'c' },
+      ],
+    }))
+    expect(chat.messages.map((m) => m.authorId)).toEqual([123, 45, 789])
+  })
 })

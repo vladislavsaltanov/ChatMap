@@ -115,7 +115,7 @@ export function parse(src: string): ChatExport {
   const authorId = (m: RawMessage): number => {
     const rawId = m.from_id ?? m.actor_id
     if (rawId != null) {
-      const cleanStr = String(rawId).replace(/^(user|channel|chat|-)/i, '')
+      const cleanStr = String(rawId).replace(/^(?:(?:user|channel|chat)_?|-)+/i, '')
       const num = Number(cleanStr)
       if (Number.isInteger(num) && num > 0) {
         if (!authorNames.has(num)) {
@@ -137,10 +137,12 @@ export function parse(src: string): ChatExport {
 
   const messages: Message[] = rawMessages
     .filter((m): m is RawMessage => !!m && typeof m === 'object')
-    .map((m) => {
+    .map((m, idx) => {
       const kind = m.type === 'service' ? 'service' : 'message'
+      // Number(null) and Number('') are 0, Number(true) is 1: those would collide with real ids
+      const numId = typeof m.id === 'number' || typeof m.id === 'string' ? Number(m.id) : NaN
       return {
-        id: Number(m.id),
+        id: Number.isInteger(numId) && numId > 0 ? numId : -(idx + 1),
         kind,
         authorId: authorId(m),
         dateMs: parseDateMs(m),

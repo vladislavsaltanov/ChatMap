@@ -116,9 +116,13 @@ export function tally(units: RawUnit[]): TallyResult {
       authorMap.set(unit.authorId, (authorMap.get(unit.authorId) || 0) + 1)
     }
 
+    // dateMs 0 means unknown date: undated or out-of-order units never glue into a series
     if (
       currentSeries &&
       currentSeries.authorId === unit.authorId &&
+      unit.dateMs > 0 &&
+      currentSeries.dateMs > 0 &&
+      unit.dateMs - currentSeries.dateMs >= 0 &&
       unit.dateMs - currentSeries.dateMs <= 120_000 &&
       currentSeries.tokens.length + unit.tokens.length <= 30
     ) {
