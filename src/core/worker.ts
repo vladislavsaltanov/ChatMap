@@ -27,7 +27,7 @@ const DEFAULT_FILTER_CFG: FilterCfg = {
   customMat: [],
   customLaugh: [],
   smartMerge: false,
-  topN: 400,
+  topN: 600,
   minWeight: 0,
 }
 

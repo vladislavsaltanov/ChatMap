@@ -118,8 +118,8 @@ export class Controls {
         <fieldset class="control-group">
           <legend class="label">Слайдеры</legend>
           <label class="slider-label" for="slider-top-n">
-            <span>Слов на карте: <span id="top-n-val" class="num">400</span></span>
-            <input type="range" id="slider-top-n" min="100" max="1000" step="50" value="400" />
+            <span>Слов на карте: <span id="top-n-val" class="num">600</span></span>
+            <input type="range" id="slider-top-n" min="100" max="1000" step="50" value="600" />
           </label>
           <label class="slider-label" for="slider-min-weight">
             <span>Мин. вес ребра: <span id="min-weight-val" class="num">0</span></span>
