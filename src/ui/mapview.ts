@@ -3,7 +3,7 @@ import Sigma from 'sigma'
 import { downloadAsPNG } from '@sigma/export-image'
 import { edgeColor, edgeWidth } from '../core/geometry'
 import type { AuthorId, MapMsg } from '../core/types'
-import { getLabelOverrides, NodePanel, type NodeDetails } from './nodepanel'
+import { buildNodeDetails, getLabelOverrides, NodePanel } from './nodepanel'
 import { MAP_SIGMA_SETTINGS, MAP_SIGMA_STYLES } from './mapStyles'
 import type { CustomEdgeState, CustomGraphState, CustomNodeState } from './mapStyles'
 
@@ -73,15 +73,9 @@ export class MapView {
       })
     })
 
-    zoomInBtn.addEventListener('click', () => {
-      this.renderer?.getCamera().zoomIn()
-    })
-    zoomOutBtn.addEventListener('click', () => {
-      this.renderer?.getCamera().zoomOut()
-    })
-    zoomResetBtn.addEventListener('click', () => {
-      this.renderer?.getCamera().reset()
-    })
+    zoomInBtn.addEventListener('click', () => this.renderer?.getCamera().zoomIn())
+    zoomOutBtn.addEventListener('click', () => this.renderer?.getCamera().zoomOut())
+    zoomResetBtn.addEventListener('click', () => this.renderer?.getCamera().reset())
 
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && this.pinnedId !== null) {
@@ -105,6 +99,28 @@ export class MapView {
     this.activeEdges = []
   }
 
+  // Highlights `key` plus its `topN` strongest neighbours (by edge weight) and their edges
+  private activateSubgraph(key: string, topN: number): void {
+    this.renderer?.setNodeState(key, { isActive: true, isHighlighted: true })
+    this.activeNodes.push(key)
+    const neighborsWithWeights: Array<{ neighbor: string; edge: string; weight: number }> = []
+    for (const neighbor of this.graph.neighbors(key)) {
+      const edge = this.graph.edge(key, neighbor)
+      if (edge) {
+        const weight = (this.graph.getEdgeAttribute(edge, 'weight') as number) || 1
+        neighborsWithWeights.push({ neighbor, edge, weight })
+      }
+    }
+    neighborsWithWeights.sort((a, b) => b.weight - a.weight)
+    for (const conn of neighborsWithWeights.slice(0, topN)) {
+      this.renderer?.setNodeState(conn.neighbor, { isActive: true })
+      this.renderer?.setEdgeState(conn.edge, { isActive: true })
+      this.activeNodes.push(conn.neighbor)
+      this.activeEdges.push(conn.edge)
+    }
+    this.renderer?.setGraphState({ hasActiveSubgraph: true })
+  }
+
   private initRenderer(): void {
     if (this.renderer) return
 
@@ -122,25 +138,7 @@ export class MapView {
 
       if (this.pinnedId === null) {
         this.clearActiveSubgraph()
-        this.renderer?.setNodeState(node, { isActive: true, isHighlighted: true })
-        this.activeNodes.push(node)
-        const neighborsWithWeights: Array<{ neighbor: string; edge: string; weight: number }> = []
-        for (const neighbor of this.graph.neighbors(node)) {
-          const edge = this.graph.edge(node, neighbor)
-          if (edge) {
-            const weight = (this.graph.getEdgeAttribute(edge, 'weight') as number) || 1
-            neighborsWithWeights.push({ neighbor, edge, weight })
-          }
-        }
-        neighborsWithWeights.sort((a, b) => b.weight - a.weight)
-        const topConnections = neighborsWithWeights.slice(0, 8)
-        for (const conn of topConnections) {
-          this.renderer?.setNodeState(conn.neighbor, { isActive: true })
-          this.renderer?.setEdgeState(conn.edge, { isActive: true })
-          this.activeNodes.push(conn.neighbor)
-          this.activeEdges.push(conn.edge)
-        }
-        this.renderer?.setGraphState({ hasActiveSubgraph: true })
+        this.activateSubgraph(node, 8)
         this.renderer?.refresh({ skipIndexation: true })
       }
     })
@@ -160,19 +158,9 @@ export class MapView {
       }
     })
 
-    this.renderer.on('clickNode', ({ node }) => {
-      const id = Number(node)
-      if (this.pinnedId === id) {
-        this.pin(null)
-      } else {
-        this.pin(id)
-      }
-    })
-
+    this.renderer.on('clickNode', ({ node }) => this.pin(this.pinnedId === Number(node) ? null : Number(node)))
     this.renderer.on('clickStage', () => {
-      if (this.pinnedId !== null) {
-        this.pin(null)
-      }
+      if (this.pinnedId !== null) this.pin(null)
     })
   }
 
@@ -239,43 +227,6 @@ export class MapView {
     this.renderer?.refresh()
   }
 
-  private getNodeDetails(id: number): NodeDetails | null {
-    const key = String(id)
-    if (!this.graph.hasNode(key)) return null
-
-    const attrs = this.graph.getNodeAttributes(key)
-    const label = attrs.label as string
-    const defaultLabel = (attrs.defaultLabel as string) || label
-    const canon = (attrs.canon as string) || defaultLabel
-    const count = (attrs.count as number) || 0
-
-    const neighborsList: Array<{ id: number; label: string; weight: number }> = []
-    for (const nb of this.graph.neighbors(key)) {
-      const edge = this.graph.edge(key, nb)
-      const weight = edge ? (this.graph.getEdgeAttribute(edge, 'weight') as number) : 0
-      const nbAttrs = this.graph.getNodeAttributes(nb)
-      neighborsList.push({
-        id: Number(nb),
-        label: nbAttrs.label as string,
-        weight,
-      })
-    }
-    neighborsList.sort((a, b) => b.weight - a.weight)
-    const topNeighbors = neighborsList.slice(0, 3)
-
-    const forms = this.lastMsg?.forms?.get(id) || []
-
-    return {
-      id,
-      label,
-      defaultLabel,
-      canon,
-      count,
-      neighbors: topNeighbors,
-      forms,
-    }
-  }
-
   pin(id: number | null): void {
     this.pinnedId = id
     if (!this.renderer) return
@@ -284,29 +235,11 @@ export class MapView {
 
     if (id !== null && this.graph.hasNode(String(id))) {
       const key = String(id)
-      this.renderer.setNodeState(key, { isActive: true, isHighlighted: true })
-      this.activeNodes.push(key)
-      const neighborsWithWeights: Array<{ neighbor: string; edge: string; weight: number }> = []
-      for (const neighbor of this.graph.neighbors(key)) {
-        const edge = this.graph.edge(key, neighbor)
-        if (edge) {
-          const weight = (this.graph.getEdgeAttribute(edge, 'weight') as number) || 1
-          neighborsWithWeights.push({ neighbor, edge, weight })
-        }
-      }
-      neighborsWithWeights.sort((a, b) => b.weight - a.weight)
-      const topConnections = neighborsWithWeights.slice(0, 12)
-      for (const conn of topConnections) {
-        this.renderer.setNodeState(conn.neighbor, { isActive: true })
-        this.renderer.setEdgeState(conn.edge, { isActive: true })
-        this.activeNodes.push(conn.neighbor)
-        this.activeEdges.push(conn.edge)
-      }
-      this.renderer.setGraphState({ hasActiveSubgraph: true })
+      this.activateSubgraph(key, 12)
       const attrs = this.graph.getNodeAttributes(key)
       this.hoverLine.textContent = `${attrs.label} · ${attrs.count}`
 
-      const details = this.getNodeDetails(id)
+      const details = buildNodeDetails(this.graph, id, this.lastMsg?.forms?.get(id) || [])
       if (details) {
         this.nodePanel.show(details)
       }
