@@ -32,12 +32,21 @@ const EN_STOPWORDS = new Set([
   'even', 'new', 'want', 'because', 'any', 'these', 'give', 'day', 'most', 'us',
 ])
 
+// Short roots (муд, хер, бля, сук, еб) match innocent words (мудрый, херсон), so only explicit forms remain.
 const MAT_ROOTS = [
-  'бляд', 'бля', 'хуй', 'хер', 'еб', 'пизд', 'муд', 'сук',
-  'говн', 'дерьм', 'падл', 'подон', 'оху', 'ниху', 'аху',
+  'бляд', 'пизд', 'говн', 'дерьм', 'падл', 'подон', 'оху', 'ниху', 'аху',
+  'мудак', 'мудил', 'мудац', 'мудо', 'херн', 'херов', 'сучк', 'сучар', 'сукин',
+  'хуй', 'хуе', 'хуи', 'хуя',
+  'еба', 'ебем', 'ебет', 'ебеш', 'ебут', 'ебл', 'ебн', 'ебу', 'ебен',
 ]
 
-const MAT_EXACT = new Set(['сука', 'блять', 'нахуй', 'епта', 'пздц'])
+const MAT_EXACT = new Set([
+  'еб', 'ебись', 'ебитесь', 'сука', 'суки', 'суке', 'суку', 'сукой', 'бля', 'блять', 'блядь',
+  'хер', 'хера', 'херу', 'хером', 'нахуй', 'епта', 'пздц',
+])
+
+// Innocent words that start with a mat form: built-in rules skip them, customRoots still apply.
+const MAT_ALLOWLIST = ['мудр', 'херсон', 'херес', 'сукн', 'бляха']
 
 const LAUGH_LITERALS = new Set(['лол', 'кек', 'lol', 'lmao', 'rofl', 'kek'])
 const LAUGH_GLYPHS = /^[хаеиоуыэ-]+$/u
@@ -55,17 +64,17 @@ function matchesRootRule(word: string, root: string): boolean {
 
 export function matchesMat(word: string, customRoots: string[]): boolean {
   const clean = word.toLowerCase().replace(/ё/g, 'е')
+  const allowlisted = MAT_ALLOWLIST.some((prefix) => clean.startsWith(prefix))
 
-  if (MAT_EXACT.has(clean)) {
-    return true
-  }
-
-  for (const root of MAT_ROOTS) {
-    if (root === 'сук' && clean.startsWith('сукн')) {
-      continue
-    }
-    if (matchesRootRule(clean, root)) {
+  if (!allowlisted) {
+    if (MAT_EXACT.has(clean)) {
       return true
+    }
+
+    for (const root of MAT_ROOTS) {
+      if (matchesRootRule(clean, root)) {
+        return true
+      }
     }
   }
 
