@@ -1,3 +1,5 @@
+import { escapeHtml } from '../core/escapeHtml'
+
 const STORAGE_KEY = 'chatmap.labels'
 
 export function getLabelOverrides(): Record<string, string> {
@@ -136,7 +138,7 @@ export class NodePanel {
       const btn = document.createElement('button')
       btn.type = 'button'
       btn.className = 'neighbor-btn'
-      btn.innerHTML = `<span>${nb.label}</span><span class="num">${nb.weight}</span>`
+      btn.innerHTML = `<span>${escapeHtml(nb.label)}</span><span class="num">${nb.weight}</span>`
       btn.addEventListener('click', () => {
         if (this.onSelectCallback) {
           this.onSelectCallback(nb.id)
@@ -154,7 +156,7 @@ export class NodePanel {
       const btn = document.createElement('button')
       btn.type = 'button'
       btn.className = `form-btn ${form === this.currentDetails.label ? 'active' : ''}`
-      btn.innerHTML = `<span>${form}</span><span class="num">${cnt}</span>`
+      btn.innerHTML = `<span>${escapeHtml(form)}</span><span class="num">${cnt}</span>`
       btn.addEventListener('click', () => {
         if (!this.currentDetails) return
         this.currentDetails.label = form
