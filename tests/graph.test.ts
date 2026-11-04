@@ -229,4 +229,28 @@ describe('layout', () => {
     const total = (maxX - minX + 1) * (maxY - minY + 1)
     expect(1 - seen.size / total).toBeGreaterThan(0.05)
   })
+
+  it('(i) 600 узлов не дают кашу: пересечений <5% пар, центр разрежен', () => {
+    // Масштаб реального чата: topN=600 по умолчанию (64k raw-токенов → 600).
+    const nodes = Array.from({ length: 600 }, (_, i) => ({ id: i + 1, size: 20 }))
+    const edges: Array<{ a: number; b: number; weight: number }> = []
+    for (let h = 1; h <= 12; h++) {
+      for (let k = 1; k <= 49; k++) {
+        edges.push({ a: h, b: 12 + (h - 1) * 49 + k, weight: 3 + (k % 4) })
+      }
+    }
+    const res = layout(nodes, edges, { seed: 1337, fullRun: true })
+    const pts = [...res.positions.values()]
+    let overlap = 0
+    let pairs = 0
+    for (let i = 0; i < pts.length; i++) {
+      for (let j = i + 1; j < pts.length; j++) {
+        pairs++
+        if (Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y) < 36) overlap++
+      }
+    }
+    expect(overlap / pairs).toBeLessThan(0.05)
+    const inCenter = pts.filter((p) => Math.abs(p.x) < 500 && Math.abs(p.y) < 500).length
+    expect(inCenter).toBeLessThan(60)
+  }, 60000)
 })
