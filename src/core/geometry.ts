@@ -89,3 +89,33 @@ export function quadOf(core: number): number {
 export function coreFrac(core: number): number {
   return core / quadOf(core)
 }
+
+// Дендриты нейрона: углы (в оборотах 0..1) к 5 сильнейшим соседям по весу,
+// -1 — отростка нет. Шейдер тянет amp по этим углам.
+export function armsFor(
+  nodes: Array<{ id: number; x: number; y: number }>,
+  edges: Array<{ a: number; b: number; weight: number }>,
+  id: number
+): number[] {
+  const pos = new Map(nodes.map((n) => [n.id, n]))
+  const me = pos.get(id)
+  if (!me) return [-1, -1, -1, -1, -1]
+  const neighbours: Array<{ nid: number; weight: number }> = []
+  for (const e of edges) {
+    if (e.a === id && pos.has(e.b)) neighbours.push({ nid: e.b, weight: e.weight })
+    else if (e.b === id && pos.has(e.a)) neighbours.push({ nid: e.a, weight: e.weight })
+  }
+  neighbours.sort((x, y) => y.weight - x.weight || x.nid - y.nid)
+  const arms = neighbours.slice(0, 5).map(({ nid }) => {
+    const p = pos.get(nid)!
+    const turns = Math.atan2(p.y - me.y, p.x - me.x) / (Math.PI * 2)
+    return ((turns % 1) + 1) % 1
+  })
+  while (arms.length < 5) arms.push(-1)
+  return arms
+}
+
+// Фаза дыхания капли: детерминирована id, не зависит от позиции (не дрожит при инкременте).
+export function phaseFor(id: number): number {
+  return (Math.imul(id, 2654435761) >>> 0) / 4294967296
+}
