@@ -1,11 +1,11 @@
 import Graph from 'graphology'
 import Sigma from 'sigma'
-import { pathCurved, pathLine } from 'sigma/rendering'
 import { downloadAsPNG } from '@sigma/export-image'
 import { edgeColor, edgeWidth } from '../core/geometry'
 import type { AuthorId, MapMsg } from '../core/types'
 import { buildNodeDetails, getLabelOverrides, NodePanel } from './nodepanel'
 import { MAP_SIGMA_SETTINGS, MAP_SIGMA_STYLES } from './mapStyles'
+import { NEURAL_PRIMITIVES, setNeuralTime } from './neural'
 import { SubgraphAnimator } from './subgraphAnim'
 import { SubgraphHighlight } from './subgraphHighlight'
 import type { CustomEdgeState, CustomGraphState, CustomNodeState } from './mapStyles'
@@ -128,14 +128,12 @@ export class MapView {
     if (this.renderer) return
 
     this.renderer = new Sigma(this.graph, this.container, {
-      // Нити-дуги: line даже не нужен напрямую, но держим первым для дефолта
-      primitives: {
-        edges: { paths: [pathLine(), pathCurved()] },
-      },
+      // Нейронные слои: soma (капля с дендритами) + axon (жила с импульсами)
+      primitives: NEURAL_PRIMITIVES,
       settings: MAP_SIGMA_SETTINGS,
-      customNodeState: { isActive: false },
-      customEdgeState: { isActive: false },
-      customGraphState: { hasActiveSubgraph: false, dimAlpha: 0, focusAlpha: 0, lodRatio: 1, releaseAlpha: 0 },
+      customNodeState: { isActive: false } as CustomNodeState,
+      customEdgeState: { isActive: false } as CustomEdgeState,
+      customGraphState: { hasActiveSubgraph: false, dimAlpha: 0, focusAlpha: 0, lodRatio: 1, releaseAlpha: 0 } as CustomGraphState,
       styles: MAP_SIGMA_STYLES,
     })
 
@@ -179,6 +177,15 @@ export class MapView {
     this.renderer.on('clickStage', () => {
       if (this.pinnedId !== null) this.pin(null)
     })
+
+    // Часы нейросети: время в секундах по модулю 7200 (точность float в шейдере);
+    // motion=0 на скрытой вкладке — импульсы и дыхание стоят.
+    const start = performance.now()
+    const tick = () => {
+      setNeuralTime((performance.now() - start) / 1000, document.hidden ? 0 : 1)
+      requestAnimationFrame(tick)
+    }
+    tick()
   }
 
   // Плотный чат (>300 слов) получает LOD уже на первом экране: плотность
@@ -216,6 +223,12 @@ export class MapView {
         color,
         count: node.count,
         authorLead: node.authorLead,
+        phase: node.phase,
+        arm0: node.arm0,
+        arm1: node.arm1,
+        arm2: node.arm2,
+        arm3: node.arm3,
+        arm4: node.arm4,
       })
     }
 
@@ -232,6 +245,8 @@ export class MapView {
           size: edgeSize,
           color,
           weight: edge.weight,
+          alpha: edge.alpha,
+          bead: edge.bead,
           curvature: edgeCurvature(edge.a, edge.b),
         })
       }
