@@ -46,12 +46,17 @@ float somaCapsule(vec2 p, float r1, float r2, float h) {
   return dot(p, vec2(a, b)) - r1;
 }
 
-float somaArm(vec2 p, float turns, float c, float len, float rootR, float tipR, float wob) {
+// Гнутый отросток: центр-линия — дуга (curve смещает поперечную координату).
+// rootPos — точка корня в uv (для ветвей второго порядка — середина главной ветви).
+float somaArmBent(vec2 p, vec2 rootPos, float turns, float c, float len, float rootR, float tipR, float wob, float curve) {
   float a = turns * 6.2831853 + wob;
   vec2 dir = vec2(cos(a), sin(a));
-  vec2 q = p - dir * c * 0.55;                       // корень спрятан в теле
+  vec2 q = p - rootPos;
   vec2 loc = vec2(dot(q, vec2(-dir.y, dir.x)), dot(q, dir));
-  return somaCapsule(loc, rootR, tipR, max(len + c * 0.45, 1e-3));
+  float h = max(len + c * 0.3, 1e-3);
+  float u = clamp(loc.y / h, 0.0, 1.0);
+  loc.x -= curve * sin(u * 3.14159);
+  return somaCapsule(loc, rootR, tipR, h);
 }
 
 // Поле расстояния всей капли: «живое» тело + дендриты, сшитые smooth-min
@@ -61,9 +66,9 @@ float somaField(vec2 p, float c, float pxu, float coreR, float ph, float t,
   float wob = 0.045 * sin(3.0 * ang + t * 0.9 + ph * 6.28) + 0.03 * sin(5.0 * ang - t * 1.25 + ph * 11.0);
   float d = length(p) - c * (1.0 + wob);
   float k = max(0.34 * c, 2.2 * pxu);                // ширина «шва» слияния
-  float lenMax = (1.0 - c) * 1.15;
+  float lenMax = (1.0 - c) * 0.9;
   float tipR = max(0.045 * c, 0.6 * pxu);
-  float rootR = 0.28 * c;
+  float rootR = 0.34 * c;
   float an[5] = float[5](a0, a1, a2, a3, a4);
   for (int i = 0; i < 5; i++) {
     float fi = float(i);
@@ -71,16 +76,21 @@ float somaField(vec2 p, float c, float pxu, float coreR, float ph, float t,
     if (an[i] >= 0.0 && w > 0.001) {
       float len = lenMax * (1.0 - 0.11 * fi) * (0.72 + 0.28 * fract(sin(ph * 91.7 + fi * 12.9) * 4375.5)) * w;
       float wb = 0.07 * sin(t * 0.7 + fi * 1.7 + ph * 9.0);
-      float da = somaArm(p, an[i], c, len, rootR * w, tipR, wb);
+      float ma = an[i] * 6.2831853 + wb;
+      vec2 md = vec2(cos(ma), sin(ma));
+      float curve = (fract(sin(ph * 43.9 + fi * 71.3) * 4375.5) - 0.5) * 0.22;
+      float da = somaArmBent(p, md * (c * 0.55), an[i], c, len, rootR * w, tipR, wb, curve);
       d = somaSmin(d, da, k);
-      // боковые волоски веером от корня: только у крупных тел (перф + читаемость)
-      if (coreR > 10.0) {
+      // ветви второго порядка: от середины главной, не веером у корня (веер давал ёжика)
+      if (coreR > 12.0 && i < 3.0) {
         for (int j = -1; j <= 1; j += 2) {
           float fj = float(j);
-          float bt = an[i] + fj * 0.045;
-          float bl = len * 0.45 * (0.8 + 0.2 * fract(sin(ph * 57.3 + fi * 31.7 + fj * 17.1) * 4375.5));
-          float bd = somaArm(p, bt, c, bl, rootR * w * 0.6, tipR, wb * 0.5);
-          d = somaSmin(d, bd, k * 0.8);
+          float bt = an[i] + fj * 0.075;
+          vec2 bRoot = md * (c * 0.55 + len * 0.55);
+          float bl = len * 0.42 * (0.8 + 0.2 * fract(sin(ph * 57.3 + fi * 31.7 + fj * 17.1) * 4375.5));
+          float bcurve = (fract(sin(ph * 29.7 + fi * 37.9 + fj * 7.3) * 4375.5) - 0.5) * 0.16;
+          float bd = somaArmBent(p, bRoot, bt, c, bl, rootR * w * 0.6, tipR, wb * 0.5, bcurve);
+          d = somaSmin(d, bd, k * 0.7);
         }
       }
     }
@@ -107,7 +117,7 @@ vec4 layer_soma(vec4 v_somaColor, float v_somaCore, float v_somaGlow, float v_so
   // гало повторяет форму капли с отростками
   float haloK = max((1.0 - c) * 0.22, 1e-4);
   float halo = exp(-max(d, 0.0) / haloK) * (1.0 - smoothstep(0.78, 1.0, r));
-  float haloA = min(halo * 0.55 * v_somaGlow * breathe, 0.95);
+  float haloA = min(halo * 0.32 * v_somaGlow * breathe, 0.85);
 
   // псевдо-нормаль из градиента поля (прямая разность): центр смотрит на зрителя, край — вбок
   float e = 1.5 * pxu;
@@ -120,22 +130,23 @@ vec4 layer_soma(vec4 v_somaColor, float v_somaCore, float v_somaGlow, float v_so
   float edgeK = pow(1.0 - depth, 0.85);
   vec3 n = vec3(g * edgeK, sqrt(max(1.0 - edgeK * edgeK, 0.0)));
 
-  // жидкий металл: отражение от тёмной студии с двумя источниками и неоновым ободком
+  // светящаяся клетка (чёрный хром на тёмном фоне давал невидимое тело-ёжика):
+  // светлый блик по центру, цвет автора, френелевский ободок
   vec3 rv = vec3(2.0 * n.z * n.x, 2.0 * n.z * n.y, 2.0 * n.z * n.z - 1.0);
   vec3 sky = mix(vec3(0.78, 0.86, 1.0), col, 0.45);
-  vec3 envCol = mix(col * 0.07, sky * 0.55, smoothstep(-0.1, 0.55, rv.y));
+  vec3 envCol = mix(col * 0.22, sky * 0.8, smoothstep(-0.1, 0.55, rv.y));
   float hl = pow(max(dot(rv, normalize(vec3(-0.5, 0.7, 0.55))), 0.0), 36.0);
   float hl2 = pow(max(dot(rv, normalize(vec3(0.62, -0.55, 0.5))), 0.0), 12.0);
   float fres = pow(1.0 - n.z, 2.2);
-  vec3 chrome = envCol + vec3(1.0) * hl * 1.35 + col * hl2 * 0.55 + col * fres * 0.95;
+  vec3 chrome = envCol + vec3(1.0) * hl * 1.6 + col * hl2 * 0.55 + col * fres * 0.95;
 
-  // мелкая капля — звезда: цвет автора, белый центр
-  vec3 solid = mix(col, vec3(1.0), 0.85 * pow(depth, 1.3));
-  vec3 fillRgb = mix(solid, chrome, big);
+  // тело светится: цвет автора + горячее белое ядро
+  vec3 solid = mix(col * 1.15, vec3(1.0), 0.8 * pow(depth, 1.35));
+  vec3 fillRgb = mix(solid, chrome, big * 0.45);
 
   float rim = exp(-(dPx * dPx) / (2.0 * 0.9 * 0.9));
-  vec3 rimRgb = mix(col, vec3(1.0), 0.3);
-  float rimA = rim * big * 0.55;
+  vec3 rimRgb = mix(col, vec3(1.0), 0.45);
+  float rimA = rim * big * 0.75;
 
   vec3 pm = col * haloA;
   float pa = haloA;
