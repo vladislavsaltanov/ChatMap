@@ -54,9 +54,9 @@ function createRng(seed: number) {
 // Гармонический шум формы плоскости (реф 2, NOISE): три нечётные октавы угла.
 // Фазы от seed: тот же граф — тот же неровный контур, детерминировано. |n| <= 1.
 export function shapeNoise(angle: number, phases: readonly number[]): number {
-  // Шесть октав: крупные доли + детальная рвань края (реф 2, NOISE)
-  const oct = [2, 3, 5, 8, 12, 16]
-  const wts = [0.4, 0.24, 0.14, 0.1, 0.07, 0.05]
+  // Восемь октав: крупные доли + детальная рвань края (реф 2, NOISE)
+  const oct = [2, 3, 5, 8, 12, 16, 21, 27]
+  const wts = [0.38, 0.23, 0.13, 0.09, 0.07, 0.05, 0.03, 0.02]
   let n = 0
   for (let i = 0; i < oct.length; i++) {
     n += wts[i] * Math.sin(oct[i] * angle + (phases[i] ?? 0))
@@ -145,6 +145,8 @@ export function layout(
   const spread = Math.max(500, Math.sqrt(nodes.length) * 150)
   // Фазы шума формы: до расходования rng на позиции, для устойчивого детерминизма
   const shapePhases = [
+    rng() * Math.PI * 2,
+    rng() * Math.PI * 2,
     rng() * Math.PI * 2,
     rng() * Math.PI * 2,
     rng() * Math.PI * 2,
@@ -282,11 +284,63 @@ export function layout(
       // 2) выступы/впадины: угловой шум радиуса, амплитуда растёт к fringe
       const d1 = Math.hypot(sx, sy) || 1
       const t = (rankOf.get(n) ?? 0) / Math.max(1, graph.order - 1)
-      const amp = (0.18 + 0.5 * t) * Math.min(1, graph.order / 30)
+      const amp = (0.35 + 0.75 * t) * Math.min(1, graph.order / 20)
       const r2 = d1 * (1 + amp * shapeNoise(Math.atan2(sy, sx), shapePhases))
       graph.setNodeAttribute(n, 'x', cx + (sx / d1) * r2)
       graph.setNodeAttribute(n, 'y', cy + (sy / d1) * r2)
     })
+
+    // 3) Доли-«лобы»: топ-хабов вытолкать к периметру вместе с соседями,
+    // иначе FA2 складывает все хабы в ядро-blob. Лобы расходятся, в середине —
+    // void, силуэт рвётся. Только крупные графы: на карманных хаб держит центр
+    // (тесты e/g), там рвань не нужна.
+    if (graph.order >= 40) {
+      let ncx = 0
+      let ncy = 0
+      graph.forEachNode((n) => {
+        const a = graph.getNodeAttributes(n)
+        ncx += a.x
+        ncy += a.y
+      })
+      ncx /= graph.order
+      ncy /= graph.order
+      let maxR2 = 0
+      graph.forEachNode((n) => {
+        if (graph.degree(n) === 0) return
+        const a = graph.getNodeAttributes(n)
+        maxR2 = Math.max(maxR2, Math.hypot(a.x - ncx, a.y - ncy))
+      })
+      const shifts = new Map<string, { dx: number; dy: number }>()
+      const addShift = (k: string, ux: number, uy: number, push: number, w: number) => {
+        const s = shifts.get(k) ?? { dx: 0, dy: 0 }
+        s.dx += ux * push * w
+        s.dy += uy * push * w
+        shifts.set(k, s)
+      }
+      rank.slice(0, 12).forEach((n, i) => {
+        const a = graph.getNodeAttributes(n)
+        const dx = a.x - ncx
+        const dy = a.y - ncy
+        const d = Math.hypot(dx, dy) || 1
+        const target = maxR2 * (0.88 - i * 0.012)
+        if (d >= target) return
+        const ux = dx / d
+        const uy = dy / d
+        const push = target - d
+        addShift(n, ux, uy, push, 1)
+        for (const nb of graph.neighbors(n)) addShift(nb, ux, uy, push, 0.6)
+        for (const nb of graph.neighbors(n)) {
+          for (const n2 of graph.neighbors(nb)) {
+            if (n2 !== n) addShift(n2, ux, uy, push, 0.25)
+          }
+        }
+      })
+      for (const [n, s] of shifts) {
+        const a = graph.getNodeAttributes(n)
+        graph.setNodeAttribute(n, 'x', a.x + s.dx)
+        graph.setNodeAttribute(n, 'y', a.y + s.dy)
+      }
+    }
   }
 
   const positionedNodes: Array<{ id: number; x: number; y: number; size?: number }> = []
