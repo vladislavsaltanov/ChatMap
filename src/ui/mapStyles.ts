@@ -25,6 +25,16 @@ function lodDust(sizePx: number, lodRatio: number): number {
   return Math.round(dust * 50) / 50
 }
 
+// Zoom-resolved LOD = «3D проекция»: крупный хаб на общем плане яркий, мелочь
+// лишь тёмным фоном; с приближением lodScale растит s и мелочь всплывает.
+// Ступени квантуются до 0.05 — без дрожи на каждый кадр зума.
+function lodTier(sizePx: number, lodRatio: number): number {
+  const s = lodScale(sizePx, lodRatio)
+  if (s >= 8) return 1
+  const ramp = s < 4 ? 0.15 : 0.15 + 0.85 * ((s - 4) / 4)
+  return Math.round(ramp * 20) / 20
+}
+
 // Тело нейрона = ядро + гало (haloPx/quadOf/coreFrac — из src/core/geometry.ts).
 const LABEL_LIGHT = '#eef0f7'
 // Альфа для светлого текста подписи (прозрачность — не трогает атлас глифов)
@@ -115,8 +125,9 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
       // Квад = ядро + гало; ядро — attrs.size (с LOD)
       size: (attrs: any, _s: any, g: CustomGraphState) => quadOf(lodScale((attrs.size ?? 0) as number, g.lodRatio ?? 1)),
       color: { attribute: 'color', defaultValue: '#9db0d8' },
-      // Пыль тает прозрачностью, а не подмесом цвета: гало остаётся чистым
-      opacity: (attrs: any, _s: any, g: CustomGraphState) => 1 - lodDust((attrs.size ?? 0) as number, g.lodRatio ?? 1),
+      // Пыль тает прозрачностью + zoom-resolved tier: мелочь — фон, хабы — свет
+      opacity: (attrs: any, _s: any, g: CustomGraphState) =>
+        lodTier((attrs.size ?? 0) as number, g.lodRatio ?? 1) * (1 - lodDust((attrs.size ?? 0) as number, g.lodRatio ?? 1)),
       label: { attribute: 'label' },
       visibility: (attrs: any, _s: any, g: CustomGraphState) =>
         (g.dimAlpha ?? 0) === 0 && lodScale((attrs.size ?? 0) as number, g.lodRatio ?? 1) < LOD_FLOOR
@@ -252,7 +263,9 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
     // толщина (ширина свечения), прозрачность по весу связи и кривизна.
     {
       size: { attribute: 'size', defaultValue: 2.4 },
-      opacity: { attribute: 'alpha', defaultValue: 0.2 },
+      // Нити мелкой пары — фоном (lodSize = мин. размер концов, кладёт mapview)
+      opacity: (attrs: any, _s: any, g: CustomGraphState) =>
+        ((attrs.alpha as number) ?? 0.2) * lodTier((attrs.lodSize as number) ?? 99, g.lodRatio ?? 1),
       ...({
         path: 'curved',
         curvature: { attribute: 'curvature', defaultValue: 0.15 },
@@ -266,7 +279,9 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
       then: {
         // Фоновые нити в фокус-режиме почти гаснут (ступени 1/16)
         opacity: (attrs: any, _s, g: CustomGraphState) =>
-          ((attrs.alpha as number) ?? 0.2) * (1 - 0.93 * (Math.round(16 * (g.dimAlpha ?? 0)) / 16)),
+          ((attrs.alpha as number) ?? 0.2) *
+          lodTier((attrs.lodSize as number) ?? 99, g.lodRatio ?? 1) *
+          (1 - 0.93 * (Math.round(16 * (g.dimAlpha ?? 0)) / 16)),
       },
     },
     {
