@@ -24,12 +24,20 @@ export type WorkerNode = {
   size: number
   count: number
   authorLead: number
+  phase: number
+  arm0: number
+  arm1: number
+  arm2: number
+  arm3: number
+  arm4: number
 }
 
 export type WorkerEdge = {
   a: number
   b: number
   weight: number
+  alpha: number
+  bead: number
 }
 
 export type WorkerIn =

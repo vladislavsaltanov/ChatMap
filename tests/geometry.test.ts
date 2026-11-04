@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { coreFrac, edgeAlpha, edgeColor, edgeWidth, haloPx, nodeFitSize, quadOf } from '../src/core/geometry'
+import { armsFor, coreFrac, edgeAlpha, edgeColor, edgeWidth, haloPx, nodeFitSize, phaseFor, quadOf } from '../src/core/geometry'
 
 describe('geometry', () => {
   it('computes edgeWidth according to (w / wmax)^0.6', () => {
@@ -47,5 +47,35 @@ describe('geometry', () => {
     expect(haloPx(5)).toBeGreaterThanOrEqual(12)
     expect(haloPx(60)).toBeLessThanOrEqual(44)
     expect(quadOf(0)).toBe(12)
+  })
+
+  it('armsFor: углы к сильнейшим соседям по весу, -1 для пустот', () => {
+    const nodes = [
+      { id: 1, x: 0, y: 0 },
+      { id: 2, x: 10, y: 0 },
+      { id: 4, x: -10, y: 0 },
+      { id: 3, x: 0, y: 10 },
+    ]
+    const edges = [
+      { a: 1, b: 2, weight: 5 },
+      { a: 1, b: 4, weight: 5 },
+      { a: 1, b: 3, weight: 1 },
+    ]
+    const arms = armsFor(nodes, edges, 1)
+    expect(arms).toHaveLength(5)
+    expect(arms[0]).toBeCloseTo(0)
+    expect(arms[1]).toBeCloseTo(0.5)
+    expect(arms[2]).toBeCloseTo(0.25)
+    expect(arms[3]).toBe(-1)
+    expect(arms[4]).toBe(-1)
+    expect(armsFor(nodes, edges, 99)).toEqual([-1, -1, -1, -1, -1])
+  })
+
+  it('phaseFor: детерминирован и в [0,1)', () => {
+    expect(phaseFor(7)).toBe(phaseFor(7))
+    expect(phaseFor(7)).not.toBe(phaseFor(8))
+    expect(phaseFor(0)).toBeGreaterThanOrEqual(0)
+    expect(phaseFor(0)).toBeLessThan(1)
+    expect(phaseFor(123456)).toBeLessThan(1)
   })
 })

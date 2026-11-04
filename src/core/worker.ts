@@ -1,4 +1,4 @@
-import { nodeFitSize } from './geometry'
+import { armsFor, edgeAlpha, nodeFitSize, phaseFor } from './geometry'
 import { getLruCache, layout, setLruCache } from './graph'
 import { parse } from './parse'
 import { pruneBackbone, select, type ViewMode } from './select'
@@ -136,6 +136,10 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
   send({ type: 'progress', done: 95, total: 100, stage: 'Формирование карты...' })
   const nodes: WorkerNode[] = []
   const forms = new Map<number, Array<[string, number]>>()
+  const posList = selection.nodes.map((n) => {
+    const p = layoutResult.positions.get(n.id) || { x: 0, y: 0 }
+    return { id: n.id, x: p.x, y: p.y }
+  })
 
   for (const n of selection.nodes) {
     const info = nodeInfoMap.get(n.id)!
@@ -156,6 +160,7 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
       }
     }
 
+    const arms = armsFor(posList, backboneEdges, n.id)
     nodes.push({
       id: n.id,
       label: info.bestForm,
@@ -165,13 +170,23 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
       size: info.size,
       count: n.count,
       authorLead,
+      phase: phaseFor(n.id),
+      arm0: arms[0],
+      arm1: arms[1],
+      arm2: arms[2],
+      arm3: arms[3],
+      arm4: arms[4],
     })
   }
 
   send({
     type: 'map',
     nodes,
-    edges: backboneEdges,
+    edges: backboneEdges.map((e) => ({
+      ...e,
+      alpha: edgeAlpha(e.weight, selection.maxWeight),
+      bead: selection.maxWeight > 0 ? Math.min(1, e.weight / selection.maxWeight) : 0,
+    })),
     maxCount: selection.maxCount,
     maxWeight: selection.maxWeight,
     forms,
