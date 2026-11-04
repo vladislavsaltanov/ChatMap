@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { edgeColor, edgeWidth, nodeFitSize } from '../src/core/geometry'
+import { coreFrac, edgeAlpha, edgeColor, edgeWidth, haloPx, nodeFitSize, quadOf } from '../src/core/geometry'
 
 describe('geometry', () => {
   it('computes edgeWidth according to (w / wmax)^0.6', () => {
@@ -32,5 +32,20 @@ describe('geometry', () => {
     expect(weakColor).toBe(weakColor)
     expect(Number.parseInt(weakColor.slice(-2), 16)).toBeLessThan(Number.parseInt('a6', 16))
     expect(edgeColor(0, 100)).toBe('#55524b1a')
+  })
+
+  it('edgeAlpha: монотонна и в [0.1,0.6]', () => {
+    expect(edgeAlpha(0, 100)).toBe(0.1)
+    expect(edgeAlpha(100, 100)).toBeCloseTo(0.6)
+    expect(edgeAlpha(25, 100)).toBeCloseTo(0.35)
+    expect(edgeAlpha(50, 100)).toBeGreaterThan(edgeAlpha(25, 100))
+  })
+
+  it('haloPx/quadOf/coreFrac: квад = ядро+гало, границы', () => {
+    expect(quadOf(20)).toBe(20 + haloPx(20))
+    expect(coreFrac(20)).toBeCloseTo(20 / quadOf(20))
+    expect(haloPx(5)).toBeGreaterThanOrEqual(12)
+    expect(haloPx(60)).toBeLessThanOrEqual(44)
+    expect(quadOf(0)).toBe(12)
   })
 })
