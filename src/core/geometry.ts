@@ -67,3 +67,25 @@ export function edgeColor(w: number, maxWeight: number, tint = '#e8e2d6'): strin
   const [r, g, b] = mix(0.25 + 0.75 * t)
   return hex(r, g, b, Math.round((0.1 + 0.55 * t) * 255))
 }
+
+// Прозрачность светящейся нити по весу связи: слабые — туман, сильные — яркие жилы.
+export function edgeAlpha(w: number, wmax: number): number {
+  if (wmax <= 0 || w <= 0) return 0.1
+  const t = Math.max(0, Math.min(1, Math.pow(w / wmax, 0.5)))
+  return 0.1 + 0.5 * t
+}
+
+// Тело нейрона = ядро (радиус = size) + гало. Квад узла в sigma — ядро + гало;
+// шейдер знает долю ядра через coreFrac. Тоже самое жило в mapStyles — теперь
+// единый источник, чтобы layout (Task 1/6) и стили считали одинаково.
+export function haloPx(core: number): number {
+  return Math.min(44, Math.max(12, core * 0.8 + 9))
+}
+
+export function quadOf(core: number): number {
+  return core + haloPx(core)
+}
+
+export function coreFrac(core: number): number {
+  return core / quadOf(core)
+}
