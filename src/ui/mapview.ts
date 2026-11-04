@@ -241,12 +241,17 @@ export class MapView {
         const lead = this.graph.getNodeAttribute(a, 'authorLead') as AuthorId | undefined
         const tint = (lead !== undefined && this.authorColors.get(lead)) || '#b8b2a6'
         const color = edgeColor(edge.weight, msg.maxWeight, tint)
+        const lodSize = Math.min(
+          this.graph.getNodeAttribute(a, 'size') as number,
+          this.graph.getNodeAttribute(b, 'size') as number,
+        )
         this.graph.addEdge(a, b, {
           size: edgeSize,
           color,
           weight: edge.weight,
           alpha: edge.alpha,
           bead: edge.bead,
+          lodSize,
           curvature: edgeCurvature(edge.a, edge.b),
         })
       }
