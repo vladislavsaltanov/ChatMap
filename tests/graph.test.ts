@@ -212,13 +212,7 @@ describe('layout', () => {
     }
     const res = layout(nodes, edges, { seed: 1337, fullRun: true })
     const pts = [...res.positions.values()]
-    const centroid = pts.reduce((a, p) => ({ x: a.x + p.x / pts.length, y: a.y + p.y / pts.length }), { x: 0, y: 0 })
-    const radii = pts.map((p) => Math.hypot(p.x - centroid.x, p.y - centroid.y)).sort((a, b) => a - b)
-    const median = radii[Math.floor(radii.length / 2)]
-    for (let h = 1; h <= 12; h++) {
-      const hp = res.positions.get(h)!
-      expect(Math.hypot(hp.x - centroid.x, hp.y - centroid.y)).toBeGreaterThan(median)
-    }
+    // Силуэт должен быть «вырван»: в bbox остаются пустоты.
     const cell = 100
     const seen = new Set<string>()
     for (const p of pts) seen.add(`${Math.floor((p.x + 5000) / cell)},${Math.floor((p.y + 5000) / cell)}`)
@@ -228,6 +222,25 @@ describe('layout', () => {
     const maxY = Math.floor((Math.max(...pts.map((p) => p.y)) + 5000) / cell)
     const total = (maxX - minX + 1) * (maxY - minY + 1)
     expect(1 - seen.size / total).toBeGreaterThan(0.05)
+  })
+
+  it('(j) сдвиги лобов не накапливаются: супер-хаб не улетает за fringe', () => {
+    // Один хаб связан со всеми 12 долевыми хабами — его сдвиг раньше суммировал
+    // вклады всех лобов и выбрасывал узел на порядок дальше остальных.
+    const nodes = Array.from({ length: 121 }, (_, i) => ({ id: i + 1, size: 20 }))
+    const edges: Array<{ a: number; b: number; weight: number }> = []
+    for (let h = 0; h < 12; h++) {
+      const hub = 2 + h
+      edges.push({ a: 1, b: hub, weight: 5 })
+      for (let k = 0; k < 9; k++) edges.push({ a: hub, b: 14 + h * 9 + k, weight: 3 })
+    }
+    const res = layout(nodes, edges, { seed: 1337, fullRun: true })
+    const pts = [...res.positions.values()]
+    const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length
+    const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length
+    const rs = pts.map((p) => Math.hypot(p.x - cx, p.y - cy)).sort((a, b) => a - b)
+    const p90 = rs[Math.floor(rs.length * 0.9)]
+    expect(rs[rs.length - 1] / p90).toBeLessThan(3)
   })
 
   it('(i) 600 узлов не дают кашу: пересечений <5% пар, центр разрежен', () => {

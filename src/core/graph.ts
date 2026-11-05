@@ -224,10 +224,10 @@ export function layout(
         outboundAttractionDistribution: true,
         barnesHutOptimize: true,
         barnesHutTheta: 0.5,
-        // Распыление «как нейросеть» (отзыв «больше дисперсии»): редкие чанки
-        // в разреженном поле — сильное отталкивание и почти нулевая гравитация.
-        scalingRatio: 22000,
-        gravity: 0.0001,
+        // Распыление «как нейросеть», но без разброса за пределы кадра:
+        // умеренное отталкивание + слабая гравитация.
+        scalingRatio: 8000,
+        gravity: 0.0005,
         edgeWeightInfluence: 2.0,
         strongGravityMode: false,
         slowDown: 1,
@@ -265,7 +265,7 @@ export function layout(
     maxR = Math.max(maxR, 1)
     // 1) вытяжка: растянуть вдоль сеяной оси, сжать поперёк (объём ~сохраняем)
     const stretchAngle = rng() * Math.PI
-    const k = 1.45
+    const k = 1.2
     const ux = Math.cos(stretchAngle)
     const uy = Math.sin(stretchAngle)
     graph.forEachNode((n) => {
@@ -310,11 +310,14 @@ export function layout(
         const a = graph.getNodeAttributes(n)
         maxR2 = Math.max(maxR2, Math.hypot(a.x - ncx, a.y - ncy))
       })
-      const shifts = new Map<string, { dx: number; dy: number }>()
+      const shifts = new Map<string, { dx: number; dy: number; m: number }>()
+      // Сумма вкладов от нескольких лобов раньше выстреливала узлы на 10+
+      // радиусов от ядра. Ограничиваем сдвиг сильнейшим одиночным вкладом.
       const addShift = (k: string, ux: number, uy: number, push: number, w: number) => {
-        const s = shifts.get(k) ?? { dx: 0, dy: 0 }
+        const s = shifts.get(k) ?? { dx: 0, dy: 0, m: 0 }
         s.dx += ux * push * w
         s.dy += uy * push * w
+        s.m = Math.max(s.m, push * w)
         shifts.set(k, s)
       }
       rank.slice(0, 12).forEach((n, i) => {
@@ -322,7 +325,7 @@ export function layout(
         const dx = a.x - ncx
         const dy = a.y - ncy
         const d = Math.hypot(dx, dy) || 1
-        const target = maxR2 * (0.88 - i * 0.012)
+        const target = maxR2 * (0.62 - i * 0.012)
         if (d >= target) return
         const ux = dx / d
         const uy = dy / d
@@ -337,13 +340,16 @@ export function layout(
       })
       for (const [n, s] of shifts) {
         const a = graph.getNodeAttributes(n)
-        graph.setNodeAttribute(n, 'x', a.x + s.dx)
-        graph.setNodeAttribute(n, 'y', a.y + s.dy)
+        const len = Math.hypot(s.dx, s.dy) || 1
+        const k = Math.min(1, s.m / len)
+        graph.setNodeAttribute(n, 'x', a.x + s.dx * k)
+        graph.setNodeAttribute(n, 'y', a.y + s.dy * k)
       }
     }
   }
 
   const positionedNodes: Array<{ id: number; x: number; y: number; size?: number }> = []
+
   for (const node of nodes) {
     const attrs = graph.getNodeAttributes(String(node.id))
     positionedNodes.push({
@@ -376,6 +382,32 @@ export function layout(
     // расходятся за 60. (collisionIterationsForCount не трогаем — тестами зафиксирован.)
     const passes = Math.max(collisionIterationsForCount(positionedNodes.length), positionedNodes.length > 400 ? 120 : 0)
     resolveCollisions(positionedNodes, 6, passes, scaleFactor, padScale)
+  }
+
+  // Финальная нормализация к bbox: постпассы (вытяжка/шумы/сдвиги хабов) разгоняют
+  // пятно дальше кадра — равномерно сжимаем в ограниченный мир 6000×6000.
+  // iterations===0 — тестовый режим (reuse prevXY): координаты не трогаем.
+  //
+  // Нормализуем по квинтилям 5..95%, не по min/max: вытянутые 3-5% fringe-узлов
+  // иначе растягиваютbbox и прячут связную часть в«точку» (real-export давал
+  // связную часть на 25% экрана при нормализации по min/max).
+  if (iterations > 0) {
+    const xs = positionedNodes.map((p) => p.x).sort((a, b) => a - b)
+    const ys = positionedNodes.map((p) => p.y).sort((a, b) => a - b)
+    const qOr = (arr: number[], t: number) => arr[Math.max(0, Math.min(arr.length - 1, Math.floor(arr.length * t)))]
+    const minX = qOr(xs, 0.05)
+    const maxX = qOr(xs, 0.95)
+    const minY = qOr(ys, 0.05)
+    const maxY = qOr(ys, 0.95)
+    const bw = Math.max(maxX - minX, 1)
+    const bh = Math.max(maxY - minY, 1)
+    const s = 6000 / Math.max(bw, bh)
+    const cx = (minX + maxX) / 2
+    const cy = (minY + maxY) / 2
+    for (const p of positionedNodes) {
+      p.x = (p.x - cx) * s
+      p.y = (p.y - cy) * s
+    }
   }
 
   const positions = new Map<number, { x: number; y: number }>()

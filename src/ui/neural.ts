@@ -82,7 +82,7 @@ float somaField(vec2 p, float c, float pxu, float coreR, float ph, float t,
       float da = somaArmBent(p, md * (c * 0.55), an[i], c, len, rootR * w, tipR, wb, curve);
       d = somaSmin(d, da, k);
       // ветви второго порядка: от середины главной, не веером у корня (веер давал ёжика)
-      if (coreR > 12.0 && i < 3.0) {
+      if (coreR > 12.0 && i < 3) {
         for (int j = -1; j <= 1; j += 2) {
           float fj = float(j);
           float bt = an[i] + fj * 0.075;
