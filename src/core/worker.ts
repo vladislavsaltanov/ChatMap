@@ -1,4 +1,4 @@
-import { armsFor, edgeAlpha, nodeFitSize, phaseFor } from './geometry'
+import { armsFor, bundleEdges, edgeAlpha, nodeFitSize, phaseFor } from './geometry'
 import { getLruCache, layout, setLruCache } from './graph'
 import { parse } from './parse'
 import { pruneBackbone, select, type ViewMode } from './select'
@@ -140,6 +140,7 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
     const p = layoutResult.positions.get(n.id) || { x: 0, y: 0 }
     return { id: n.id, x: p.x, y: p.y }
   })
+  const bundles = bundleEdges(posList, backboneEdges, selection.maxWeight)
 
   for (const n of selection.nodes) {
     const info = nodeInfoMap.get(n.id)!
@@ -182,10 +183,14 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
   send({
     type: 'map',
     nodes,
-    edges: backboneEdges.map((e) => ({
+    edges: backboneEdges.map((e, i) => ({
       ...e,
       alpha: edgeAlpha(e.weight, selection.maxWeight),
       bead: selection.maxWeight > 0 ? Math.min(1, e.weight / selection.maxWeight) : 0,
+      tract: bundles[i].tract,
+      bundle: bundles[i].bundle,
+      rank: bundles[i].rank,
+      tractRank: bundles[i].tractRank,
     })),
     maxCount: selection.maxCount,
     maxWeight: selection.maxWeight,

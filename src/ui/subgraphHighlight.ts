@@ -51,7 +51,9 @@ export class SubgraphHighlight {
     if (!renderer) return
     const neighborsWithWeights: Array<{ neighbor: string; edge: string; weight: number }> = []
     for (const neighbor of this.graph.neighbors(key)) {
-      const edge = this.graph.edge(key, neighbor)
+      // graph.edge(a, b) is direction-sensitive even for undirected graphs;
+      // edges(a, b) finds the edge regardless of insertion order.
+      const edge = this.graph.edges(key, neighbor)[0]
       if (edge) {
         const weight = (this.graph.getEdgeAttribute(edge, 'weight') as number) || 1
         neighborsWithWeights.push({ neighbor, edge, weight })

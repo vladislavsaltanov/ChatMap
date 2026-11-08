@@ -1,16 +1,6 @@
-// «Нейронный» вид карты: свои шейдерные слои sigma v4.
-//  - layerSoma — тело нейрона: капля жидкой ртути с дендритами. Контур «живой»
-//    (дышит), от тела отрастают отростки к самым сильным соседям и сливаются с ним
-//    мягким метабольным швом (smooth-min SDF). Крупные капли — чёрная ртуть с
-//    тонированными бликами (под слово), мелкие — яркие светящиеся «звёзды».
-//  - layerAxon — аксон: тонкая светящаяся жила, раструбы у тел (корни дендритов),
-//    синаптическая «бусина» посередине сильных связей, градиент между цветами
-//    концов, бегущие импульсы (фоном — редко, на подсвеченных связях — непрерывно).
-// Чистая визуальная прослойка: данных чата здесь нет и быть не должно.
-import { pathCurved, pathLine } from 'sigma/rendering'
-import type { EdgeLayer, FragmentLayer } from 'sigma/rendering'
+import type { EdgeLayer, EdgePath, FragmentLayer } from 'sigma/rendering'
+import { labelZoomRatio } from '../core/geometry'
 
-// Общие часы: время в секундах (по модулю — чтобы не терять точность float в шейдере)
 export const neuralClock = { t: 0, motion: 1 }
 
 const edgeTime = { name: 'u_time', type: 'float' as const, value: 0 }
@@ -23,143 +13,228 @@ export function setNeuralTime(seconds: number, motion: number): void {
   edgeMotion.value = motion
 }
 
-// Максимум дендритов на тело (по числу переменных arm0…arm4)
 export const MAX_ARMS = 5
+
+// Node captions are rasterised by Sigma's SDF atlas from a CSS font shorthand.
+// The primitive and the node styles must name the SAME family, otherwise the
+// atlas and the measured label boxes disagree. Obel Mono is self-hosted.
+export const NODE_LABEL_FAMILY = '"Obel Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
+
+// Cubic tract: two control points per edge let a whole group of fibres share a
+// corridor (FDEB look) instead of crossing or only touching at one point.
+// Coefficients are dimensionless in the (delta, perp) basis of the edge, so
+// Sigma's uniform normalization and camera transforms leave the curve intact.
+export function pathTract(): EdgePath {
+  const { FLOAT } = WebGL2RenderingContext
+  // language=GLSL
+  const glsl = /*glsl*/ `
+vec2 tractControl(vec2 source, vec2 d, vec2 perp, vec2 uv) {
+  return source + d * uv.x + perp * uv.y;
+}
+
+vec2 path_tract_position(float t, vec2 source, vec2 target) {
+  vec2 d = target - source;
+  vec2 perp = vec2(-d.y, d.x);
+  vec2 c1 = tractControl(source, d, perp, v_tract.xy);
+  vec2 c2 = tractControl(source, d, perp, v_tract.zw);
+  float u = 1.0 - t;
+  return u * u * u * source + 3.0 * u * u * t * c1 + 3.0 * u * t * t * c2 + t * t * t * target;
+}
+
+float path_tract_length(vec2 source, vec2 target) {
+  float len = 0.0;
+  vec2 prev = path_tract_position(0.0, source, target);
+  for (int i = 1; i <= 8; i++) {
+    vec2 cur = path_tract_position(float(i) / 8.0, source, target);
+    len += length(cur - prev);
+    prev = cur;
+  }
+  return len;
+}
+`
+  // language=GLSL
+  const tangent = /*glsl*/ `
+vec2 path_tract_tangent(float t, vec2 source, vec2 target) {
+  vec2 d = target - source;
+  vec2 perp = vec2(-d.y, d.x);
+  vec2 c1 = tractControl(source, d, perp, v_tract.xy);
+  vec2 c2 = tractControl(source, d, perp, v_tract.zw);
+  float u = 1.0 - t;
+  vec2 deriv = 3.0 * u * u * (c1 - source) + 6.0 * u * t * (c2 - c1) + 3.0 * t * t * (target - c2);
+  return length(deriv) > 1e-8 ? normalize(deriv) : normalize(d);
+}
+vec2 path_tract_normal(float t, vec2 source, vec2 target) {
+  vec2 tng = path_tract_tangent(t, source, target);
+  return vec2(-tng.y, tng.x);
+}
+`
+  return {
+    name: 'tract',
+    segments: 18,
+    glsl,
+    uniforms: [],
+    attributes: [{ name: 'a_tract', size: 4, type: FLOAT, source: 'tract' }],
+    analyticalTangentGlsl: tangent,
+  }
+}
+
+// The plate colour must match --paper (oklch(0.16 0.01 85)) and the PNG export.
+export const PLATE_COLOR = '#0f0d08'
+
+// Primary node voices, given as RGB triples. The first two authors get exactly
+// these colours; extra authors fall back to generated hues. A node with no
+// author lead takes the first one, and edges inherit their lead's tint.
+const rgb = (r: number, g: number, b: number): string =>
+  `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`
+export const NODE_COLORS = [rgb(102, 12, 212), rgb(221, 109, 49)] as const
+export const DEFAULT_NODE_COLOR = NODE_COLORS[0]
 
 export function layerSoma(): FragmentLayer {
   const { FLOAT, UNSIGNED_BYTE } = WebGL2RenderingContext
   // language=GLSL
   const glsl = /*glsl*/ `
-float somaSmin(float a, float b, float k) {
-  float h = max(k - abs(a - b), 0.0) / k;
-  return min(a, b) - h * h * k * 0.25;
+// A soft-edged band between two values, in screen pixels.
+float somaBand(float v, float lo, float hi, float feather) {
+  return smoothstep(lo - feather, lo + feather, v)
+       * (1.0 - smoothstep(hi - feather, hi + feather, v));
 }
 
-// Сужающийся отросток вдоль +y: радиус r1 у корня (y=0) → r2 на конце (y=h)
-float somaCapsule(vec2 p, float r1, float r2, float h) {
-  p.x = abs(p.x);
-  float b = min((r1 - r2) / h, 0.9);
-  float a = sqrt(max(1.0 - b * b, 0.0));
-  float k = dot(p, vec2(-b, a));
-  if (k < 0.0) return length(p) - r1;
-  if (k > a * h) return length(p - vec2(0.0, h)) - r2;
-  return dot(p, vec2(a, b)) - r1;
+// Same "over" compositing Sigma uses between fragment layers.
+vec4 somaOver(vec4 bg, vec4 fg) {
+  return vec4(mix(bg.rgb, fg.rgb, fg.a), bg.a + fg.a * (1.0 - bg.a));
 }
 
-// Гнутый отросток: центр-линия — дуга (curve смещает поперечную координату).
-// rootPos — точка корня в uv (для ветвей второго порядка — середина главной ветви).
-float somaArmBent(vec2 p, vec2 rootPos, float turns, float c, float len, float rootR, float tipR, float wob, float curve) {
-  float a = turns * 6.2831853 + wob;
-  vec2 dir = vec2(cos(a), sin(a));
-  vec2 q = p - rootPos;
-  vec2 loc = vec2(dot(q, vec2(-dir.y, dir.x)), dot(q, dir));
-  float h = max(len + c * 0.3, 1e-3);
-  float u = clamp(loc.y / h, 0.0, 1.0);
-  loc.x -= curve * sin(u * 3.14159);
-  return somaCapsule(loc, rootR, tipR, h);
+const vec3 PLATE = vec3(0.058824, 0.050980, 0.031373); // rgb(15, 13, 8)
+const vec3 WARM = vec3(0.945, 0.937, 0.902);
+const float TAU = 6.2831853;
+
+// "Constellation" is the one and only node language: a dotted orbit, a star
+// and a halo. Round 12 deliberately thickens EVERY stroke so the fine version
+// does not disappear on a dense plate. Edges are still masked by the disc.
+struct SomaState {
+  vec2 p;
+  float r;
+  float pxu;
+  float c;
+  float coreR;
+  float haloPx;
+  float focus;
+  float dPx;
+  float disc;
+  float phase;
+  vec3 col;
+  vec3 ink;
+  vec3 point;
+};
+SomaState soma;
+
+float somaFadeEdge() {
+  return 1.0 - smoothstep(soma.haloPx - 2.0, soma.haloPx - 0.2, max(soma.dPx, 0.0));
 }
 
-// Поле расстояния всей капли: «живое» тело + дендриты, сшитые smooth-min
-float somaField(vec2 p, float c, float pxu, float coreR, float ph, float t,
-                float a0, float a1, float a2, float a3, float a4) {
-  float ang = atan(p.y, p.x);
-  float wob = 0.045 * sin(3.0 * ang + t * 0.9 + ph * 6.28) + 0.03 * sin(5.0 * ang - t * 1.25 + ph * 11.0);
-  float d = length(p) - c * (1.0 + wob);
-  float k = max(0.34 * c, 2.2 * pxu);                // ширина «шва» слияния
-  float lenMax = (1.0 - c) * 0.9;
-  float tipR = max(0.045 * c, 0.6 * pxu);
-  float rootR = 0.34 * c;
-  float an[5] = float[5](a0, a1, a2, a3, a4);
-  for (int i = 0; i < 5; i++) {
-    float fi = float(i);
-    float w = smoothstep(3.0 + 2.0 * fi, 6.0 + 2.0 * fi, coreR);   // мелким тоже даём отростки, короче
-    if (an[i] >= 0.0 && w > 0.001) {
-      float len = lenMax * (1.0 - 0.11 * fi) * (0.72 + 0.28 * fract(sin(ph * 91.7 + fi * 12.9) * 4375.5)) * w;
-      float wb = 0.07 * sin(t * 0.7 + fi * 1.7 + ph * 9.0);
-      float ma = an[i] * 6.2831853 + wb;
-      vec2 md = vec2(cos(ma), sin(ma));
-      float curve = (fract(sin(ph * 43.9 + fi * 71.3) * 4375.5) - 0.5) * 0.22;
-      float da = somaArmBent(p, md * (c * 0.55), an[i], c, len, rootR * w, tipR, wb, curve);
-      d = somaSmin(d, da, k);
-      // ветви второго порядка: от середины главной, не веером у корня (веер давал ёжика)
-      if (coreR > 12.0 && i < 3) {
-        for (int j = -1; j <= 1; j += 2) {
-          float fj = float(j);
-          float bt = an[i] + fj * 0.075;
-          vec2 bRoot = md * (c * 0.55 + len * 0.55);
-          float bl = len * 0.42 * (0.8 + 0.2 * fract(sin(ph * 57.3 + fi * 31.7 + fj * 17.1) * 4375.5));
-          float bcurve = (fract(sin(ph * 29.7 + fi * 37.9 + fj * 7.3) * 4375.5) - 0.5) * 0.16;
-          float bd = somaArmBent(p, bRoot, bt, c, bl, rootR * w * 0.6, tipR, wb * 0.5, bcurve);
-          d = somaSmin(d, bd, k * 0.7);
-        }
-      }
+// Leader is now 1.6px so it matches the heavier caption.
+float somaLeader() {
+  float band = somaBand(soma.p.x / soma.pxu, soma.coreR + 0.6, 1.0 / soma.pxu - 0.8, 0.8)
+             * (1.0 - smoothstep(0.75, 1.6, abs(soma.p.y) / soma.pxu));
+  return band * smoothstep(4.5, 8.0, soma.coreR) * (0.55 + 0.35 * soma.focus);
+}
+
+// Focus reticle: a second, heavier orbit at +3.4px.
+float somaReticle() {
+  return (1.0 - smoothstep(0.85, 2.1, abs(soma.dPx - 3.4)))
+       * soma.focus * smoothstep(6.0, 12.0, soma.coreR)
+       * step(4.2, soma.haloPx) * 0.70;
+}
+
+float somaPoint(float radiusPx) {
+  return 1.0 - smoothstep(radiusPx - 0.7, radiusPx + 0.7, soma.r / soma.pxu);
+}
+
+// Four chunky diagonal registration ticks.
+float somaTicks() {
+  float gapPx = min(2.2, soma.haloPx * 0.26);
+  float tickLen = max(0.0, min(7.0, soma.haloPx - gapPx - 1.0));
+  float ticks = 0.0;
+  if (tickLen > 0.5) {
+    for (int i = 0; i < 4; i++) {
+      float ang = 0.7853982 + float(i) * 1.5707963;
+      vec2 dir = vec2(cos(ang), sin(ang));
+      float u = dot(soma.p, dir) / soma.pxu;
+      float v = dot(soma.p, vec2(-dir.y, dir.x)) / soma.pxu;
+      ticks = max(ticks, somaBand(u, soma.coreR + gapPx, soma.coreR + gapPx + tickLen, 0.8)
+                       * (1.0 - smoothstep(0.75, 1.6, abs(v))));
     }
   }
-  return d;
+  return ticks * smoothstep(6.0, 11.0, soma.coreR);
+}
+
+// Four-ray star with 2px arms instead of hairlines.
+float somaStarRay(float len) {
+  float rayX = (1.0 - smoothstep(1.10, 2.60, abs(soma.p.y) / soma.pxu))
+             * (1.0 - smoothstep(len * 0.55, len, abs(soma.p.x) / soma.pxu));
+  float rayY = (1.0 - smoothstep(1.10, 2.60, abs(soma.p.x) / soma.pxu))
+             * (1.0 - smoothstep(len * 0.55, len, abs(soma.p.y) / soma.pxu));
+  return max(rayX, rayY);
+}
+
+vec4 skinConstellation() {
+  vec4 acc = vec4(PLATE, soma.disc);
+
+  // 1. Quiet continuous orbit: the outline that holds the beads together.
+  float orbit = 1.0 - smoothstep(0.9, 2.2, abs(soma.dPx));
+  acc = somaOver(acc, vec4(soma.col, orbit * 0.30 * smoothstep(4.0, 9.0, soma.coreR)));
+
+  // 2. Chunky beads: fewer, longer, 2.4px thick. Count encodes frequency and
+  //    each word's own phase rotates the pattern.
+  float beadsN = floor(mix(9.0, 20.0, smoothstep(5.0, 34.0, soma.coreR)) + 0.5);
+  float seg = fract(atan(soma.p.y, soma.p.x) / TAU * beadsN + 0.5 + soma.phase);
+  float beads = (1.0 - smoothstep(0.16, 0.34, abs(seg - 0.5)))
+              * (1.0 - smoothstep(1.1, 2.6, abs(soma.dPx)))
+              * smoothstep(4.5, 9.0, soma.coreR);
+  vec3 beadCol = mix(soma.col, vec3(1.0), 0.62 + 0.22 * soma.focus);
+  acc = somaOver(acc, vec4(beadCol, beads * (0.95 + 0.05 * soma.focus)));
+
+  // 3. Coloured halo, wider and stronger than the thin version.
+  float halo = exp(-pow((soma.r / soma.pxu) / (0.50 * soma.coreR + 4.0), 2.0)) * 0.28;
+  acc = somaOver(acc, vec4(soma.col, halo));
+
+  // 4. Star: heavy cross + a large white core.
+  float ray = somaStarRay(min(soma.coreR * 0.85, 22.0) + 2.0 * soma.focus)
+            * (0.85 + 0.15 * soma.focus);
+  acc = somaOver(acc, vec4(soma.point, ray));
+  acc = somaOver(acc, vec4(WARM, somaPoint(3.0 + 0.7 * soma.focus)));
+
+  // 5. Ticks, leader, outer aura and focus reticle.
+  acc = somaOver(acc, vec4(soma.ink, somaTicks() * 0.95));
+  acc = somaOver(acc, vec4(soma.ink, somaLeader()));
+  float aura = exp(-max(soma.dPx, 0.0) / 3.4) * somaFadeEdge() * (0.20 + 0.24 * soma.focus);
+  acc = somaOver(acc, vec4(soma.col, aura * (1.0 - soma.disc)));
+  acc = somaOver(acc, vec4(soma.point, somaReticle()));
+  return acc;
 }
 
 vec4 layer_soma(vec4 v_somaColor, float v_somaCore, float v_somaGlow, float v_somaPhase,
-                float v_somaA0, float v_somaA1, float v_somaA2, float v_somaA3, float v_somaA4,
-                float u_time) {
-  vec3 col = v_somaColor.rgb;
-  vec2 p = context.uv;
-  float r = length(p);
-  float c = clamp(v_somaCore, 0.08, 0.97);
-  float pxu = max(context.pixelToUV, 1e-5);
-  float coreR = c / pxu;
-  float big = smoothstep(8.0, 17.0, coreR);
-  float breathe = 0.95 + 0.05 * sin(u_time * 0.9 + v_somaPhase * 6.2831853) + 0.02 * sin(u_time * 2.3 + v_somaPhase * 11.0);
+                float v_somaA0, float v_somaA1, float v_somaA2, float v_somaA3, float v_somaA4) {
+  soma.p = context.uv;
+  soma.r = length(soma.p);
+  soma.pxu = max(context.pixelToUV, 1e-5);
+  soma.c = clamp(v_somaCore, 0.05, 0.96);
+  soma.coreR = soma.c / soma.pxu;
+  soma.haloPx = max(0.0, (1.0 - soma.c) / soma.pxu);
+  soma.focus = clamp(v_somaGlow - 1.0, 0.0, 1.0);
+  soma.dPx = (soma.r - soma.c) / soma.pxu;
+  soma.disc = 1.0 - smoothstep(-0.5, 0.6, soma.dPx);
+  soma.phase = v_somaPhase;
+  soma.col = v_somaColor.rgb;
+  soma.ink = mix(soma.col, WARM, 0.24 + 0.38 * soma.focus);
+  soma.point = mix(soma.col, vec3(1.0), 0.76 + 0.20 * soma.focus);
 
-  float d = somaField(p, c, pxu, coreR, v_somaPhase, u_time, v_somaA0, v_somaA1, v_somaA2, v_somaA3, v_somaA4);
-  float dPx = d / pxu;
-  float inside = 1.0 - smoothstep(-0.75, 0.75, dPx);
-
-  // гало повторяет форму капли с отростками
-  float haloK = max((1.0 - c) * 0.22, 1e-4);
-  float halo = exp(-max(d, 0.0) / haloK) * (1.0 - smoothstep(0.78, 1.0, r));
-  float haloA = min(halo * 0.32 * v_somaGlow * breathe, 0.85);
-
-  // псевдо-нормаль из градиента поля (прямая разность): центр смотрит на зрителя, край — вбок
-  float e = 1.5 * pxu;
-  float dx = somaField(p + vec2(e, 0.0), c, pxu, coreR, v_somaPhase, u_time, v_somaA0, v_somaA1, v_somaA2, v_somaA3, v_somaA4) - d;
-  float dy = somaField(p + vec2(0.0, e), c, pxu, coreR, v_somaPhase, u_time, v_somaA0, v_somaA1, v_somaA2, v_somaA3, v_somaA4) - d;
-  vec2 g = vec2(dx, dy);
-  float gl = length(g);
-  g = gl > 1e-7 ? g / gl : vec2(0.0);
-  float depth = clamp(-d / max(0.9 * c, 1e-4), 0.0, 1.0);
-  float edgeK = pow(1.0 - depth, 0.85);
-  vec3 n = vec3(g * edgeK, sqrt(max(1.0 - edgeK * edgeK, 0.0)));
-
-  // светящаяся клетка (чёрный хром на тёмном фоне давал невидимое тело-ёжика):
-  // светлый блик по центру, цвет автора, френелевский ободок
-  vec3 rv = vec3(2.0 * n.z * n.x, 2.0 * n.z * n.y, 2.0 * n.z * n.z - 1.0);
-  vec3 sky = mix(vec3(0.78, 0.86, 1.0), col, 0.45);
-  vec3 envCol = mix(col * 0.22, sky * 0.8, smoothstep(-0.1, 0.55, rv.y));
-  float hl = pow(max(dot(rv, normalize(vec3(-0.5, 0.7, 0.55))), 0.0), 36.0);
-  float hl2 = pow(max(dot(rv, normalize(vec3(0.62, -0.55, 0.5))), 0.0), 12.0);
-  float fres = pow(1.0 - n.z, 2.2);
-  vec3 chrome = envCol + vec3(1.0) * hl * 1.6 + col * hl2 * 0.55 + col * fres * 0.95;
-
-  // тело светится: цвет автора + горячее белое ядро
-  vec3 solid = mix(col * 1.15, vec3(1.0), 0.8 * pow(depth, 1.35));
-  vec3 fillRgb = mix(solid, chrome, big * 0.45);
-
-  float rim = exp(-(dPx * dPx) / (2.0 * 0.9 * 0.9));
-  vec3 rimRgb = mix(col, vec3(1.0), 0.45);
-  float rimA = rim * big * 0.75;
-
-  vec3 pm = col * haloA;
-  float pa = haloA;
-  pm = pm * (1.0 - inside) + fillRgb * inside;
-  pa = pa * (1.0 - inside) + inside;
-  pm = pm * (1.0 - rimA) + rimRgb * rimA;
-  pa = pa * (1.0 - rimA) + rimA;
-  return pa > 0.001 ? vec4(pm / pa, pa) : vec4(0.0);
+  return skinConstellation();
 }
 `
   return {
     name: 'soma',
-    uniforms: [{ name: 'u_time', type: 'float', value: 0 }],
+    uniforms: [],
     attributes: [
       { name: 'somaColor', size: 4, type: UNSIGNED_BYTE, normalized: true, source: 'color' },
       { name: 'somaCore', size: 1, type: FLOAT, source: 'core' },
@@ -172,12 +247,6 @@ vec4 layer_soma(vec4 v_somaColor, float v_somaCore, float v_somaGlow, float v_so
       { name: 'somaA4', size: 1, type: FLOAT, source: 'arm4' },
     ],
     glsl,
-    lifecycle: (ctx) => ({
-      beforeRender: () => {
-        const loc = ctx.getUniformLocation('u_time')
-        if (loc) ctx.gl.uniform1f(loc, neuralClock.t)
-      },
-    }),
   }
 }
 
@@ -186,53 +255,68 @@ export function layerAxon(): EdgeLayer {
   // language=GLSL
   const glsl = /*glsl*/ `
 vec4 layer_axon(EdgeContext ctx) {
-  float px = max(ctx.aaWidth, 1e-6);                       // ~1 px в единицах сцены
+  float px = max(ctx.aaWidth, 1e-6);
   float halfPx = max(ctx.thickness * 0.5 / px, 1.0);
-  float dPx = abs(ctx.sdf + ctx.thickness * 0.5) / px;     // расстояние от осевой, px
-  float rel = clamp(dPx / halfPx, 0.0, 1.0);
-
-  // радиус жилы: тонкая посередине, раструб у концов (корни дендритов), «бусина»-синапс в центре
+  float dPx = abs(ctx.sdf + ctx.thickness * 0.5) / px;
   float L = ctx.edgeLength / px;
-  float toEnd = min(ctx.t, 1.0 - ctx.t) * L;
-  float rMid = 0.55 + 0.1 * halfPx;
-  float flare = max(halfPx * 0.8 - rMid, 0.0);
-  float r = rMid + flare * exp(-toEnd / (6.0 + halfPx * 1.5));
-  float toMid = abs(ctx.t - 0.5) * L;
-  float bw = 1.2 + 0.25 * halfPx;
-  r += v_axonBead * halfPx * 0.4 * exp(-(toMid * toMid) / (2.0 * bw * bw));
-  r = min(r, halfPx * 0.92);
-
-  float body = 1.0 - smoothstep(r - 0.7, r + 0.7, dPx);
-  float u = clamp(dPx / max(r, 0.5), 0.0, 1.0);
-  float tube = sqrt(max(1.0 - u * u, 0.0));
-  vec3 base = mix(v_sourceColor.rgb, v_targetColor.rgb, ctx.t);
-  vec3 tubeRgb = base * (0.55 + 0.45 * tube) + vec3(1.0) * pow(tube, 8.0) * 0.28;
-
-  float glow = exp(-max(dPx - r, 0.0) / max(halfPx * 0.42, 0.9)) * 0.32 * (1.0 - smoothstep(0.65, 1.0, rel));
-  float a = body + (1.0 - body) * glow;
-  vec3 rgb = a > 0.001 ? (tubeRgb * body + base * glow * (1.0 - body)) / a : base;
-
-  // импульс: фоном — короткое окно в периоде; на активных связях — непрерывно
+  float s = clamp(v_axonStrength, 0.0, 1.0);
+  float dens = clamp(v_axonBundle, 0.0, 1.0);
   float k = step(0.5, v_axonPulse);
-  float cyc = fract(u_time * 0.07 + v_axonPhase);
-  float ppAmb = cyc / 0.13;
-  float onAmb = (1.0 - step(1.0, ppAmb)) * u_motion;
-  float ppAct = fract(u_time * 0.4 + v_axonPhase);
-  float pp = mix(ppAmb, ppAct, k);
-  float gain = mix(onAmb * 0.6, 1.0, k);
-  float dAlong = (ctx.t - pp) * L;                         // px вдоль нити, минус — позади головы
-  float sig = dAlong < 0.0 ? 34.0 : 5.0;
-  float pulse = exp(-(dAlong * dAlong) / (2.0 * sig * sig)) * gain;
-  // второй выстрел по активным жилам: слабый отголосок полпериода спустя
-  if (k > 0.5) {
-    float pp2 = fract(u_time * 0.4 + v_axonPhase + 0.5);
-    float d2 = (ctx.t - pp2) * L;
-    pulse += exp(-(d2 * d2) / 50.0) * 0.8;
-  }
+  float lod = clamp(v_axonLod, 0.0, 1.0);
+  float t = ctx.t;
+  float ph = v_axonPhase * 6.2831853;
 
-  vec3 hot = mix(base, vec3(1.0), 0.85);
-  rgb = mix(rgb, hot, clamp(pulse, 0.0, 1.0) * 0.85);
-  a = clamp(a + pulse * (body + 0.7 * glow) * 0.9, 0.0, 1.0);
+  // Liquid: two slow counter-running waves (flowing in / flowing out) and a
+  // meniscus at both ends, so the filament pours into and out of its nodes.
+  float wavelen = mix(150.0, 52.0, s);
+  float speed = mix(0.045, 0.11, s) * u_motion;
+  float w1 = sin(t * L / wavelen - u_time * speed * 6.2831853 + ph);
+  float w2 = sin(t * L / wavelen + u_time * speed * 4.3 + ph + 1.7);
+  float liquid = 0.5 + 0.5 * (0.62 * w1 + 0.38 * w2);
+  float ends = pow(abs(2.0 * t - 1.0), 5.0);
+
+  float toMid = (t - 0.5) * L;
+  // Thickness IS the frequency: rare links are hairlines, frequent ones are
+  // arteries. Round 12 raises the additive weight so the connecting fibres
+  // match the heavier node strokes (1.54 px at s=0.3, 3.84 px at s=1.0).
+  float fil = (0.08 + 1.55 * pow(s, 1.5) + 0.10 * dens * s
+            + v_axonBead * 0.08 * exp(-(toMid * toMid) / 50.0)
+            + 0.50 * (1.0 - 0.42 * s))
+            * (1.0 - 0.5 * lod)
+            * (0.86 + 0.28 * liquid)
+            * (1.0 + 0.24 * ends);
+
+  float d = dPx;
+  float body = 1.0 - smoothstep(fil - 0.32, fil + 0.32, d);
+  // Quiet by default; only hovered/selected fibres run white-hot.
+  vec3 base = mix(v_sourceColor.rgb, v_targetColor.rgb, t);
+  base = mix(base, vec3(1.0), (0.45 + 0.30 * k) * s);
+
+  float rel = clamp(d / max(halfPx, 1.0), 0.0, 1.0);
+  float glow = exp(-max(d - fil, 0.0) / max(halfPx * 0.09, 0.45))
+             * (0.012 + 0.030 * s) * (1.0 - smoothstep(0.4, 1.0, rel))
+             * (1.0 - 0.6 * lod);
+  float a = min(1.0, body + (1.0 - body) * glow);
+  vec3 rgb = a > 0.001 ? (base * (0.82 + 0.18 * body) + base * glow * (1.0 - body)) / a : base;
+  rgb *= 0.84 + 0.30 * liquid;
+
+  // Soft droplets travelling both ways; active links get a faster extra wave.
+  float sig = mix(26.0, 12.0, s);
+  float ppIn = fract(u_time * 0.055 + v_axonPhase);
+  float ppOut = fract(u_time * 0.038 + v_axonPhase + 0.5);
+  float dIn = (t - ppIn) * L;
+  float dOut = (t - ppOut) * L;
+  float drop = exp(-(dIn * dIn) / (2.0 * sig * sig))
+             + 0.75 * exp(-(dOut * dOut) / (2.0 * sig * sig));
+  float ppAct = fract(u_time * 0.32 + v_axonPhase);
+  float dAct = (t - ppAct) * L;
+  float dropAct = exp(-(dAct * dAct) / (2.0 * sig * sig));
+  float pulse = u_motion * mix(drop * 0.45, drop * 0.45 + 0.8 * dropAct, k);
+
+  vec3 hot = mix(base, vec3(1.0), 0.8);
+  rgb = mix(rgb, hot, clamp(pulse, 0.0, 1.0) * 0.75);
+  // Droplets brighten existing coverage only: they never widen the fibre.
+  a = clamp(a + pulse * body * 0.4, 0.0, 1.0);
   return vec4(rgb, a);
 }
 `
@@ -243,6 +327,9 @@ vec4 layer_axon(EdgeContext ctx) {
       { name: 'a_axonPulse', size: 1, type: FLOAT, source: 'pulse', defaultValue: 0 },
       { name: 'a_axonPhase', size: 1, type: FLOAT, source: 'phase', defaultValue: 0 },
       { name: 'a_axonBead', size: 1, type: FLOAT, source: 'bead', defaultValue: 0 },
+      { name: 'a_axonBundle', size: 1, type: FLOAT, source: 'bundle', defaultValue: 0 },
+      { name: 'a_axonStrength', size: 1, type: FLOAT, source: 'strength', defaultValue: 0 },
+      { name: 'a_axonLod', size: 1, type: FLOAT, source: 'lod', defaultValue: 0 },
     ],
     needsNodeColors: true,
     glsl,
@@ -252,6 +339,13 @@ vec4 layer_axon(EdgeContext ctx) {
 export const NEURAL_PRIMITIVES = {
   nodes: {
     layers: [layerSoma()],
+    // Captions sit just outside the marker. Obel Mono Bold keeps the plate
+    // typographic and matches the heavier strokes of the constellation.
+    label: {
+      margin: 5,
+      zoomToLabelSizeRatioFunction: labelZoomRatio,
+      font: { family: NODE_LABEL_FAMILY, weight: '700' },
+    },
     variables: {
       core: { type: 'number', default: 0.5 },
       glow: { type: 'number', default: 1 },
@@ -264,13 +358,20 @@ export const NEURAL_PRIMITIVES = {
     },
   },
   edges: {
-    // Нити-дуги: line нужен как дефолтный путь, curved — рабочий (кривизна — атрибут ребра)
-    paths: [pathLine(), pathCurved()],
+    paths: [pathTract()],
     layers: [layerAxon()],
     variables: {
       pulse: { type: 'number', default: 0 },
       phase: { type: 'number', default: 0 },
       bead: { type: 'number', default: 0 },
+      bundle: { type: 'number', default: 0 },
+      strength: { type: 'number', default: 0 },
+      // rank is used by the style layer only; lod drives the shader thickness.
+      rank: { type: 'number', default: 0 },
+      tractRank: { type: 'number', default: 0 },
+      lod: { type: 'number', default: 0 },
+      // vec4 of path coefficients, supplied straight from the graph attribute.
+      tract: { type: 'number', default: 0 },
     },
   },
 } as const

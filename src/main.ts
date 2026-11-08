@@ -1,3 +1,4 @@
+import './styles/fonts.css'
 import './styles/tokens.css'
 import './styles/base.css'
 import './styles/map.css'
@@ -54,6 +55,16 @@ function addWarning(msg: string): void {
 
 const worker = new Worker()
 
+// Sigma v4 rasterises label glyphs into an SDF atlas with canvas 2D exactly
+// once and caches them forever. If Obel Mono is not loaded before the renderer
+// is created, the atlas permanently bakes a system fallback instead. Weight 400
+// is loaded for the DOM interface, where Obel Mono is lighter than the captions.
+const nodeFontsReady = Promise.all([
+  document.fonts.load('400 16px "Obel Mono"'),
+  document.fonts.load('700 32px "Obel Mono"'),
+  document.fonts.load('900 32px "Obel Mono"'),
+]).catch(() => undefined)
+
 const mapView = renderMap(screens.map)
 const controls = renderControls(screens.map)
 
@@ -66,7 +77,11 @@ controls.onColorChange((colors) => {
   mapView.renderAuthors(colors)
 })
 
-worker.onmessage = (e: MessageEvent<WorkerOut>) => {
+controls.onLegendChange((visible) => {
+  mapView.setLegendVisible(visible)
+})
+
+worker.onmessage = async (e: MessageEvent<WorkerOut>) => {
   const msg = e.data
   if (msg.type === 'progress') {
     updateProgress(msg.done, msg.total, msg.stage)
@@ -74,6 +89,7 @@ worker.onmessage = (e: MessageEvent<WorkerOut>) => {
   } else if (msg.type === 'ready') {
     controls.setAuthors(msg.authors)
   } else if (msg.type === 'map') {
+    await nodeFontsReady
     show('map')
     requestAnimationFrame(() => {
       mapView.render(msg)

@@ -1,8 +1,8 @@
 import Graph from 'graphology'
 import forceAtlas2 from 'graphology-layout-forceatlas2'
 
-// shortcut: spans >6800 get capped spacing and may overlap; upgrade if wide graphs look packed
-const MAX_SCALE_FACTOR = 8
+// World units reserved per px of node radius during collision relaxation.
+const MAX_SCALE_FACTOR = 10
 
 // Map keeps insertion order, so delete+set moves a key to the most-recent end.
 export function getLruCache<K, V>(map: Map<K, V>, key: K): V | undefined {
@@ -51,12 +51,10 @@ function createRng(seed: number) {
   }
 }
 
-// Гармонический шум формы плоскости (реф 2, NOISE): три нечётные октавы угла.
-// Фазы от seed: тот же граф — тот же неровный контур, детерминировано. |n| <= 1.
-export function shapeNoise(angle: number, phases: readonly number[]): number {
-  // Восемь октав: крупные доли + детальная рвань края (реф 2, NOISE)
-  const oct = [2, 3, 5, 8, 12, 16, 21, 27]
-  const wts = [0.38, 0.23, 0.13, 0.09, 0.07, 0.05, 0.03, 0.02]
+// Multi-octave angular noise for organic fringe contours and void pockets.
+export function shapeNoise(angle: number, phases: number[]): number {
+  const oct = [1, 2, 3, 5, 8]
+  const wts = [0.45, 0.25, 0.15, 0.1, 0.05]
   let n = 0
   for (let i = 0; i < oct.length; i++) {
     n += wts[i] * Math.sin(oct[i] * angle + (phases[i] ?? 0))
@@ -64,7 +62,203 @@ export function shapeNoise(angle: number, phases: readonly number[]): number {
   return n
 }
 
-// shortcut: 30 passes above 400 nodes may leave overlaps; upgrade if large graphs look packed
+// Fractal fBm over angle + radius with a domain-warp pass: higher octaves break
+// the contour into irregular segments instead of smooth waves. Bounded ~[-1, 1].
+export function fractalNoise(angle: number, radius: number, phases: number[]): number {
+  const oct = [1, 2, 4, 8, 16, 32]
+  const wts = [0.46, 0.26, 0.14, 0.075, 0.04, 0.025]
+  const warp =
+    0.55 * Math.sin(3 * angle + (phases[0] ?? 0)) +
+    0.25 * Math.sin(7 * angle + (phases[1] ?? 0))
+  const a = angle + warp
+  let n = 0
+  for (let i = 0; i < oct.length; i++) {
+    n += wts[i] * Math.sin(oct[i] * a + (phases[i] ?? 0) + radius * (0.6 + 0.35 * i))
+  }
+  return n
+}
+
+// Integer lattice hash. All randomness in the layout stays deterministic from
+// the seed: cached positions must be byte-identical between runs.
+function hash2(ix: number, iy: number, seed: number): number {
+  let h = Math.imul(ix, 0x1f123bb5) ^ Math.imul(iy, 0x5f356495) ^ Math.imul(seed, 0x27d4eb2d)
+  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b)
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35)
+  h ^= h >>> 16
+  return (h >>> 0) / 2147483648 - 1
+}
+
+function valueNoise(x: number, y: number, seed: number): number {
+  const ix = Math.floor(x)
+  const iy = Math.floor(y)
+  const fx = x - ix
+  const fy = y - iy
+  const sx = fx * fx * (3 - 2 * fx)
+  const sy = fy * fy * (3 - 2 * fy)
+  const a = hash2(ix, iy, seed)
+  const b = hash2(ix + 1, iy, seed)
+  const c = hash2(ix, iy + 1, seed)
+  const d = hash2(ix + 1, iy + 1, seed)
+  return (a + (b - a) * sx) * (1 - sy) + (c + (d - c) * sx) * sy
+}
+
+// Two-dimensional domain-warped fBm over the plane. Unlike `fractalNoise`
+// (which shapes the angular contour only), this field has real local maxima and
+// minima, so it can drive density instead of just the silhouette. ~[-1, 1].
+export function fractalDensity(x: number, y: number, phases: number[] = [], seed = 0): number {
+  const p = (i: number): number => phases.length ? phases[i % phases.length] ?? 0 : 0
+  const warpX = 0.62 * valueNoise(x * 1.13 + p(0), y * 1.13 + p(1), seed + 17)
+  const warpY = 0.62 * valueNoise(x * 1.13 + p(2), y * 1.13 + p(3), seed + 29)
+  const wx = x + warpX
+  const wy = y + warpY
+  let sum = 0
+  let amp = 0.5
+  let freq = 1
+  let norm = 0
+  for (let i = 0; i < 6; i++) {
+    sum += amp * valueNoise(wx * freq + p(i), wy * freq + p(i + 2), seed + i * 131)
+    norm += amp
+    freq *= 2.07
+    amp *= 0.54
+  }
+  return sum / norm
+}
+
+// Coarse basins first, then medium and fine sub-clusters: the same field is
+// sampled at three wavelengths, which is what makes the result fractal.
+const CLUSTER_SCALES: Array<[number, number]> = [
+  [1.75, 0.050],
+  [4.10, 0.028],
+  [9.30, 0.014],
+]
+
+// Pulls nodes up the fractal density gradient so voids empty out and words
+// gather into irregular clumps. `onPass` is repulsion between passes: without
+// it a basin collapses into one point, and a single final relaxation would
+// just spread everything back into the uniform lattice.
+export function fractalClusterPlane(
+  points: Array<{ x: number; y: number }>,
+  phases: number[],
+  seed: number,
+  strength: number,
+  iterations = 48,
+  onPass?: () => void
+): void {
+  const count = points.length
+  if (count < 3 || strength <= 0 || iterations <= 0) return
+
+  let cx = 0
+  let cy = 0
+  for (const p of points) {
+    cx += p.x
+    cy += p.y
+  }
+  cx /= count
+  cy /= count
+
+  let maxR = 0
+  for (const p of points) maxR = Math.max(maxR, Math.hypot(p.x - cx, p.y - cy))
+  if (maxR <= 0) return
+
+  const h = 0.045
+  for (let iter = 0; iter < iterations; iter++) {
+    const t = iter / iterations
+    const [freq, step] = t < 0.46 ? CLUSTER_SCALES[0] : t < 0.79 ? CLUSTER_SCALES[1] : CLUSTER_SCALES[2]
+    const decay = 1 - 0.55 * t
+    for (const p of points) {
+      const fx = ((p.x - cx) / maxR) * freq
+      const fy = ((p.y - cy) / maxR) * freq
+      const d = fractalDensity(fx, fy, phases, seed)
+      const gx = fractalDensity(fx + h, fy, phases, seed) - fractalDensity(fx - h, fy, phases, seed)
+      const gy = fractalDensity(fx, fy + h, phases, seed) - fractalDensity(fx, fy - h, phases, seed)
+      const gl = Math.hypot(gx, gy)
+      if (gl < 1e-7) continue
+      // Low-density nodes migrate fast; nodes already inside a basin settle.
+      const urgency = Math.max(0, Math.min(1, 0.58 - 1.35 * d))
+      const shift = step * strength * decay * urgency * maxR / gl
+      p.x += gx * shift
+      p.y += gy * shift
+    }
+    onPass?.()
+  }
+}
+
+// Widescreen anisotropy: the monitor is horizontal, so stretch X and squeeze Y.
+const PLANE_STRETCH_X = 1.55
+const PLANE_STRETCH_Y = 0.88
+
+// Deforms the plane into an uneven silhouette: angular pockets pull some sectors
+// toward the centre and push others out, fractal noise and discrete faults break
+// the contour, and a curl bends the outer arms. All randomness comes from `phases`.
+export function warpPlane(
+  points: Array<{ x: number; y: number }>,
+  phases: number[]
+): void {
+  const count = points.length
+  if (count < 3) return
+
+  let cx = 0
+  let cy = 0
+  for (const p of points) {
+    cx += p.x
+    cy += p.y
+  }
+  cx /= count
+  cy /= count
+
+  let maxR = 0
+  for (const p of points) maxR = Math.max(maxR, Math.hypot(p.x - cx, p.y - cy))
+  if (maxR <= 0) return
+
+  const pocket = phases.slice(0, 5)
+  const wavePhase = phases[5] ?? 0
+  const curlPhase = phases[6] ?? 0
+  const curlPhase2 = phases[7] ?? 0
+  const wavePhase2 = phases[8] ?? 0
+  const lobes = 3 + Math.floor(Math.abs(Math.sin(phases[9] ?? 0)) * 3)
+  const lobePhase = phases[3] ?? 0
+  const fractal = phases.slice(10, 16)
+  const faultSeed = Math.floor((phases[13] ?? 0) * 100000)
+  const FAULTS = 11
+
+  for (const p of points) {
+    const dx = p.x - cx
+    const dy = p.y - cy
+    const r = Math.hypot(dx, dy)
+    const u = Math.min(1, r / maxR)
+    const a = Math.atan2(dy, dx)
+
+    // A few deterministic arms stick far out, leaving voids between them;
+    // sector pockets and waves add finer density contrast near the centre.
+    const arm = Math.pow(Math.max(0, Math.cos(lobes * (a - lobePhase))), 1.4)
+    const pocketOut = 0.5 + 0.5 * shapeNoise(a, pocket)
+    const wave = 0.10 * Math.sin(3 * a + wavePhase) + 0.05 * Math.sin(5 * a + wavePhase2)
+
+    // Fractal detail + sharp per-sector offsets: a "fractured" contour.
+    const jag = fractalNoise(a, u, fractal)
+    const sector = Math.floor(((a + Math.PI) / (2 * Math.PI)) * FAULTS)
+    const faultHash = Math.imul(sector + 1, 2654435761) ^ faultSeed
+    const fault = ((((faultHash >>> 8) % 100) / 100) - 0.5) * 0.16 * u
+
+    const u2 = Math.min(1.35, Math.pow(u, 1.06) *
+      (0.80 + 0.30 * pocketOut + 0.45 * arm * u + wave + 0.20 * jag + fault))
+
+    // Spiral shear plus a second fractal sample for local tangential breaks.
+    const jag2 = fractalNoise(a + 1.7, u, fractal.slice(2))
+    const curl =
+      0.38 * Math.pow(u, 1.25) +
+      0.22 * Math.pow(u, 1.5) * Math.sin(2 * a + curlPhase) +
+      0.16 * u * shapeNoise(2 * a + u, [curlPhase2, ...pocket]) +
+      0.18 * u * jag2
+    const a2 = a + curl
+    const r2 = u2 * maxR
+
+    p.x = cx + Math.cos(a2) * r2 * PLANE_STRETCH_X
+    p.y = cy + Math.sin(a2) * r2 * PLANE_STRETCH_Y
+  }
+}
+
+// Shortcut: 30 passes above 400 nodes may leave overlaps; upgrade if large graphs look packed
 export function collisionIterationsForCount(nodeCount: number): number {
   return nodeCount <= 400 ? 80 : 30
 }
@@ -74,8 +268,7 @@ export function resolveCollisions(
   padding: number = 8,
   maxIterations: number = 80,
   scaleFactor: number = 1,
-  // padScale: плотность fringe. null = равномерный padding (дефолт, тесты).
-  // Пропорциональный размеру даёт плотные скопления мелочи и воздух у хабов.
+  // padScale: density distribution. null = uniform padding (default, tests).
   padScale: ((size: number) => number) | null = null
 ): void {
   const count = nodes.length
@@ -142,22 +335,11 @@ export function layout(
 ): LayoutResult {
   const graph = new Graph()
   const rng = createRng(opts.seed)
-  const spread = Math.max(500, Math.sqrt(nodes.length) * 150)
-  // Фазы шума формы: до расходования rng на позиции, для устойчивого детерминизма
-  const shapePhases = [
-    rng() * Math.PI * 2,
-    rng() * Math.PI * 2,
-    rng() * Math.PI * 2,
-    rng() * Math.PI * 2,
-    rng() * Math.PI * 2,
-    rng() * Math.PI * 2,
-    rng() * Math.PI * 2,
-    rng() * Math.PI * 2,
-  ]
+  const spread = Math.max(600, Math.sqrt(nodes.length) * 180)
+  // Phases for harmonic noise before consuming rng on node positions
+  const shapePhases = Array.from({ length: 16 }, () => rng() * Math.PI * 2)
 
-  // Радиальный degree-aware старт: хабы рождаются в ядре, мелочь — на fringe.
-  // Угол — золотая спираль + seeded jitter, радиус убывает со степенью узла.
-  // Детерминировано тем же seed; prevXY-кэш для инкремента не трогаем.
+  // Radial degree-aware start: hubs start in the core, rare nodes at fringe.
   const degree = new Map<string, number>()
   for (const edge of edges) {
     const a = String(edge.a)
@@ -179,7 +361,6 @@ export function layout(
       const deg = degree.get(String(node.id)) ?? 0
       const t = maxDegree > 0 ? deg / maxDegree : 0
       const angle = index * GOLDEN_ANGLE + (rng() - 0.5) * 0.6
-      // Стартовый радиус дышит той же гармоникой: рождения — уже не ровное кольцо
       const radius =
         (spread / 2) *
         (1 - 0.85 * Math.pow(t, 0.7)) *
@@ -210,36 +391,22 @@ export function layout(
     forceAtlas2.assign(graph, {
       iterations,
       settings: {
-        // lin-lin: притяжение пропорционально дистанции — rim-старт сходится
-        // за разумные итерации (тест «сильная связь ближе слабой»). Тугость
-        // кластеров добираем edgeWeightInfluence, а не linLog: у lin-log
-        // логарифмическое притяжение, дальние узлы стягиваются слишком медленно.
         linLogMode: false,
-        // NOTE: adjustSizes в graphology-FA2 размеры игнорирует (апстрим-баг #404);
-        // перекрытия крупных пузырей честно разруливает resolveCollisions ниже.
         adjustSizes: true,
-        // OAD=true: хабы слабее притягивают и выдавливаются к границам —
-        // шар распадается на доли, плоскость заполняется (Gephi: Dissuade Hubs).
-        // Ядро держит radialize-постпасс ниже, так что тест (e) не страдает.
         outboundAttractionDistribution: true,
         barnesHutOptimize: true,
         barnesHutTheta: 0.5,
-        // Распыление «как нейросеть», но без разброса за пределы кадра:
-        // умеренное отталкивание + слабая гравитация.
-        scalingRatio: 8000,
-        gravity: 0.0005,
-        edgeWeightInfluence: 2.0,
+        // High scaling ratio and light gravity produce an expansive, starry Obsidian-like dispersion
+        scalingRatio: 16000,
+        gravity: 0.0003,
+        edgeWeightInfluence: 1.8,
         strongGravityMode: false,
         slowDown: 1,
       },
     })
   }
 
-  // Форма плоскости (после FA2): вытяжка по сеяной оси + выступы/впадины от
-  // многооктавного углового шума. Ранговое кольцо убрано совсем — оно собирало
-  // арки и кругл活 силуэт. Амплитуда шума растёт к fringe (ядро держит чанки)
-  // и масштабируется размером карты: на карманных графах шум читается как
-  // случайность, а не как форма.
+  // Harmonic contour shaping and lobe dissipation
   if (iterations > 0 && graph.order > 2) {
     const rank = [...graph.mapNodes((n) => n)]
       .map((n) => [n, graph.degree(n)] as const)
@@ -255,7 +422,7 @@ export function layout(
     })
     cx /= graph.order
     cy /= graph.order
-    // радиус связной части — якорь для изолированных узлов (их FA2 уносит прочь)
+
     let maxR = 0
     graph.forEachNode((n) => {
       if (graph.degree(n) === 0) return
@@ -263,7 +430,8 @@ export function layout(
       maxR = Math.max(maxR, Math.hypot(a.x - cx, a.y - cy))
     })
     maxR = Math.max(maxR, 1)
-    // 1) вытяжка: растянуть вдоль сеяной оси, сжать поперёк (объём ~сохраняем)
+
+    // 1) Axis elongation
     const stretchAngle = rng() * Math.PI
     const k = 1.2
     const ux = Math.cos(stretchAngle)
@@ -281,7 +449,7 @@ export function layout(
       const a2 = -dx * uy + dy * ux
       const sx = a1 * k * ux + a2 * (1 / k) * -uy
       const sy = a1 * k * uy + a2 * (1 / k) * ux
-      // 2) выступы/впадины: угловой шум радиуса, амплитуда растёт к fringe
+      // 2) Angular noise protrusions
       const d1 = Math.hypot(sx, sy) || 1
       const t = (rankOf.get(n) ?? 0) / Math.max(1, graph.order - 1)
       const amp = (0.35 + 0.75 * t) * Math.min(1, graph.order / 20)
@@ -290,10 +458,7 @@ export function layout(
       graph.setNodeAttribute(n, 'y', cy + (sy / d1) * r2)
     })
 
-    // 3) Доли-«лобы»: топ-хабов вытолкать к периметру вместе с соседями,
-    // иначе FA2 складывает все хабы в ядро-blob. Лобы расходятся, в середине —
-    // void, силуэт рвётся. Только крупные графы: на карманных хаб держит центр
-    // (тесты e/g), там рвань не нужна.
+    // 3) Hub lobe pushing for large graphs
     if (graph.order >= 40) {
       let ncx = 0
       let ncy = 0
@@ -311,14 +476,12 @@ export function layout(
         maxR2 = Math.max(maxR2, Math.hypot(a.x - ncx, a.y - ncy))
       })
       const shifts = new Map<string, { dx: number; dy: number; m: number }>()
-      // Сумма вкладов от нескольких лобов раньше выстреливала узлы на 10+
-      // радиусов от ядра. Ограничиваем сдвиг сильнейшим одиночным вкладом.
-      const addShift = (k: string, ux: number, uy: number, push: number, w: number) => {
-        const s = shifts.get(k) ?? { dx: 0, dy: 0, m: 0 }
+      const addShift = (key: string, ux: number, uy: number, push: number, w: number) => {
+        const s = shifts.get(key) ?? { dx: 0, dy: 0, m: 0 }
         s.dx += ux * push * w
         s.dy += uy * push * w
         s.m = Math.max(s.m, push * w)
-        shifts.set(k, s)
+        shifts.set(key, s)
       }
       rank.slice(0, 12).forEach((n, i) => {
         const a = graph.getNodeAttributes(n)
@@ -361,37 +524,8 @@ export function layout(
   }
 
   if (iterations > 0) {
-    opts.onStage?.(92, 'Разведение пересечений...')
-    let minX = Infinity
-    let maxX = -Infinity
-    let minY = Infinity
-    let maxY = -Infinity
-    for (const n of positionedNodes) {
-      if (n.x < minX) minX = n.x
-      if (n.x > maxX) maxX = n.x
-      if (n.y < minY) minY = n.y
-      if (n.y > maxY) maxY = n.y
-    }
-    const span = Math.max(maxX - minX, maxY - minY, 1000)
-    const scaleFactor = Math.min(MAX_SCALE_FACTOR, Math.max(1, span / 850))
-    // Паддинг растёт вместе с дисперсией карты (×scaleFactor): зазор между краями
-    // узлов — фиксированная доля мира. Раньше паддинг был в абсолютных юнитах —
-    // span вырос от дисперсии, и зазор ужался почти в ноль пикселей.
-    const padScale = (s: number): number => 26 * scaleFactor * Math.min(1, Math.max(0.45, s / 24))
-    // Крупным графам — больше проходов: с большим зазором 600 узлов не
-    // расходятся за 60. (collisionIterationsForCount не трогаем — тестами зафиксирован.)
-    const passes = Math.max(collisionIterationsForCount(positionedNodes.length), positionedNodes.length > 400 ? 120 : 0)
-    resolveCollisions(positionedNodes, 6, passes, scaleFactor, padScale)
-  }
-
-  // Финальная нормализация к bbox: постпассы (вытяжка/шумы/сдвиги хабов) разгоняют
-  // пятно дальше кадра — равномерно сжимаем в ограниченный мир 6000×6000.
-  // iterations===0 — тестовый режим (reuse prevXY): координаты не трогаем.
-  //
-  // Нормализуем по квинтилям 5..95%, не по min/max: вытянутые 3-5% fringe-узлов
-  // иначе растягиваютbbox и прячут связную часть в«точку» (real-export давал
-  // связную часть на 25% экрана при нормализации по min/max).
-  if (iterations > 0) {
+    // 1) First normalize & scale to target world frame so subsequent dispersion operates
+    // directly on final coordinate scale, avoiding post-layout squashing.
     const xs = positionedNodes.map((p) => p.x).sort((a, b) => a - b)
     const ys = positionedNodes.map((p) => p.y).sort((a, b) => a - b)
     const qOr = (arr: number[], t: number) => arr[Math.max(0, Math.min(arr.length - 1, Math.floor(arr.length * t)))]
@@ -401,13 +535,55 @@ export function layout(
     const maxY = qOr(ys, 0.95)
     const bw = Math.max(maxX - minX, 1)
     const bh = Math.max(maxY - minY, 1)
-    const s = 6000 / Math.max(bw, bh)
+    // Scale target world span generously with node count
+    const targetSpan = Math.max(6000, Math.min(10000, Math.sqrt(positionedNodes.length) * 320))
+    const s = targetSpan / Math.max(bw, bh)
     const cx = (minX + maxX) / 2
     const cy = (minY + maxY) / 2
     for (const p of positionedNodes) {
       p.x = (p.x - cx) * s
       p.y = (p.y - cy) * s
     }
+
+    // 2) Warp the normalised plane into a non-uniform, bent silhouette.
+    // Skipped for tiny graphs (warping 2-3 nodes is meaningless and breaks
+    // the "strongly connected nodes stay closer" invariant on small fixtures).
+    // Cached positions from a full run are already warped; warping them again on
+    // every filter update would compound the stretch and drift the silhouette.
+    if (graph.order >= 8 && opts.fullRun) warpPlane(positionedNodes, shapePhases)
+
+    // World units reserved per px of node radius, plus a perimeter clearance.
+    // The clearance is deliberately WIDER than before: density contrast must
+    // come from emptied regions, not from packing bodies cheek by jowl.
+    // Pushing it much past ~84 is self-defeating — autoRescale fits the grown
+    // extent back to the viewport, so screen gaps shrink again.
+    const scaleFactor = MAX_SCALE_FACTOR
+    const padScale = (size: number): number => {
+      const sz = size || 20
+      return Math.max(84, sz * 1.95 + 28)
+    }
+
+    // 3) Strong 2D fractal density. A single warp would be undone by collision
+    // relaxation, so attraction and repulsion are interleaved: basins fill up
+    // to the guaranteed clearance, voids stay empty, and the last relaxation
+    // pass only fixes what is left. Cached/filter runs keep the full-run map.
+    if (graph.order >= 12 && opts.fullRun) {
+      const strength = Math.min(1, Math.max(0, (positionedNodes.length - 12) / 80))
+      fractalClusterPlane(
+        positionedNodes,
+        shapePhases,
+        (Math.imul(opts.seed, 7919) | 0),
+        strength,
+        48,
+        () => resolveCollisions(positionedNodes, 10, 1, scaleFactor, padScale)
+      )
+    }
+
+    // 4) Disperse overlaps directly in the final coordinate system.
+    // Node sizes and hub clearings directly correspond to rendered world units.
+    opts.onStage?.(92, 'Разведение пересечений...')
+    const passes = Math.max(collisionIterationsForCount(positionedNodes.length), positionedNodes.length > 300 ? 180 : 140)
+    resolveCollisions(positionedNodes, 10, passes, scaleFactor, padScale)
   }
 
   const positions = new Map<number, { x: number; y: number }>()

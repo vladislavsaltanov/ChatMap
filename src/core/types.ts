@@ -38,6 +38,10 @@ export type WorkerEdge = {
   weight: number
   alpha: number
   bead: number
+  tract: [number, number, number, number]
+  bundle: number
+  rank: number
+  tractRank: number
 }
 
 export type WorkerIn =
