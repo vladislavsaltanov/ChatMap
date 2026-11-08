@@ -54,7 +54,7 @@ export function buildNodeDetails(graph: Graph, id: number, forms: NodeDetails['f
 
   const neighborsList: Array<{ id: number; label: string; weight: number }> = []
   for (const nb of graph.neighbors(key)) {
-    const edge = graph.edge(key, nb)
+    const edge = graph.edges(key, nb)[0]
     const weight = edge ? (graph.getEdgeAttribute(edge, 'weight') as number) : 0
     neighborsList.push({ id: Number(nb), label: graph.getNodeAttribute(nb, 'label') as string, weight })
   }
@@ -75,6 +75,8 @@ export class NodePanel {
   private currentDetails: NodeDetails | null = null
   private onSelectCallback: ((id: number) => void) | null = null
   private onOverrideCallback: ((id: number, label: string) => void) | null = null
+  private onPhotoCallback: (() => void) | null = null
+  private photoBtn: HTMLButtonElement
 
   constructor(root: HTMLElement) {
     this.panel = document.createElement('aside')
@@ -86,6 +88,7 @@ export class NodePanel {
         <h2 id="node-title">Слово</h2>
         <div class="header-actions">
           <button type="button" id="auto-btn" class="label-btn" aria-label="Сбросить к исходной форме" title="Сбросить к исходной форме">Авто</button>
+          <button type="button" id="photo-btn" class="label-btn" aria-label="Снимок выделенной ноды" title="Снимок выделенной ноды">Фото</button>
           <button type="button" id="close-btn" class="icon-btn" aria-label="Закрыть">✕</button>
         </div>
       </div>
@@ -108,6 +111,7 @@ export class NodePanel {
     this.countEl = this.panel.querySelector<HTMLElement>('#node-count')!
     this.autoBtn = this.panel.querySelector<HTMLButtonElement>('#auto-btn')!
     this.closeBtn = this.panel.querySelector<HTMLButtonElement>('#close-btn')!
+    this.photoBtn = this.panel.querySelector<HTMLButtonElement>('#photo-btn')!
     this.neighborsContainer = this.panel.querySelector<HTMLElement>('#neighbors-list')!
     this.formsContainer = this.panel.querySelector<HTMLElement>('#forms-list')!
 
@@ -118,16 +122,35 @@ export class NodePanel {
       }
     })
 
+    this.photoBtn.addEventListener('click', () => {
+      this.onPhotoCallback?.()
+    })
+
     this.autoBtn.addEventListener('click', () => {
       if (!this.currentDetails) return
+      // Also drop a legacy key saved under the label itself, otherwise an old
+      // override could survive the reset and be re-applied on the next render.
       clearLabelOverride(this.currentDetails.canon)
+      clearLabelOverride(this.currentDetails.label)
+      clearLabelOverride(this.currentDetails.defaultLabel)
       this.currentDetails.label = this.currentDetails.defaultLabel
       this.titleEl.textContent = this.currentDetails.label
       this.renderForms()
+      this.syncAutoState()
       if (this.onOverrideCallback) {
         this.onOverrideCallback(this.currentDetails.id, this.currentDetails.label)
       }
     })
+  }
+
+  // «Авто» must show whether there is anything to reset: with a single word
+  // form the click legitimately changes nothing, which used to look broken.
+  private syncAutoState(): void {
+    const overridden = !!this.currentDetails &&
+      this.currentDetails.label !== this.currentDetails.defaultLabel
+    this.autoBtn.classList.toggle('active', overridden)
+    this.autoBtn.setAttribute('aria-pressed', String(overridden))
+    this.autoBtn.title = overridden ? 'Сбросить ручную подпись' : 'Подпись уже автоматическая'
   }
 
   show(details: NodeDetails): void {
@@ -137,6 +160,7 @@ export class NodePanel {
 
     this.renderNeighbors()
     this.renderForms()
+    this.syncAutoState()
     this.panel.hidden = false
   }
 
@@ -191,6 +215,7 @@ export class NodePanel {
         this.titleEl.textContent = form
         saveLabelOverride(this.currentDetails.canon, form)
         this.renderForms()
+        this.syncAutoState()
         if (this.onOverrideCallback) {
           this.onOverrideCallback(this.currentDetails.id, form)
         }
@@ -205,5 +230,9 @@ export class NodePanel {
 
   onOverride(cb: (id: number, label: string) => void): void {
     this.onOverrideCallback = cb
+  }
+
+  onPhoto(cb: () => void): void {
+    this.onPhotoCallback = cb
   }
 }
