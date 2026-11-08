@@ -12,7 +12,7 @@ export function renderProgress(root: HTMLElement): void {
       </div>
       <div class="progress-status">
         <span id="progress-stage" class="label">Чтение файла...</span>
-        <span id="progress-num" class="num">0 / 100</span>
+        <span id="progress-num" class="num">0%</span>
       </div>
     </div>
   `
@@ -25,7 +25,7 @@ export function renderProgress(root: HTMLElement): void {
 export function updateProgress(done: number, total: number, stage?: string): void {
   const pct = Math.min(100, Math.max(0, Math.round((done / Math.max(1, total)) * 100)))
   if (progressNumEl) {
-    progressNumEl.textContent = `${done} / ${total}`
+    progressNumEl.textContent = `${pct}%`
   }
   if (progressBarFillEl) {
     progressBarFillEl.style.width = `${pct}%`

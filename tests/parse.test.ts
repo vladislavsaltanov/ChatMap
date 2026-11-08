@@ -110,4 +110,83 @@ describe('parse', () => {
     expect(parsed.messages).toHaveLength(1)
     expect(parsed.messages[0].authorId).toBe(777)
   })
+
+  it('(j) id: отсутствует / null / "" / "bad" → -(idx+1), не NaN и не 0; числовая строка сохраняется', () => {
+    const chat = parse(JSON.stringify({
+      messages: [
+        { type: 'message', from_id: 'user1', text: 'a' },
+        { id: 'bad', type: 'message', from_id: 'user1', text: 'b' },
+        { id: null, type: 'message', from_id: 'user1', text: 'c' },
+        { id: '', type: 'message', from_id: 'user1', text: 'd' },
+        { id: '42', type: 'message', from_id: 'user1', text: 'e' },
+      ],
+    }))
+    expect(chat.messages.map((m) => m.id)).toEqual([-1, -2, -3, -4, 42])
+  })
+
+  it('(k) from_id с префиксом и подчёркиванием: user_123, channel_45, chat_789 → 123, 45, 789', () => {
+    const chat = parse(JSON.stringify({
+      messages: [
+        { id: 1, type: 'message', from_id: 'user_123', text: 'a' },
+        { id: 2, type: 'message', from_id: 'channel_45', text: 'b' },
+        { id: 3, type: 'message', from_id: 'chat_789', text: 'c' },
+      ],
+    }))
+    expect(chat.messages.map((m) => m.authorId)).toEqual([123, 45, 789])
+  })
+
+  it('(l) аккаунт с одним непустым чатом (и пустым) → warn не задан', () => {
+    const parsed = parse(JSON.stringify({
+      chats: {
+        list: [
+          { name: 'Пустой', messages: [] },
+          {
+            name: 'Единственный',
+            type: 'personal_chat',
+            messages: [{ id: 1, type: 'message', date: 1700000000, from: 'Алекс', from_id: 'user777', text: 'привет' }],
+          },
+        ],
+      },
+    }))
+    expect(parsed.name).toBe('Единственный')
+    expect(parsed.warn).toBeUndefined()
+    expect(parsed).not.toHaveProperty('warn')
+  })
+
+  it('(m) аккаунт с 2+ непустыми чатами → выбран самый большой, warn называет чат, число чатов и сообщений', () => {
+    const msgs = (n: number, from: string) =>
+      Array.from({ length: n }, (_, i) => ({ id: i + 1, type: 'message', date: 1700000000 + i, from, from_id: 'user777', text: `сообщение ${i}` }))
+    const parsed = parse(JSON.stringify({
+      chats: {
+        list: [
+          { name: 'Пустой', messages: [] },
+          { name: 'Маленький', type: 'personal_chat', messages: msgs(2, 'Алекс') },
+          { name: 'Большой', type: 'personal_chat', messages: msgs(5, 'Мария') },
+          { name: 'Средний', type: 'personal_chat', messages: msgs(3, 'Алекс') },
+        ],
+      },
+    }))
+    expect(parsed.name).toBe('Большой')
+    expect(parsed.messages).toHaveLength(5)
+    expect(parsed.warn).toContain('Большой')
+    expect(parsed.warn).toContain('Найдено чатов: 3')
+    expect(parsed.warn).toContain('(5 сообщ.)')
+  })
+
+  it('(n) ровно 2 непустых чата → warn с числом 2; чат без имени → «Без названия»', () => {
+    const msgs = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ id: i + 1, type: 'message', from: 'Алекс', from_id: 'user777', text: `сообщение ${i}` }))
+    const parsed = parse(JSON.stringify({
+      chats: { list: [{ messages: msgs(1) }, { messages: msgs(2) }] },
+    }))
+    expect(parsed.name).toBe('')
+    expect(parsed.warn).toContain('Найдено чатов: 2')
+    expect(parsed.warn).toContain('«Без названия»')
+    expect(parsed.warn).toContain('(2 сообщ.)')
+  })
+
+  it('(o) одиночный экспорт → warn не задан', () => {
+    expect(parse(src).warn).toBeUndefined()
+    expect(parse(src)).not.toHaveProperty('warn')
+  })
 })

@@ -74,6 +74,7 @@ export function parse(src: string): ChatExport {
   let rawMessages: unknown[] | null = null
   let chatName = ''
   let chatType = ''
+  let warn: string | undefined
 
   if (Array.isArray(data)) {
     rawMessages = data
@@ -96,6 +97,9 @@ export function parse(src: string): ChatExport {
         rawMessages = candidateChats[0].messages as unknown[]
         chatName = typeof candidateChats[0].name === 'string' ? candidateChats[0].name : chatName
         chatType = typeof candidateChats[0].type === 'string' ? candidateChats[0].type : chatType
+        if (candidateChats.length > 1) {
+          warn = `Найдено чатов: ${candidateChats.length}. Выбран «${chatName || 'Без названия'}» (${rawMessages.length} сообщ.).`
+        }
       }
     } else if (obj.chat && typeof obj.chat === 'object' && Array.isArray((obj.chat as { messages?: unknown }).messages)) {
       const sub = obj.chat as Record<string, unknown>
@@ -115,7 +119,7 @@ export function parse(src: string): ChatExport {
   const authorId = (m: RawMessage): number => {
     const rawId = m.from_id ?? m.actor_id
     if (rawId != null) {
-      const cleanStr = String(rawId).replace(/^(user|channel|chat|-)/i, '')
+      const cleanStr = String(rawId).replace(/^(?:(?:user|channel|chat)_?|-)+/i, '')
       const num = Number(cleanStr)
       if (Number.isInteger(num) && num > 0) {
         if (!authorNames.has(num)) {
@@ -137,10 +141,12 @@ export function parse(src: string): ChatExport {
 
   const messages: Message[] = rawMessages
     .filter((m): m is RawMessage => !!m && typeof m === 'object')
-    .map((m) => {
+    .map((m, idx) => {
       const kind = m.type === 'service' ? 'service' : 'message'
+      // Number(null) and Number('') are 0, Number(true) is 1: those would collide with real ids
+      const numId = typeof m.id === 'number' || typeof m.id === 'string' ? Number(m.id) : NaN
       return {
-        id: Number(m.id),
+        id: Number.isInteger(numId) && numId > 0 ? numId : -(idx + 1),
         kind,
         authorId: authorId(m),
         dateMs: parseDateMs(m),
@@ -154,5 +160,6 @@ export function parse(src: string): ChatExport {
     chatType: chatType,
     messages,
     authors: authorNames,
+    ...(warn ? { warn } : {}),
   }
 }

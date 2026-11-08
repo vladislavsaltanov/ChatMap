@@ -1,4 +1,4 @@
-import type { PairStat, TallyResult } from './tally'
+import { edgeKey, parseEdgeKey, type PairStat, type TallyResult } from './tally'
 import type { AuthorId } from './types'
 
 export type ViewMode =
@@ -54,15 +54,14 @@ export function select(
     }
     counts = remappedCounts
 
-    const remappedPairs = new Map<number, PairStat>()
+    const remappedPairs = new Map<string, PairStat>()
     for (const [key, stat] of pairs) {
-      const b = key % 3001
-      const a = Math.floor(key / 3001)
+      const [a, b] = parseEdgeKey(key)
       const rootA = merged.get(a) ?? a
       const rootB = merged.get(b) ?? b
       if (rootA === rootB) continue
 
-      const newKey = rootA < rootB ? rootA * 3001 + rootB : rootB * 3001 + rootA
+      const newKey = edgeKey(rootA, rootB)
       let targetStat = remappedPairs.get(newKey)
       if (!targetStat) {
         targetStat = { nX: new Map(), nCross: 0 }
@@ -80,8 +79,9 @@ export function select(
   if (cfg.mode.kind === 'cross') {
     for (const [key, stat] of pairs) {
       if (stat.nCross > 0) {
-        crossNodes.add(Math.floor(key / 3001))
-        crossNodes.add(key % 3001)
+        const [a, b] = parseEdgeKey(key)
+        crossNodes.add(a)
+        crossNodes.add(b)
       }
     }
   }
@@ -109,8 +109,7 @@ export function select(
 
   const candidateEdges: SelectionEdge[] = []
   for (const [key, stat] of pairs) {
-    const a = Math.floor(key / 3001)
-    const b = key % 3001
+    const [a, b] = parseEdgeKey(key)
     if (!selectedNodeSet.has(a) || !selectedNodeSet.has(b)) {
       continue
     }
@@ -143,4 +142,44 @@ export function select(
     maxCount,
     maxWeight,
   }
+}
+
+// Serrano disparity filter plus each node's top-2 edges. nodeCount must count every node in edges.
+export function pruneBackbone(edges: SelectionEdge[], nodeCount: number, alpha = 0.05): SelectionEdge[] {
+  if (edges.length === 0) return []
+
+  const sorted = [...edges].sort((e1, e2) => e2.weight - e1.weight || e1.a - e2.a || e1.b - e2.b)
+
+  const degree = new Map<number, number>()
+  const strength = new Map<number, number>()
+  for (const e of sorted) {
+    degree.set(e.a, (degree.get(e.a) || 0) + 1)
+    degree.set(e.b, (degree.get(e.b) || 0) + 1)
+    strength.set(e.a, (strength.get(e.a) || 0) + e.weight)
+    strength.set(e.b, (strength.get(e.b) || 0) + e.weight)
+  }
+
+  // Edge is significant at node i when (1 - p_ij)^(k_i - 1) < alpha, with p_ij = w_ij / s_i
+  const significantAt = (node: number, weight: number) => {
+    const k = degree.get(node) || 0
+    const s = strength.get(node) || 0
+    return k >= 2 && s > 0 && Math.pow(1 - weight / s, k - 1) < alpha
+  }
+
+  // Sorted scan: an edge is in an endpoint's top-2 when fewer than 2 of its edges precede it
+  const seen = new Map<number, number>()
+  const top2: SelectionEdge[] = []
+  const disparity: SelectionEdge[] = []
+  for (const e of sorted) {
+    const inTop2 = (seen.get(e.a) || 0) < 2 || (seen.get(e.b) || 0) < 2
+    seen.set(e.a, (seen.get(e.a) || 0) + 1)
+    seen.set(e.b, (seen.get(e.b) || 0) + 1)
+    if (inTop2) top2.push(e)
+    else if (significantAt(e.a, e.weight) || significantAt(e.b, e.weight)) disparity.push(e)
+  }
+
+  // Budget: top-2 edges go first; disparity-only edges fill the rest (Math.max keeps the slice non-negative)
+  const cap = Math.max(300, Math.round(nodeCount * 3.5))
+  const kept = new Set([...top2.slice(0, cap), ...disparity.slice(0, Math.max(0, cap - top2.length))])
+  return sorted.filter((e) => kept.has(e))
 }
