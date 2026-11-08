@@ -1,16 +1,12 @@
-import { isStopword, matchesLaugh, matchesMat } from './filters'
-import { nodeFitSize } from './geometry'
-import { layout } from './graph'
-import { Intern } from './intern'
+import { armsFor, bundleEdges, edgeAlpha, nodeFitSize, phaseFor } from './geometry'
+import { getLruCache, layout, setLruCache } from './graph'
 import { parse } from './parse'
-import { select, type ViewMode } from './select'
-import { smartMerge } from './smart-merge'
-import { buildUnits, tally } from './tally'
+import { pruneBackbone, select, type ViewMode } from './select'
+import { PipelineCache } from './tally'
 import type {
   AuthorId,
   ChatExport,
   FilterCfg,
-  Tok,
   WorkerIn,
   WorkerNode,
   WorkerOut,
@@ -18,6 +14,8 @@ import type {
 
 let chat: ChatExport | null = null
 const positionsCache = new Map<string, { x: number; y: number }>()
+const MAX_POS_CACHE = 2000
+let pipelineCache = new PipelineCache()
 
 const DEFAULT_FILTER_CFG: FilterCfg = {
   mat: false,
@@ -27,7 +25,7 @@ const DEFAULT_FILTER_CFG: FilterCfg = {
   customMat: [],
   customLaugh: [],
   smartMerge: false,
-  topN: 400,
+  topN: 600,
   minWeight: 0,
 }
 
@@ -38,45 +36,41 @@ function send(msg: WorkerOut) {
   self.postMessage(msg)
 }
 
-function runPipeline(fullRun: boolean) {
+function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
   if (!chat) return
 
-  send({ type: 'progress', done: 40, total: 100, stage: 'Токенизация и фильтрация...' })
-  const ia = new Intern()
   const cfg = currentFilterCfg
+  // cache hits skip the stages they reuse, so their ticks never show
+  const { ia, tallyResult, merged } = pipelineCache.resolve(chat, cfg, {
+    onTokenizeStart: () => send({ type: 'progress', done: 35, total: 100, stage: 'Токенизация и фильтрация...' }),
+    onTokenizeProgress: (doneMsgs, totalMsgs) =>
+      send({
+        type: 'progress',
+        done: 35 + Math.round((doneMsgs / totalMsgs) * 20),
+        total: 100,
+        stage: `Токенизация: ${doneMsgs} / ${totalMsgs} сообщ.`,
+      }),
+    onTallyStart: () => send({ type: 'progress', done: 60, total: 100, stage: 'Подсчёт частот и связей...' }),
+    onMergeStart: () => send({ type: 'progress', done: 70, total: 100, stage: 'Умные склейки слов...' }),
+  })
 
-  const dropTok = (tok: Tok): boolean => {
-    if (!cfg.tech && tok.cls === 'tech') return true
-    if (!cfg.digits && tok.cls === 'digits') return true
-    if (isStopword(tok.word)) return true
-    if (!cfg.mat && matchesMat(tok.word, cfg.customMat)) return true
-    if (!cfg.laugh && matchesLaugh(tok.word, cfg.customLaugh)) return true
-    return false
-  }
-
-  const rawUnits = buildUnits(chat, ia, dropTok)
-  send({ type: 'progress', done: 60, total: 100, stage: 'Подсчёт частот и связей...' })
-  const tallyResult = tally(rawUnits)
-
-  let merged: Map<number, number> | undefined
-  if (cfg.smartMerge) {
-    send({ type: 'progress', done: 70, total: 100, stage: 'Умные склейки слов...' })
-    const freq = new Map<number, number>()
-    const idWords = new Map<number, string>()
-
-    for (const [id, authorMap] of tallyResult.counts) {
-      let sum = 0
-      for (const cnt of authorMap.values()) sum += cnt
-      freq.set(id, sum)
-
-      const cls = ia.getCls(id)
-      if (cls === 'plain') {
-        const word = ia.getCanon(id)
-        if (word) idWords.set(id, word)
+  // 'ready' needs the tallied counts, so it goes out here (full run only) and before any 'map'
+  if (fullRun && authorNames) {
+    const wordCounts = new Map<AuthorId, number>()
+    for (const tokenAuthors of tallyResult.counts.values()) {
+      for (const [authorId, cnt] of tokenAuthors) {
+        wordCounts.set(authorId, (wordCounts.get(authorId) || 0) + cnt)
       }
     }
-
-    merged = smartMerge(freq, idWords)
+    send({
+      type: 'ready',
+      authors: Array.from(authorNames.entries()).map(([id, name]) => ({
+        id,
+        name,
+        wordCount: wordCounts.get(id) || 0,
+      })),
+      counts: { messages: chat.messages.length },
+    })
   }
 
   send({ type: 'progress', done: 75, total: 100, stage: 'Выборка узлов и рёбер...' })
@@ -121,40 +115,32 @@ function runPipeline(fullRun: boolean) {
     return {
       id: n.id,
       size: info?.size,
-      prevXY: positionsCache.get(canonStr),
+      prevXY: getLruCache(positionsCache, canonStr),
     }
   })
 
-  // Prune weak incidental noise to form a clean, legible network backbone
-  const MAX_PER_NODE = 4
-  const nodeDegrees = new Map<number, number>()
-  const backboneEdges: typeof selection.edges = []
-  for (const edge of selection.edges) {
-    const degA = nodeDegrees.get(edge.a) || 0
-    const degB = nodeDegrees.get(edge.b) || 0
-    if (degA < MAX_PER_NODE || degB < MAX_PER_NODE || edge.weight >= 4) {
-      backboneEdges.push(edge)
-      nodeDegrees.set(edge.a, degA + 1)
-      nodeDegrees.set(edge.b, degB + 1)
-      if (backboneEdges.length >= Math.max(300, selection.nodes.length * 3.5)) {
-        break
-      }
-    }
-  }
+  // Serrano disparity backbone; every node keeps its 2 strongest edges
+  const backboneEdges = pruneBackbone(selection.edges, selection.nodes.length)
 
   const layoutResult = layout(layoutNodes, backboneEdges, {
     seed: 1337,
     fullRun,
+    onStage: (done, stage) => send({ type: 'progress', done, total: 100, stage }),
   })
 
   for (const [id, pos] of layoutResult.positions) {
     const canonStr = ia.getCanon(id) || String(id)
-    positionsCache.set(canonStr, pos)
+    setLruCache(positionsCache, canonStr, pos, MAX_POS_CACHE)
   }
 
   send({ type: 'progress', done: 95, total: 100, stage: 'Формирование карты...' })
   const nodes: WorkerNode[] = []
   const forms = new Map<number, Array<[string, number]>>()
+  const posList = selection.nodes.map((n) => {
+    const p = layoutResult.positions.get(n.id) || { x: 0, y: 0 }
+    return { id: n.id, x: p.x, y: p.y }
+  })
+  const bundles = bundleEdges(posList, backboneEdges, selection.maxWeight)
 
   for (const n of selection.nodes) {
     const info = nodeInfoMap.get(n.id)!
@@ -175,21 +161,37 @@ function runPipeline(fullRun: boolean) {
       }
     }
 
+    const arms = armsFor(posList, backboneEdges, n.id)
     nodes.push({
       id: n.id,
       label: info.bestForm,
+      canon: ia.getCanon(n.id) || String(n.id),
       x: pos.x,
       y: pos.y,
       size: info.size,
       count: n.count,
       authorLead,
+      phase: phaseFor(n.id),
+      arm0: arms[0],
+      arm1: arms[1],
+      arm2: arms[2],
+      arm3: arms[3],
+      arm4: arms[4],
     })
   }
 
   send({
     type: 'map',
     nodes,
-    edges: backboneEdges,
+    edges: backboneEdges.map((e, i) => ({
+      ...e,
+      alpha: edgeAlpha(e.weight, selection.maxWeight),
+      bead: selection.maxWeight > 0 ? Math.min(1, e.weight / selection.maxWeight) : 0,
+      tract: bundles[i].tract,
+      bundle: bundles[i].bundle,
+      rank: bundles[i].rank,
+      tractRank: bundles[i].tractRank,
+    })),
     maxCount: selection.maxCount,
     maxWeight: selection.maxWeight,
     forms,
@@ -202,6 +204,8 @@ self.onmessage = (e: MessageEvent<WorkerIn>) => {
     if (msg.type === 'open') {
       send({ type: 'progress', done: 5, total: 100, stage: 'Чтение JSON...' })
       chat = parse(msg.json)
+      if (chat.warn) send({ type: 'warn', message: chat.warn })
+      pipelineCache = new PipelineCache()
       send({ type: 'progress', done: 30, total: 100, stage: 'Определение авторов...' })
 
       const authorMap = new Map<AuthorId, string>()
@@ -216,13 +220,7 @@ self.onmessage = (e: MessageEvent<WorkerIn>) => {
         }
       }
 
-      send({
-        type: 'ready',
-        authors: Array.from(authorMap.entries()).map(([id, name]) => ({ id, name })),
-        counts: { messages: chat.messages.length },
-      })
-
-      runPipeline(true)
+      runPipeline(true, authorMap)
       send({ type: 'progress', done: 100, total: 100, stage: 'Готово' })
     } else if (msg.type === 'update') {
       currentFilterCfg = {

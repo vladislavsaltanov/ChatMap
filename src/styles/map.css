@@ -14,8 +14,64 @@
     height: 100%;
     min-height: 400px;
     border: 1px solid var(--hairline);
+    border-radius: var(--radius);
     background: var(--paper);
     position: relative;
+    overflow: hidden;
+  }
+
+  /* Подсказка: первый слой под канвасами Sigma, ноды и рёбра поверх неё. */
+  .map-legend {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+    pointer-events: none;
+  }
+
+  /* Техническая пластина: тихая сетка, кресты совмещения, колонтитул. */
+  .plate {
+    position: absolute;
+    inset: 10px;
+    z-index: 2;
+    pointer-events: none;
+    border: 1px solid oklch(0.92 0.01 85 / 0.06);
+    background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='72'%20height='72'%3E%3Cpath%20d='M72%200H0V72'%20fill='none'%20stroke='%23e8e5dc'%20stroke-opacity='0.035'%20stroke-width='1'/%3E%3C/svg%3E");
+    background-size: 72px 72px;
+  }
+
+  .plate i {
+    position: absolute;
+    width: 11px;
+    height: 11px;
+  }
+
+  .plate i::before,
+  .plate i::after {
+    content: '';
+    position: absolute;
+    background: oklch(0.92 0.01 85 / 0.3);
+  }
+
+  .plate i::before { left: 0; top: 5px; width: 11px; height: 1px; }
+  .plate i::after { top: 0; left: 5px; width: 1px; height: 11px; }
+  .plate i:nth-child(1) { top: -6px; left: -6px; }
+  .plate i:nth-child(2) { top: -6px; right: -6px; }
+  .plate i:nth-child(3) { bottom: -6px; left: -6px; }
+  .plate i:nth-child(4) { bottom: -6px; right: -6px; }
+
+  .plate span {
+    position: absolute;
+    top: 12px;
+    /* Слева стоит панель параметров — колонтитул уходит в свободный правый угол. */
+    right: 20px;
+    text-align: right;
+    font: 500 12px/1 var(--font);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    color: oklch(0.92 0.01 85 / 0.42);
   }
 
   .map-controls {
@@ -38,15 +94,17 @@
     align-items: center;
     justify-content: center;
     font-size: 18px;
-    background: var(--paper);
+    background: oklch(0.19 0.012 85 / 0.85);
+    backdrop-filter: blur(8px);
     border: 1px solid var(--hairline);
+    border-radius: var(--radius-btn);
     color: var(--ink);
     cursor: pointer;
   }
 
   .map-controls button#export-png {
-    font-size: 11px;
-    font-weight: 600;
+    font-size: 12px;
+    font-weight: 500;
     letter-spacing: 0.05em;
   }
 
@@ -55,27 +113,67 @@
   }
 
   .hover-line {
-    min-height: 20px;
+    min-height: 22px;
     margin: 0;
     font-variant-numeric: tabular-nums;
   }
 
+  .map-progress {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 2px;
+    width: 0%;
+    background: var(--ink);
+    z-index: 15;
+    pointer-events: none;
+    transition: width var(--dur) var(--ease);
+  }
+
+  .drawer,
+  .nodepanel {
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    background: oklch(0.18 0.012 85 / 0.86);
+    backdrop-filter: blur(14px);
+  }
+
   .drawer {
     position: absolute;
-    inset: 16px auto 16px 16px;
-    width: 280px;
-    max-height: calc(100vh - 32px);
+    top: 16px;
+    left: 16px;
+    width: min(280px, calc(100vw - 32px));
+    /* Нижний левый угол карты оставлен под легенду: панель не перекрывает её. */
+    max-height: calc(100vh - 168px);
     padding: 16px;
-    border: 1px solid var(--hairline);
-    background: var(--paper);
     z-index: 20;
     overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--hairline) transparent;
   }
 
   .drawer summary {
     cursor: pointer;
-    font-weight: 500;
+    font-weight: 450;
+  }
+
+  .drawer[open] summary {
     margin-bottom: var(--gap);
+  }
+
+  @media (max-width: 719px) {
+    .drawer:not([open]) {
+      background: transparent;
+      border-color: transparent;
+    }
+
+    .drawer summary {
+      inline-size: fit-content;
+      padding: 6px 12px;
+      border: 1px solid var(--hairline);
+      border-radius: var(--radius-pill);
+      backdrop-filter: blur(8px);
+    }
   }
 
   .drawer-content {
@@ -86,7 +184,8 @@
 
   .control-group {
     border: 1px solid var(--hairline);
-    padding: 8px 12px;
+    border-radius: var(--radius-btn);
+    padding: 10px 12px;
     margin: 0;
     display: flex;
     flex-direction: column;
@@ -102,7 +201,7 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
-    font-size: 13px;
+    font-size: 14px;
     cursor: pointer;
   }
 
@@ -121,7 +220,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 13px;
+    font-size: 14px;
     cursor: pointer;
   }
 
@@ -135,7 +234,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .author-color-row input[type="color"] {
@@ -151,31 +250,102 @@
     width: 100%;
     resize: vertical;
     border: 1px solid var(--hairline);
+    border-radius: 6px;
     background: transparent;
     color: var(--ink);
     font: inherit;
-    font-size: 12px;
-    padding: 4px;
+    font-size: 13px;
+    padding: 6px;
+  }
+
+  input[type="color"] {
+    appearance: none;
+    border-radius: 6px;
+
+    &::-webkit-color-swatch-wrapper {
+      padding: 2px;
+    }
+
+    &::-webkit-color-swatch {
+      border: none;
+      border-radius: 4px;
+    }
   }
 
   input[type="range"] {
     width: 100%;
-    accent-color: var(--ink);
+    height: 18px;
+    appearance: none;
+    background: transparent;
+    cursor: pointer;
+
+    &::-webkit-slider-runnable-track {
+      height: 3px;
+      background: var(--hairline);
+      border-radius: var(--radius-pill);
+    }
+
+    &::-webkit-slider-thumb {
+      appearance: none;
+      width: 13px;
+      height: 13px;
+      margin-top: -5px;
+      border-radius: 50%;
+      border: none;
+      background: var(--ink);
+      transition: transform var(--dur-fast) var(--ease);
+    }
+
+    &::-webkit-slider-thumb:hover {
+      transform: scale(1.15);
+    }
+
+    &::-moz-range-track {
+      height: 3px;
+      background: var(--hairline);
+      border-radius: var(--radius-pill);
+    }
+
+    &::-moz-range-thumb {
+      width: 13px;
+      height: 13px;
+      border: none;
+      border-radius: 50%;
+      background: var(--ink);
+    }
   }
 
   .nodepanel {
     position: absolute;
     inset: 16px 16px 16px auto;
-    width: 280px;
+    width: min(280px, calc(100vw - 32px));
     max-height: calc(100vh - 32px);
     padding: 16px;
-    border: 1px solid var(--hairline);
-    background: var(--paper);
     z-index: 20;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: var(--gap);
+    scrollbar-width: thin;
+    scrollbar-color: var(--hairline) transparent;
+    transition:
+      opacity var(--dur) var(--ease),
+      transform var(--dur) var(--ease),
+      display var(--dur) allow-discrete,
+      overlay var(--dur) allow-discrete;
+  }
+
+  .nodepanel[hidden] {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(10px) scale(0.985);
+  }
+
+  @starting-style {
+    .nodepanel:not([hidden]) {
+      opacity: 0;
+      transform: translateY(10px) scale(0.985);
+    }
   }
 
   .nodepanel-header {
@@ -187,7 +357,7 @@
 
   .nodepanel-header h2 {
     margin: 0;
-    font-size: 16px;
+    font-size: 18px;
     font-weight: 500;
   }
 
@@ -199,8 +369,14 @@
 
   .label-btn {
     padding: 0 10px;
-    font-size: 11px;
+    font-size: 12px;
     min-height: var(--touch);
+  }
+
+  .label-btn.active {
+    border-color: var(--ink);
+    background: var(--surface);
+    font-weight: 500;
   }
 
   .icon-btn {
@@ -211,7 +387,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 14px;
+    font-size: 15px;
   }
 
   .panel-section {
@@ -233,9 +409,10 @@
     justify-content: space-between;
     width: 100%;
     min-height: var(--touch);
-    padding: 6px 10px;
-    font-size: 13px;
+    padding: 6px 12px;
+    font-size: 14px;
     border: 1px solid var(--hairline);
+    border-radius: var(--radius-btn);
     background: transparent;
     color: var(--ink);
     cursor: pointer;
@@ -245,10 +422,11 @@
   .neighbor-btn:hover,
   .form-btn:hover {
     border-color: var(--ink);
+    background: var(--surface);
   }
 
   .form-btn.active {
     border-color: var(--ink);
-    font-weight: 500;
+    font-weight: 450;
   }
 }

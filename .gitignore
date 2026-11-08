@@ -8,3 +8,11 @@ coverage/
 .DS_Store
 Thumbs.db
 *.log
+/.pi
+/.vitest
+# Локальные артефакты проверок и память воркспейса — в коммит не идут.
+/.playwright-cli/
+/tests/betterwright/
+/TASK_STATE.md
+/.workbuddy-ai/
+project_context.md

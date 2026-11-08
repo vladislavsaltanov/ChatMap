@@ -1,3 +1,4 @@
+import './styles/fonts.css'
 import './styles/tokens.css'
 import './styles/base.css'
 import './styles/map.css'
@@ -32,12 +33,43 @@ export function show(screen: Screen): void {
   }
 }
 
+const warnBanner = document.createElement('div')
+warnBanner.id = 'warn-banner'
+warnBanner.className = 'warn-banner'
+warnBanner.setAttribute('role', 'status')
+warnBanner.hidden = true
+document.querySelector('main')!.prepend(warnBanner)
+
+let warnings: string[] = []
+
+function clearWarnings(): void {
+  warnings = []
+  warnBanner.hidden = true
+}
+
+function addWarning(msg: string): void {
+  if (!warnings.includes(msg)) warnings.push(msg)
+  warnBanner.textContent = warnings.join(' · ')
+  warnBanner.hidden = false
+}
+
 const worker = new Worker()
+
+// Sigma v4 rasterises label glyphs into an SDF atlas with canvas 2D exactly
+// once and caches them forever. If Obel Mono is not loaded before the renderer
+// is created, the atlas permanently bakes a system fallback instead. Weight 400
+// is loaded for the DOM interface, where Obel Mono is lighter than the captions.
+const nodeFontsReady = Promise.all([
+  document.fonts.load('400 16px "Obel Mono"'),
+  document.fonts.load('700 32px "Obel Mono"'),
+  document.fonts.load('900 32px "Obel Mono"'),
+]).catch(() => undefined)
 
 const mapView = renderMap(screens.map)
 const controls = renderControls(screens.map)
 
 controls.onChange((cfg) => {
+  if (!screens.map.hidden) mapView.showProgress(75, 100, 'Выборка узлов и рёбер...')
   worker.postMessage({ type: 'update', cfg } satisfies WorkerIn)
 })
 
@@ -45,23 +77,40 @@ controls.onColorChange((colors) => {
   mapView.renderAuthors(colors)
 })
 
-worker.onmessage = (e: MessageEvent<WorkerOut>) => {
+controls.onLegendChange((visible) => {
+  mapView.setLegendVisible(visible)
+})
+
+worker.onmessage = async (e: MessageEvent<WorkerOut>) => {
   const msg = e.data
   if (msg.type === 'progress') {
     updateProgress(msg.done, msg.total, msg.stage)
+    if (!screens.map.hidden && msg.done < msg.total) mapView.showProgress(msg.done, msg.total, msg.stage)
   } else if (msg.type === 'ready') {
     controls.setAuthors(msg.authors)
   } else if (msg.type === 'map') {
+    await nodeFontsReady
     show('map')
     requestAnimationFrame(() => {
       mapView.render(msg)
+      mapView.hideProgress()
     })
+  } else if (msg.type === 'warn') {
+    addWarning(msg.message)
   } else if (msg.type === 'error') {
     showError(msg.message)
   }
 }
 
 function sendFile(file: File) {
+  clearWarnings()
+  if (file.size > 500 * 1024 * 1024) {
+    showError('Файл больше 500 МБ. Экспортируй один чат без медиа.')
+    return
+  }
+  if (file.size > 200 * 1024 * 1024) {
+    addWarning('Файл больше 200 МБ. Обработка может занять продолжительное время.')
+  }
   show('progress')
   updateProgress(1, 100, 'Чтение файла с диска...')
   const reader = new FileReader()
@@ -81,13 +130,13 @@ function sendFile(file: File) {
   reader.readAsText(file)
 }
 
-renderLanding(screens.landing, sendFile, () => {})
+renderLanding(screens.landing, sendFile, addWarning)
 renderProgress(screens.progress)
 
 show('landing')
 
 // Dev mode: ?fixture=1 loads synthetic test fixture
-if (location.search.includes('fixture=1')) {
+if (import.meta.env.DEV && location.search.includes('fixture=1')) {
   import('../tests/fixtures/sample-export.json').then((module) => {
     show('progress')
     worker.postMessage({

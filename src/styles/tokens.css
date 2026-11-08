@@ -3,14 +3,27 @@
 @layer tokens {
   :root {
     color-scheme: dark;
+    /* #0f0d08 = rgb(15,13,8): matches PLATE_COLOR in neural.ts and the PNG export */
     --paper: oklch(0.16 0.01 85);
     --ink: oklch(0.92 0.01 85);
     --ink-dim: oklch(0.62 0.01 85);
     --hairline: oklch(0.32 0.01 85);
-    --font: system-ui, -apple-system, 'Segoe UI', sans-serif;
-    --label-size: 11px;
+    /* Obel Mono everywhere: node captions use 700/900, the UI stays at 400/500. */
+    --font: 'Obel Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --label-size: 13px;
     --label-track: 0.08em;
     --touch: 40px;
     --gap: 8px;
+
+    --surface: oklch(0.19 0.012 85);
+    --surface-2: oklch(0.22 0.014 85);
+    --radius: 10px;
+    --radius-btn: 8px;
+    --radius-pill: 999px;
+
+    --ease: cubic-bezier(0.3, 0.6, 0.2, 1);
+    --dur-fast: 130ms;
+    --dur: 200ms;
+    --dur-slow: 320ms;
   }
 }

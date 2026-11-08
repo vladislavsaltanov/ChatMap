@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { canon } from '../src/core/canon'
+import * as canonMod from '../src/core/canon'
+import { Intern } from '../src/core/intern'
 
 describe('canon', () => {
   it('stems verb forms into a single key', () => {
@@ -35,5 +37,45 @@ describe('canon', () => {
     expect(canon('2026', 'digits')).toBe('2026')
     expect(canon('dom', 'tech')).toBe('dom')
     expect(canon('talked', 'tech')).toBe('talked')
+  })
+})
+
+describe('Intern memoization', () => {
+  it('interning the same (word, cls) 50 times invokes canon at most once', () => {
+    const spy = vi.spyOn(canonMod, 'canon')
+    try {
+      spy.mockClear()
+      const interner = new Intern()
+      let id = -1
+      for (let i = 0; i < 50; i++) {
+        id = interner.intern('домами', 'plain').id
+      }
+      expect(spy.mock.calls.length).toBeLessThanOrEqual(1)
+      expect(interner.forms.get(id)!.get('домами')).toBe(50)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('different inflections share the same id with individual counts', () => {
+    const interner = new Intern()
+    const a = interner.intern('дом', 'plain')
+    const b = interner.intern('дома', 'plain')
+    const c = interner.intern('дому', 'plain')
+    expect(b.id).toBe(a.id)
+    expect(c.id).toBe(a.id)
+    const forms = interner.forms.get(a.id)!
+    expect(forms.get('дом')).toBe(1)
+    expect(forms.get('дома')).toBe(1)
+    expect(forms.get('дому')).toBe(1)
+  })
+
+  it('same surface word with plain vs tech does not collide', () => {
+    const interner = new Intern()
+    const plain = interner.intern('talked', 'plain')
+    const tech = interner.intern('talked', 'tech')
+    expect(tech.id).not.toBe(plain.id)
+    expect(interner.forms.get(plain.id)!.get('talked')).toBe(1)
+    expect(interner.forms.get(tech.id)!.get('talked')).toBe(1)
   })
 })

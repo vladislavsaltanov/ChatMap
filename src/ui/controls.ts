@@ -1,14 +1,18 @@
 import { debounce } from '../core/debounce'
+import { escapeHtml } from '../core/escapeHtml'
 import type { ViewMode } from '../core/select'
 import type { AuthorId, FilterCfg } from '../core/types'
+import { NODE_COLORS } from './neural'
 
 export type ControlsCallback = (cfg: FilterCfg & { mode: ViewMode }) => void
 export type ColorChangeCallback = (colors: Map<AuthorId, string>) => void
 
 function hueToHex(hueDegrees: number): string {
   const h = ((hueDegrees % 360) + 360) % 360
-  const s = 0.75
-  const l = 0.65
+  // Дополнительные голоса сверх двух основных: золотое сечение по hue.
+  // Основные цвета берутся из NODE_COLORS и не генерируются.
+  const s = 0.62
+  const l = 0.74
   const c = (1 - Math.abs(2 * l - 1)) * s
   const x = c * (1 - Math.abs(((h / 60) % 2) - 1))
   const m = l - c / 2
@@ -67,6 +71,7 @@ export class Controls {
   private customLaughText: HTMLTextAreaElement
   private sliderTopN: HTMLInputElement
   private sliderMinWeight: HTMLInputElement
+  private legendCheckbox: HTMLInputElement
   private topNVal: HTMLElement
   private minWeightVal: HTMLElement
 
@@ -74,6 +79,7 @@ export class Controls {
   private authorColors = new Map<AuthorId, string>()
   private changeCallbacks: ControlsCallback[] = []
   private colorCallbacks: ColorChangeCallback[] = []
+  private legendCallbacks: Array<(visible: boolean) => void> = []
 
   private debouncedTriggerChange = debounce(() => {
     const cfg = this.getCfg()
@@ -85,7 +91,8 @@ export class Controls {
   constructor(root: HTMLElement) {
     const details = document.createElement('details')
     details.className = 'drawer'
-    details.open = true
+    // На узких экранах панель скрыта по умолчанию — не съедает карту целиком
+    details.open = window.matchMedia('(min-width: 720px)').matches
     details.setAttribute('aria-label', 'Параметры')
     details.innerHTML = `
       <summary class="label">Параметры</summary>
@@ -117,13 +124,18 @@ export class Controls {
         <fieldset class="control-group">
           <legend class="label">Слайдеры</legend>
           <label class="slider-label" for="slider-top-n">
-            <span>Слов на карте: <span id="top-n-val" class="num">400</span></span>
-            <input type="range" id="slider-top-n" min="100" max="1000" step="50" value="400" />
+            <span>Слов на карте: <span id="top-n-val" class="num">600</span></span>
+            <input type="range" id="slider-top-n" min="100" max="1000" step="50" value="600" />
           </label>
           <label class="slider-label" for="slider-min-weight">
             <span>Мин. вес ребра: <span id="min-weight-val" class="num">0</span></span>
-            <input type="range" id="slider-min-weight" min="0" max="10" step="1" value="0" />
+            <input type="range" id="slider-min-weight" min="0" max="10" step="0.5" value="0" />
           </label>
+        </fieldset>
+
+        <fieldset class="control-group">
+          <legend class="label">Карта</legend>
+          <label class="check-label"><input type="checkbox" id="show-legend" checked /> Подсказка на карте</label>
         </fieldset>
 
         <fieldset id="authors-group" class="control-group" hidden>
@@ -146,6 +158,7 @@ export class Controls {
     this.customLaughText = details.querySelector<HTMLTextAreaElement>('#custom-laugh')!
     this.sliderTopN = details.querySelector<HTMLInputElement>('#slider-top-n')!
     this.sliderMinWeight = details.querySelector<HTMLInputElement>('#slider-min-weight')!
+    this.legendCheckbox = details.querySelector<HTMLInputElement>('#show-legend')!
     this.topNVal = details.querySelector<HTMLElement>('#top-n-val')!
     this.minWeightVal = details.querySelector<HTMLElement>('#min-weight-val')!
 
@@ -164,9 +177,15 @@ export class Controls {
     this.customLaughText.addEventListener('input', onInputChange)
     this.sliderTopN.addEventListener('input', onInputChange)
     this.sliderMinWeight.addEventListener('input', onInputChange)
+    // UI-only: the hint must not trigger a worker recomputation.
+    this.legendCheckbox.addEventListener('change', () => {
+      for (const cb of this.legendCallbacks) {
+        cb(this.legendCheckbox.checked)
+      }
+    })
   }
 
-  setAuthors(authors: Array<{ id: AuthorId; name: string }>): void {
+  setAuthors(authors: Array<{ id: AuthorId; name: string; wordCount?: number }>): void {
     this.authorColors.clear()
     this.authorsColors.innerHTML = ''
     this.modesContainer.innerHTML = ''
@@ -183,11 +202,11 @@ export class Controls {
     // Author modes
     for (let i = 0; i < authors.length; i++) {
       const author = authors[i]
-      const hex = hueToHex(137.5 * i)
+      const hex = NODE_COLORS[i] ?? hueToHex(137.5 * i)
       this.authorColors.set(author.id, hex)
 
       const label = document.createElement('label')
-      label.innerHTML = `<input type="radio" name="view-mode" value="author-${author.id}" /> Только ${author.name}`
+      label.innerHTML = `<input type="radio" name="view-mode" value="author-${author.id}" /> Только ${escapeHtml(author.name)}`
       label.querySelector('input')!.addEventListener('change', () => {
         this.currentMode = { kind: 'author', author: author.id }
         this.debouncedTriggerChange()
@@ -197,11 +216,16 @@ export class Controls {
       // Color picker
       const colorRow = document.createElement('div')
       colorRow.className = 'author-color-row'
-      colorRow.innerHTML = `
-        <span>${author.name}</span>
-        <input type="color" value="${hex}" />
-      `
-      const colorInput = colorRow.querySelector<HTMLInputElement>('input[type="color"]')!
+      const legend = document.createElement('span')
+      legend.append(`${author.name} — `)
+      const countEl = document.createElement('span')
+      countEl.className = 'num'
+      countEl.textContent = String(author.wordCount ?? 0)
+      legend.append(countEl, ' слов')
+      const colorInput = document.createElement('input')
+      colorInput.type = 'color'
+      colorInput.value = hex
+      colorRow.append(legend, ' ', colorInput)
       colorInput.addEventListener('input', () => {
         this.authorColors.set(author.id, colorInput.value)
         for (const cb of this.colorCallbacks) {
@@ -251,6 +275,11 @@ export class Controls {
 
   onColorChange(cb: ColorChangeCallback): void {
     this.colorCallbacks.push(cb)
+  }
+
+  onLegendChange(cb: (visible: boolean) => void): void {
+    this.legendCallbacks.push(cb)
+    cb(this.legendCheckbox.checked)
   }
 }
 
