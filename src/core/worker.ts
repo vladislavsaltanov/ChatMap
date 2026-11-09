@@ -37,8 +37,6 @@ function send(msg: WorkerOut) {
 
 function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
   if (!chat) return
-  // Stage clock for slowness reports: counts only, never chat content.
-  const tStart = performance.now()
 
   const cfg = currentFilterCfg
   // cache hits skip the stages they reuse, so their ticks never show
@@ -54,7 +52,6 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
     onTallyStart: () => send({ type: 'progress', done: 60, total: 100, stage: 'Подсчёт частот и связей...' }),
     onMergeStart: () => send({ type: 'progress', done: 70, total: 100, stage: 'Умные склейки слов...' }),
   })
-  const tResolve = performance.now() - tStart
 
   // 'ready' needs the tallied counts, so it goes out here (full run only) and before any 'map'
   if (fullRun && authorNames) {
@@ -76,9 +73,7 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
   }
 
   send({ type: 'progress', done: 75, total: 100, stage: 'Выборка узлов и рёбер...' })
-  const tSelectStart = performance.now()
   const selection = select(tallyResult, currentViewCfg, merged)
-  const tSelect = performance.now() - tSelectStart
 
   let minCount = Infinity
   for (const n of selection.nodes) {
@@ -123,13 +118,11 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
   // Selection edges arrive sorted weight-desc, so the backbone skips its own resort.
   const backboneEdges = pruneSortedBackbone(selection.edges, selection.nodes.length)
 
-  const tLayoutStart = performance.now()
   const layoutResult = layout(layoutNodes, backboneEdges, {
     seed: 1337,
     fullRun,
     onStage: (done, stage) => send({ type: 'progress', done, total: 100, stage }),
   })
-  const tLayout = performance.now() - tLayoutStart
 
   for (const [id, pos] of layoutResult.positions) {
     const canonStr = ia.getCanon(id) || String(id)
@@ -143,7 +136,6 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
     const p = layoutResult.positions.get(n.id) || { x: 0, y: 0 }
     return { id: n.id, x: p.x, y: p.y }
   })
-  const tRestStart = performance.now()
   const bundles = bundleEdges(posList, backboneEdges, selection.maxWeight)
   const armsIndex = buildArmsIndex(posList, backboneEdges)
 
@@ -185,20 +177,6 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
     })
   }
 
-  // Paste this line from devtools console when reporting slowness.
-  console.debug('[chatmap] pipeline ms', {
-    run: fullRun ? 'full' : 'update',
-    resolve: Math.round(tResolve),
-    select: Math.round(tSelect),
-    layout: Math.round(tLayout),
-    rest: Math.round(performance.now() - tRestStart),
-    total: Math.round(performance.now() - tStart),
-    messages: chat.messages.length,
-    vocab: tallyResult.counts.size,
-    pairs: tallyResult.pairs.size,
-    nodes: selection.nodes.length,
-    edges: backboneEdges.length,
-  })
   send({
     type: 'map',
     nodes,

@@ -499,14 +499,6 @@ export function armsFromIndex(index: ArmsIndex, id: number): number[] {
   return arms
 }
 
-export function armsFor(
-  nodes: Array<{ id: number; x: number; y: number }>,
-  edges: Array<{ a: number; b: number; weight: number }>,
-  id: number
-): number[] {
-  return armsFromIndex(buildArmsIndex(nodes, edges), id)
-}
-
 // Deterministic pulsation phase based on node id.
 export function phaseFor(id: number): number {
   return (Math.imul(id, 2654435761) >>> 0) / 4294967296
