@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import fixture from './fixtures/sample-export.json'
-import { ExportError, flatten, parse } from '../src/core/parse'
+import { ExportError, MAX_FLATTEN_DEPTH, flatten, parse } from '../src/core/parse'
 
 const src = JSON.stringify(fixture)
 const HTML_ERR =
@@ -21,6 +21,12 @@ describe('flatten', () => {
       { text: 'жирный', entity: 'other' },
       { text: 'курсив', entity: 'other' },
     ])
+  })
+
+  it('(a) вложенность глубже лимита → ExportError, а не RangeError', () => {
+    let nested: unknown = 'дно'
+    for (let i = 0; i <= MAX_FLATTEN_DEPTH; i++) nested = [{ type: 'bold', text: nested }]
+    expect(() => flatten(nested)).toThrowError(ExportError)
   })
 
   it('(a) фикстура: code и link сохранены по порядку', () => {

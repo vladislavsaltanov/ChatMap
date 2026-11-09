@@ -12,7 +12,14 @@ const HTML_EXPORT_MSG =
 
 const ENTITIES: Record<string, Entity> = { plain: 'plain', link: 'link', code: 'code', mention: 'mention' }
 
-export function flatten(text: unknown): TextPart[] {
+// Crafted exports can nest text arrays thousands deep: cap the recursion so a
+// malicious file gets a clean ExportError instead of a RangeError stack overflow.
+export const MAX_FLATTEN_DEPTH = 100
+
+export function flatten(text: unknown, depth = 0): TextPart[] {
+  if (depth >= MAX_FLATTEN_DEPTH) {
+    throw new ExportError('Слишком глубокая вложенность текста. Повреждённый экспорт?')
+  }
   const parts: TextPart[] = []
   for (const el of Array.isArray(text) ? text : [text]) {
     if (typeof el === 'string') {
@@ -27,7 +34,7 @@ export function flatten(text: unknown): TextPart[] {
           })
         }
       } else if (Array.isArray(obj.text)) {
-        parts.push(...flatten(obj.text))
+        parts.push(...flatten(obj.text, depth + 1))
       }
     }
   }

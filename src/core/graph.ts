@@ -586,7 +586,13 @@ export function layout(
     // Filter updates reuse cached full-run positions, so a light touch-up is
     // enough there; the full relaxation budget pays off only on fresh layouts.
     opts.onStage?.(92, 'Разведение пересечений...')
-    const fullPasses = Math.max(collisionIterationsForCount(positionedNodes.length), positionedNodes.length > 300 ? 180 : 140)
+    // Large maps cost O(N^2) per pass: above 400 nodes reuse the helper's own
+    // small budget (x2 for the final frame) instead of the 140/180 floor meant
+    // for small maps. Test graphs stay under 271 nodes, so this branch is prod-only.
+    let fullPasses = Math.max(collisionIterationsForCount(positionedNodes.length), positionedNodes.length > 300 ? 180 : 140)
+    if (positionedNodes.length > 400) {
+      fullPasses = collisionIterationsForCount(positionedNodes.length) * 2
+    }
     const passes = opts.fullRun ? fullPasses : 25
     resolveCollisions(positionedNodes, 10, passes, scaleFactor, padScale)
   }

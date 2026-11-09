@@ -222,7 +222,7 @@ self.onmessage = (e: MessageEvent<WorkerIn>) => {
   try {
     if (msg.type === 'open') {
       send({ type: 'progress', done: 5, total: 100, stage: 'Чтение JSON...' })
-      chat = parse(msg.json)
+      chat = parse(new TextDecoder().decode(msg.buf))
       if (chat.warn) send({ type: 'warn', message: chat.warn })
       pipelineCache = new PipelineCache()
       // New file = new identity space: stale canon->position entries would

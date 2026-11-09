@@ -51,9 +51,11 @@ function hueToHex(hueDegrees: number): string {
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`
 }
 
+// One custom word per line; commas and semicolons also split, so a single-line
+// paste like "bad1, bad2" does not become one never-matching entry.
 function parseCustom(text: string): string[] {
   return text
-    .split('\n')
+    .split(/[\n,;]+/)
     .map((s) => s.trim())
     .filter((s) => s.length > 0)
 }
