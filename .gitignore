@@ -16,3 +16,5 @@ Thumbs.db
 /TASK_STATE.md
 /.workbuddy-ai/
 project_context.md
+# Временные бенч-замеры — снимаются и удаляются, в коммит не идут.
+/tests/bench-tmp*

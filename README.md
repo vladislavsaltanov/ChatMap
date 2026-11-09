@@ -1,4 +1,6 @@
-# ChatMap
+<p align="center" style="font-size: 32px; font-weight: bold">ChatMap</p>
+
+[OpenWiki проекта](openwiki/quickstart.md)
 
 Одна страница, которая превращает официальный JSON-экспорт Telegram-чата в карту слов.
 

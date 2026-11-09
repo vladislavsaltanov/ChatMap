@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:c86e1954c6e5dbdecceb3bee4a18f756705696685391bc86620a4e2f39139082",
+  "claims": [
+    {
+      "id": "claim_60c6026154e64bc998d8511c0ac3ead0",
+      "statement": "Наведение подсвечивает эго-окрестность узла с grace-паузой 50 мс, клик закрепляет узел, повторный клик или Escape снимает закрепление",
+      "evidence": [
+        {
+          "resource": "repo://src/ui/mapview.ts",
+          "version": "repo-file-v1:sha256:eec3a39f8ab3746824bd32aa5e68810c0b51047740442e0f81c9cfb7334e2838"
+        },
+        {
+          "resource": "repo://src/ui/subgraphHighlight.ts",
+          "version": "repo-file-v1:sha256:5273585e19d24893f3fb63f6af7c3a44dc0e281851ce0aca835e8b781b079955"
+        }
+      ]
+    },
+    {
+      "id": "claim_c0b5fe4c477641ac980867f77072158b",
+      "statement": "Панель закреплённого узла показывает отсортированные формы слова с частотами, соседей по весу и каноническую форму; оверрайды подписей хранятся в localStorage",
+      "evidence": [
+        {
+          "resource": "repo://src/ui/nodepanel.ts",
+          "version": "repo-file-v1:sha256:088d63b178994299dd1bb08b627b9a671fe51d5a5ac033390f4c84d827dcc26e"
+        }
+      ]
+    },
+    {
+      "id": "claim_af2e9afadb9748ff8a4882009ffb4db3",
+      "statement": "Легенда рисуется на canvas тихим текстом без карточек и отключается из панели управления",
+      "evidence": [
+        {
+          "resource": "repo://src/core/legend.ts",
+          "version": "repo-file-v1:sha256:bfd3615f893e02388cb535567c837a15321c6fbab59cd72ed6721780d7713bff"
+        },
+        {
+          "resource": "repo://src/ui/legend.ts",
+          "version": "repo-file-v1:sha256:ec6075f27e43ef7522eaa6b1d59318fb61866a27bb07aa529cc204e37f50657f"
+        }
+      ]
+    },
+    {
+      "id": "claim_30cb430897734442b8f6ac4fd8666ae1",
+      "statement": "Кнопка PNG сохраняет кадр 2560x1440 через sigma export-image в порядке подложка, легенда, граф; при закреплённом узле доступен фоторежим эго-сети",
+      "evidence": [
+        {
+          "resource": "repo://src/ui/mapview.ts",
+          "version": "repo-file-v1:sha256:eec3a39f8ab3746824bd32aa5e68810c0b51047740442e0f81c9cfb7334e2838"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-09T15:02:00.342Z"
+  }
+}

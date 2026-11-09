@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:739ce66bc4cd4b9f3c81e350efea172611bae66f45440a9935d929facc943d5c",
+  "claims": [
+    {
+      "id": "claim_89759be01741410198ec42ef90141c28",
+      "statement": "Landing принимает result.json перетаскиванием или выбором файла; файлы свыше 200 МБ идут с предупреждением, свыше 500 МБ отклоняются на входе",
+      "evidence": [
+        {
+          "resource": "repo://src/main.ts",
+          "version": "repo-file-v1:sha256:41f4f56c7ef7282614e20886c003c42105993d04f85b1d6d32a253cc5c381aa9"
+        },
+        {
+          "resource": "repo://src/ui/landing.ts",
+          "version": "repo-file-v1:sha256:d6242fcab060afd1b99c93178d3ee282ba039d7214bab31fc915de898f87872e"
+        }
+      ]
+    },
+    {
+      "id": "claim_5f6df24e3314412b8416181b7bcf91ab",
+      "statement": "Воркер шлёт стадии progress по числу сообщений, затем ready со списком авторов и map с узлами, рёбрами и формами",
+      "evidence": [
+        {
+          "resource": "repo://src/core/worker.ts",
+          "version": "repo-file-v1:sha256:b7c3df84a6df9604f5be92039729666b18287aa76a27b1a709575f191f806419"
+        },
+        {
+          "resource": "repo://src/ui/progress.ts",
+          "version": "repo-file-v1:sha256:1d082cba8ff71d93deaefb95e2a7afc959f98008f22795df7e7672a83cf61412"
+        }
+      ]
+    },
+    {
+      "id": "claim_11b31fa61f4045b1ac24d1a14a4a88f3",
+      "statement": "Режимы together/author/cross переключают подсчёт веса в select; пересечения доступны только при числе участников не больше двух",
+      "evidence": [
+        {
+          "resource": "repo://src/core/select.ts",
+          "version": "repo-file-v1:sha256:e3009030bf438bd1fa5f9830d460904def38b7edc1c06afd8827425b59716c8b"
+        },
+        {
+          "resource": "repo://src/ui/controls.ts",
+          "version": "repo-file-v1:sha256:afd4275b006988868a7f8be195b0e9e7282f1d4f841afeb0c71c8f3e10639087"
+        }
+      ]
+    },
+    {
+      "id": "claim_e22bf6889fd047f88a70279aec0ae672",
+      "statement": "Смена фильтров и слайдеров topN/minWeight отправляет update с дебаунсом и пересобирает карту по кэшированному конвейеру без повторной загрузки файла",
+      "evidence": [
+        {
+          "resource": "repo://src/core/worker.ts",
+          "version": "repo-file-v1:sha256:b7c3df84a6df9604f5be92039729666b18287aa76a27b1a709575f191f806419"
+        },
+        {
+          "resource": "repo://src/ui/controls.ts",
+          "version": "repo-file-v1:sha256:afd4275b006988868a7f8be195b0e9e7282f1d4f841afeb0c71c8f3e10639087"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-09T15:02:00.342Z"
+  }
+}
