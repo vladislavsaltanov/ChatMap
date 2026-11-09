@@ -1,6 +1,8 @@
 <h1 align="center">ChatMap</h1>
 
-[OpenWiki проекта](openwiki/index.md)
+<p align="center">
+  <a href="openwiki/index.md">OpenWiki проекта</a>
+</p>
 
 Одна страница, которая превращает официальный JSON-экспорт Telegram-чата в карту слов.
 
