@@ -1,8 +1,8 @@
 # ChatMap — Handoff Document
 
 > Документ передачи контекста разработки проекта ChatMap.
-> Дата актуализации: **01.11.2026**.
-> Статус: **Все 13 этапов спецификации завершены, Preflight зелёный (61/61 тестов passing, tsc 0 errors, build 0 errors)**.
+> Дата актуализации: **10.11.2026**.
+> Статус: **Все 13 этапов спецификации завершены, Preflight зелёный (192 теста passing, tsc 0 errors, build 0 errors)**.
 
 ---
 
@@ -114,7 +114,7 @@ flowchart TD
 | [`src/ui/controls.ts`](../src/ui/controls.ts) | Выдвижная боковая панель настроек, фильтров и палитры цветов авторов. |
 | [`src/ui/nodepanel.ts`](../src/ui/nodepanel.ts) | Правая карточка деталей пина: частота, топ-3 соседа, список словоформ, переопределение лейбла. |
 | [`src/styles/`](../src/styles/) | CSS токены (`tokens.css`), базовые стили (`base.css`), стили карты и панелей (`map.css`). |
-| [`tests/`](../tests/) | 10 тест-сьютов Vitest (61 юнит-тест) на все модули `src/core/`. |
+| [`tests/`](../tests/) | 14 тест-сьютов Vitest (192 юнит-теста) на все модули `src/core/`. |
 
 ---
 
@@ -125,7 +125,7 @@ flowchart TD
 | Действие | Команда | Назначение |
 |---|---|---|
 | **Dev сервер** | `npm.cmd run dev` | Запуск локального сервера Vite на `http://127.0.0.1:5173/` |
-| **Тестирование** | `npm.cmd run test` | Запуск 61 теста Vitest для чистой логики `src/core/` |
+| **Тестирование** | `npm.cmd run test` | Запуск 192 тестов Vitest для чистой логики `src/core/` |
 | **Проверка типов** | `npm.cmd run typecheck` | Строгий аудит типов TypeScript (`tsc --noEmit`) |
 | **Сборка** | `npm.cmd run build` | Компиляция оптимизированного продакшен-бандла в `dist/` |
 | **Preflight** | `npm.cmd run typecheck && npm.cmd run test && npm.cmd run build` | Обязательный гейт перед любым коммитом |
