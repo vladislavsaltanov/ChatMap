@@ -490,6 +490,22 @@ describe('layout', () => {
     expect(overlaps).toBe(0)
   }, 60000)
 
+  it('(l2) 600 узлов: зазор не проваливается на большой карте', () => {
+    // Above 400 nodes the collision budget drops to the helper's own small
+    // budget (x2), so the >400 branch needs its own quality gate.
+    const nodes = mixedNodes(600)
+    const res = layout(nodes, hubEdges(600), { seed: 1337, fullRun: true })
+    const pts = [...res.positions.values()]
+    let minPair = Infinity
+    for (let i = 0; i < pts.length; i++) {
+      for (let j = i + 1; j < pts.length; j++) {
+        const d = Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y)
+        if (d < minPair) minPair = d
+      }
+    }
+    expect(minPair).toBeGreaterThan(170)
+  }, 60000)
+
   it('(m) кластеризация детерминирована для больших карт', () => {
     const nodes = mixedNodes(60)
     const edges = hubEdges(60)
