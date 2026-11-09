@@ -1,4 +1,3 @@
-const MAX_FILE_BYTES = 500 * 1024 * 1024
 const WARN_FILE_BYTES = 200 * 1024 * 1024
 
 export function renderLanding(
@@ -34,9 +33,8 @@ export function renderLanding(
   const warningEl = root.querySelector<HTMLElement>('#size-warning')!
 
   const handleFile = (file: File) => {
-    if (file.size > MAX_FILE_BYTES) {
-      warningEl.hidden = true
-    } else if (file.size > WARN_FILE_BYTES) {
+    // The hard 500 MB cap lives in main.ts (sendFile): one source of truth.
+    if (file.size > WARN_FILE_BYTES) {
       const msg = 'Файл больше 200 МБ. Обработка может занять продолжительное время.'
       warningEl.textContent = msg
       warningEl.hidden = false
