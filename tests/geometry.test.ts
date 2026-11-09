@@ -9,6 +9,7 @@ import {
   fisheyePoint,
   haloPx,
   labelZoomRatio,
+  lengthFade,
   nodeFitSize,
   phaseFor,
   quadOf,
@@ -366,5 +367,29 @@ describe('geometry', () => {
     expect(phaseFor(0)).toBeGreaterThanOrEqual(0)
     expect(phaseFor(0)).toBeLessThan(1)
     expect(phaseFor(123456)).toBeLessThan(1)
+  })
+})
+
+describe('lengthFade (long weak links dissolve)', () => {
+  it('short edges stay fully visible regardless of strength', () => {
+    expect(lengthFade(0.5, 0)).toBe(1)
+    expect(lengthFade(1, 0)).toBe(1)
+    expect(lengthFade(2, 0)).toBe(1)
+  })
+
+  it('long weak edges dissolve, strong corridors only quiet down', () => {
+    expect(lengthFade(5, 0)).toBe(0)
+    // no full veto: even the strongest corridor is still a line across the map
+    expect(lengthFade(5, 1)).toBeCloseTo(0.35)
+    const mid = lengthFade(2.75, 0)
+    expect(mid).toBeGreaterThan(0)
+    expect(mid).toBeLessThan(1)
+    // strength scales the dissolve linearly (softens, never vetoes)
+    expect(lengthFade(2.75, 0.5)).toBeCloseTo(1 - (1 - mid) * 0.825)
+  })
+
+  it('non-positive reach never fades', () => {
+    expect(lengthFade(0, 0)).toBe(1)
+    expect(lengthFade(-1, 0)).toBe(1)
   })
 })

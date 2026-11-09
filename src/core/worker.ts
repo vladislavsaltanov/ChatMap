@@ -1,7 +1,7 @@
-import { armsFor, bundleEdges, edgeAlpha, nodeFitSize, phaseFor } from './geometry'
+import { armsFromIndex, buildArmsIndex, bundleEdges, edgeAlpha, nodeFitSize, phaseFor } from './geometry'
 import { getLruCache, layout, setLruCache } from './graph'
 import { parse } from './parse'
-import { pruneBackbone, select, type ViewMode } from './select'
+import { pruneSortedBackbone, select, type ViewCfg } from './select'
 import { PipelineCache } from './tally'
 import type {
   AuthorId,
@@ -22,15 +22,14 @@ const DEFAULT_FILTER_CFG: FilterCfg = {
   laugh: false,
   tech: false,
   digits: false,
+  stopwords: false,
   customMat: [],
   customLaugh: [],
   smartMerge: false,
-  topN: 600,
-  minWeight: 0,
 }
 
 let currentFilterCfg: FilterCfg = { ...DEFAULT_FILTER_CFG }
-let currentViewMode: ViewMode = { kind: 'together' }
+let currentViewCfg: ViewCfg = { mode: { kind: 'together' }, topN: 600, minWeight: 0 }
 
 function send(msg: WorkerOut) {
   self.postMessage(msg)
@@ -38,6 +37,8 @@ function send(msg: WorkerOut) {
 
 function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
   if (!chat) return
+  // Stage clock for slowness reports: counts only, never chat content.
+  const tStart = performance.now()
 
   const cfg = currentFilterCfg
   // cache hits skip the stages they reuse, so their ticks never show
@@ -53,6 +54,7 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
     onTallyStart: () => send({ type: 'progress', done: 60, total: 100, stage: 'Подсчёт частот и связей...' }),
     onMergeStart: () => send({ type: 'progress', done: 70, total: 100, stage: 'Умные склейки слов...' }),
   })
+  const tResolve = performance.now() - tStart
 
   // 'ready' needs the tallied counts, so it goes out here (full run only) and before any 'map'
   if (fullRun && authorNames) {
@@ -74,11 +76,9 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
   }
 
   send({ type: 'progress', done: 75, total: 100, stage: 'Выборка узлов и рёбер...' })
-  const selection = select(
-    tallyResult,
-    { mode: currentViewMode, topN: cfg.topN, minWeight: cfg.minWeight },
-    merged
-  )
+  const tSelectStart = performance.now()
+  const selection = select(tallyResult, currentViewCfg, merged)
+  const tSelect = performance.now() - tSelectStart
 
   let minCount = Infinity
   for (const n of selection.nodes) {
@@ -120,13 +120,16 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
   })
 
   // Serrano disparity backbone; every node keeps its 2 strongest edges
-  const backboneEdges = pruneBackbone(selection.edges, selection.nodes.length)
+  // Selection edges arrive sorted weight-desc, so the backbone skips its own resort.
+  const backboneEdges = pruneSortedBackbone(selection.edges, selection.nodes.length)
 
+  const tLayoutStart = performance.now()
   const layoutResult = layout(layoutNodes, backboneEdges, {
     seed: 1337,
     fullRun,
     onStage: (done, stage) => send({ type: 'progress', done, total: 100, stage }),
   })
+  const tLayout = performance.now() - tLayoutStart
 
   for (const [id, pos] of layoutResult.positions) {
     const canonStr = ia.getCanon(id) || String(id)
@@ -140,7 +143,9 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
     const p = layoutResult.positions.get(n.id) || { x: 0, y: 0 }
     return { id: n.id, x: p.x, y: p.y }
   })
+  const tRestStart = performance.now()
   const bundles = bundleEdges(posList, backboneEdges, selection.maxWeight)
+  const armsIndex = buildArmsIndex(posList, backboneEdges)
 
   for (const n of selection.nodes) {
     const info = nodeInfoMap.get(n.id)!
@@ -161,7 +166,7 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
       }
     }
 
-    const arms = armsFor(posList, backboneEdges, n.id)
+    const arms = armsFromIndex(armsIndex, n.id)
     nodes.push({
       id: n.id,
       label: info.bestForm,
@@ -180,6 +185,20 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
     })
   }
 
+  // Paste this line from devtools console when reporting slowness.
+  console.debug('[chatmap] pipeline ms', {
+    run: fullRun ? 'full' : 'update',
+    resolve: Math.round(tResolve),
+    select: Math.round(tSelect),
+    layout: Math.round(tLayout),
+    rest: Math.round(performance.now() - tRestStart),
+    total: Math.round(performance.now() - tStart),
+    messages: chat.messages.length,
+    vocab: tallyResult.counts.size,
+    pairs: tallyResult.pairs.size,
+    nodes: selection.nodes.length,
+    edges: backboneEdges.length,
+  })
   send({
     type: 'map',
     nodes,
@@ -206,6 +225,9 @@ self.onmessage = (e: MessageEvent<WorkerIn>) => {
       chat = parse(msg.json)
       if (chat.warn) send({ type: 'warn', message: chat.warn })
       pipelineCache = new PipelineCache()
+      // New file = new identity space: stale canon->position entries would
+      // pin same-spelled words of the new chat to the old chat's coordinates.
+      positionsCache.clear()
       send({ type: 'progress', done: 30, total: 100, stage: 'Определение авторов...' })
 
       const authorMap = new Map<AuthorId, string>()
@@ -228,13 +250,16 @@ self.onmessage = (e: MessageEvent<WorkerIn>) => {
         laugh: msg.cfg.laugh,
         tech: msg.cfg.tech,
         digits: msg.cfg.digits,
+        stopwords: msg.cfg.stopwords,
         customMat: msg.cfg.customMat,
         customLaugh: msg.cfg.customLaugh,
         smartMerge: msg.cfg.smartMerge,
+      }
+      currentViewCfg = {
+        mode: msg.cfg.mode,
         topN: msg.cfg.topN,
         minWeight: msg.cfg.minWeight,
       }
-      currentViewMode = msg.cfg.mode
       runPipeline(false)
     }
   } catch (err: unknown) {

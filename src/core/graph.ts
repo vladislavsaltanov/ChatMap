@@ -391,7 +391,9 @@ export function layout(
     forceAtlas2.assign(graph, {
       iterations,
       settings: {
-        linLogMode: false,
+        // linLog separates communities into ganglia with bridges, but on tiny
+        // graphs it breaks the "strong link closer" invariant — gate like warp.
+        linLogMode: graph.order >= 12,
         adjustSizes: true,
         outboundAttractionDistribution: true,
         barnesHutOptimize: true,
@@ -581,8 +583,11 @@ export function layout(
 
     // 4) Disperse overlaps directly in the final coordinate system.
     // Node sizes and hub clearings directly correspond to rendered world units.
+    // Filter updates reuse cached full-run positions, so a light touch-up is
+    // enough there; the full relaxation budget pays off only on fresh layouts.
     opts.onStage?.(92, 'Разведение пересечений...')
-    const passes = Math.max(collisionIterationsForCount(positionedNodes.length), positionedNodes.length > 300 ? 180 : 140)
+    const fullPasses = Math.max(collisionIterationsForCount(positionedNodes.length), positionedNodes.length > 300 ? 180 : 140)
+    const passes = opts.fullRun ? fullPasses : 25
     resolveCollisions(positionedNodes, 10, passes, scaleFactor, padScale)
   }
 

@@ -1,6 +1,6 @@
 // Geometry and styling calculations for neural graph rendering and node sizes.
 
-// Zoom-in "fisheye": a gentle radial magnification around the camera centre.
+// Zoom-in "fisheye": a pronounced radial magnification around the camera centre.
 // Neighbouring words drift apart near the focus, distant words stay put. All
 // values are in graph units; MapView converts the screen-space reach into
 // `fisheyeRadius` and derives `fisheyeStrength` from the camera ratio.
@@ -11,7 +11,7 @@ export type FisheyeConfig = {
   fisheyeStrength?: number
 }
 
-const FISHEYE_GAIN = 0.22
+const FISHEYE_GAIN = 0.5
 
 export function fisheyePoint(x: number, y: number, f: FisheyeConfig): { x: number; y: number } {
   const k = Math.max(0, Math.min(1, f.fisheyeStrength ?? 0))
@@ -24,7 +24,7 @@ export function fisheyePoint(x: number, y: number, f: FisheyeConfig): { x: numbe
   const d = Math.hypot(dx, dy)
   if (d < 1e-6) return { x, y }
   const t = d / radius
-  const gain = 1 + FISHEYE_GAIN * k * Math.exp(-2.4 * t * t)
+  const gain = 1 + FISHEYE_GAIN * k * Math.exp(-1.8 * t * t)
   return { x: cx + dx * gain, y: cy + dy * gain }
 }
 
@@ -142,6 +142,19 @@ export function edgeAlpha(w: number, wmax: number): number {
   if (wmax <= 0 || w <= 0) return 0.1
   const t = Math.max(0, Math.min(1, Math.pow(w / wmax, 0.5)))
   return 0.1 + 0.5 * t
+}
+
+// Long weak links stretch across clusters and read as noise, especially zoomed in:
+// a trans-map hairline crosses the whole viewport. Dissolve them by geometric reach
+// (edge length vs the map median). Strength only softens the dissolve: even the
+// strongest corridor is still a line across the map, so it never gets a full veto.
+// Thresholds from measurement: weak-half median reach ~2.1, strong-half ~0.35.
+export function lengthFade(reach: number, strength: number): number {
+  if (!(reach > 0)) return 1
+  const s = Math.max(0, Math.min(1, strength))
+  const t = Math.max(0, Math.min(1, (reach - 2) / (3.5 - 2)))
+  const dissolve = t * t * (3 - 2 * t)
+  return 1 - dissolve * (1 - 0.35 * s)
 }
 
 // Soft aura around the drawn core. Quad = core + halo is what Sigma uses for
@@ -443,27 +456,55 @@ export function bundleEdges(
 }
 
 // Neuron dendrites: angles (in turns 0..1) to top 5 heaviest neighbors. -1 means no arm.
-export function armsFor(
+export type ArmsIndex = {
+  pos: Map<number, { x: number; y: number }>
+  adj: Map<number, Array<{ nid: number; weight: number }>>
+}
+
+// Adjacency index built once per layout: per-node queries drop from O(E) to
+// O(degree). The worker builds it once instead of rescanning all edges per node.
+export function buildArmsIndex(
   nodes: Array<{ id: number; x: number; y: number }>,
-  edges: Array<{ a: number; b: number; weight: number }>,
-  id: number
-): number[] {
+  edges: Array<{ a: number; b: number; weight: number }>
+): ArmsIndex {
   const pos = new Map(nodes.map((n) => [n.id, n]))
-  const me = pos.get(id)
-  if (!me) return [-1, -1, -1, -1, -1]
-  const neighbours: Array<{ nid: number; weight: number }> = []
-  for (const e of edges) {
-    if (e.a === id && pos.has(e.b)) neighbours.push({ nid: e.b, weight: e.weight })
-    else if (e.b === id && pos.has(e.a)) neighbours.push({ nid: e.a, weight: e.weight })
+  const adj = new Map<number, Array<{ nid: number; weight: number }>>()
+  const link = (from: number, to: number, weight: number) => {
+    let list = adj.get(from)
+    if (!list) {
+      list = []
+      adj.set(from, list)
+    }
+    list.push({ nid: to, weight })
   }
+  for (const e of edges) {
+    if (!pos.has(e.a) || !pos.has(e.b)) continue
+    link(e.a, e.b, e.weight)
+    link(e.b, e.a, e.weight)
+  }
+  return { pos, adj }
+}
+
+export function armsFromIndex(index: ArmsIndex, id: number): number[] {
+  const me = index.pos.get(id)
+  if (!me) return [-1, -1, -1, -1, -1]
+  const neighbours = [...(index.adj.get(id) ?? [])]
   neighbours.sort((x, y) => y.weight - x.weight || x.nid - y.nid)
   const arms = neighbours.slice(0, 5).map(({ nid }) => {
-    const p = pos.get(nid)!
+    const p = index.pos.get(nid)!
     const turns = Math.atan2(p.y - me.y, p.x - me.x) / (Math.PI * 2)
     return ((turns % 1) + 1) % 1
   })
   while (arms.length < 5) arms.push(-1)
   return arms
+}
+
+export function armsFor(
+  nodes: Array<{ id: number; x: number; y: number }>,
+  edges: Array<{ a: number; b: number; weight: number }>,
+  id: number
+): number[] {
+  return armsFromIndex(buildArmsIndex(nodes, edges), id)
 }
 
 // Deterministic pulsation phase based on node id.

@@ -1,5 +1,5 @@
 import type Sigma from 'sigma'
-import { coreFrac, fisheyePoint, labelZoomRatio, quadOf, renderedNodeSize, visualCoreRadius, zoomSizeRatio } from '../core/geometry'
+import { coreFrac, fisheyePoint, labelZoomRatio, lengthFade, quadOf, renderedNodeSize, visualCoreRadius, zoomSizeRatio } from '../core/geometry'
 import { DEFAULT_NODE_COLOR, NODE_LABEL_FAMILY } from './neural'
 
 export type CustomNodeState = { isActive: boolean; released?: boolean; releasedAt?: number }
@@ -16,6 +16,9 @@ export type CustomGraphState = {
   // 0 = tiny map (no noise, keep every detail), 1 = dense map (full overview LOD).
   mapDensity: number
   releaseAlpha: number
+  // Fresh-map enter animation: tweened 0 -> 1 on every render, multiplies all
+  // opacities so the map fades in instead of popping.
+  enterAlpha: number
   // A node is pinned: the whole ego-network keeps its labels regardless of LOD.
   pinActive: boolean
   // Photo export: hide everything outside the pinned ego-network.
@@ -135,7 +138,10 @@ function edgeOpacity(attrs: any, g: CustomGraphState): number {
   // A universal whisper so the general view shows the whole web as a faint
   // trace, while strong suppression still keeps it from becoming a mesh.
   const trace = 0.05 * (1 - edgeReveal(r)) * (1 - 0.7 * deepPhase(r))
-  return clamp01(Math.max(base, trace))
+  // Long weak links dissolve by geometric reach (mapview sets it); strong
+  // corridors are spared. Applied to the trace too, or the mesh persists.
+  const reachFade = lengthFade((attrs.reach as number) ?? 1, (attrs.strength as number) ?? 0)
+  return clamp01((g.enterAlpha ?? 1) * reachFade * Math.max(base, trace))
 }
 
 // Overview dust fade degree: 0 = full brightness, up to 1 = dissolved.
@@ -162,7 +168,7 @@ function lodNodeOpacity(sizePx: number, g: CustomGraphState): number {
   const lodRatio = g.lodRatio ?? 1
   const base = lodTier(sizePx, lodRatio) * (1 - lodDust(sizePx, lodRatio))
   const out = base * (1 - 0.94 * smallness(sizePx) * fadePhase(g.cameraRatio ?? 1, g))
-  return Math.round(out * 50) / 50
+  return Math.round(out * (g.enterAlpha ?? 1) * 50) / 50
 }
 
 // Query: label alpha. Words stay readable much farther out than before:
@@ -436,6 +442,9 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
   edges: [
     {
       // Stage 1: edges thin out geometrically before their opacity is touched.
+      // Transit culling (mapview sets isHidden per camera) needs an explicit
+      // rule: custom stages replace the default visibility mapping.
+      visibility: (_a: any, s: { isHidden?: boolean }) => (s.isHidden ? 'hidden' : 'visible'),
       size: (attrs: any, _s: any, g: CustomGraphState) =>
         ((attrs.size as number) ?? 2.4) * (1 - 0.3 * scalePhase(g.cameraRatio ?? 1, g)),
       opacity: (attrs: any, _s: any, g: CustomGraphState) => edgeOpacity(attrs, g),
