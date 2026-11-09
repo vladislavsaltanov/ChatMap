@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:1ad5a1c076dec52c5a6ad729d2882863ce3635a78f9050943916a31e7fd6af55",
+  "claims": [
+    {
+      "id": "claim_06a0ef2acf1c45169b260fa21823acc1",
+      "statement": "Чистая логика src/core выполняется в Web Worker, главный поток отвечает за экраны и рендер и не выполняет подсчёт связей",
+      "evidence": [
+        {
+          "resource": "repo://src/core/worker.ts",
+          "version": "repo-file-v1:sha256:b7c3df84a6df9604f5be92039729666b18287aa76a27b1a709575f191f806419"
+        },
+        {
+          "resource": "repo://src/main.ts",
+          "version": "repo-file-v1:sha256:41f4f56c7ef7282614e20886c003c42105993d04f85b1d6d32a253cc5c381aa9"
+        }
+      ]
+    },
+    {
+      "id": "claim_1128ee8c5fb94045a6f9c2a5efcd3bf5",
+      "statement": "Протокол воркера задан типами WorkerIn (open/update) и WorkerOut (progress/ready/map/warn/error)",
+      "evidence": [
+        {
+          "resource": "repo://src/core/types.ts",
+          "version": "repo-file-v1:sha256:ed68ecf93dec7150cabe5632ec15f929b25955529b40431b171c14e836fc90c9"
+        }
+      ]
+    },
+    {
+      "id": "claim_e1ef258828c84306b9160e47d46d34ba",
+      "statement": "Рендер карты выполняется Sigma v4 на canvas поверх graphology-графа, раскладка — ForceAtlas2",
+      "evidence": [
+        {
+          "resource": "repo://package.json",
+          "version": "repo-file-v1:sha256:9349e9d505625f19793b05c5426557a1f15728319cd976cacf46fa30e6fc0ea9"
+        },
+        {
+          "resource": "repo://src/ui/mapview.ts",
+          "version": "repo-file-v1:sha256:eec3a39f8ab3746824bd32aa5e68810c0b51047740442e0f81c9cfb7334e2838"
+        }
+      ]
+    },
+    {
+      "id": "claim_da21d0e04797412ba4c25ffe38b5b785",
+      "statement": "Файл экспорта читается через FileReader в память вкладки, сетевых запросов с содержимым чата нет, страница работает офлайн",
+      "evidence": [
+        {
+          "resource": "repo://README.md",
+          "version": "repo-file-v1:sha256:3c08c99aa91a4563209b2bc9592c10814d9a8f0546d7a6d7822e9e022fc7a4c1"
+        },
+        {
+          "resource": "repo://src/main.ts",
+          "version": "repo-file-v1:sha256:41f4f56c7ef7282614e20886c003c42105993d04f85b1d6d32a253cc5c381aa9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-09T15:02:00.342Z"
+  }
+}

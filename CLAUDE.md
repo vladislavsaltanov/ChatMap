@@ -47,3 +47,11 @@ Read CONVENTIONS.md before any GitHub or git operation.
 ## Workspace Facts
 - (пусто)
 <!-- END bigpowers:learned-preferences -->
+
+<!-- OPENWIKI:START -->
+
+## OpenWiki
+
+@AGENTS.md
+
+<!-- OPENWIKI:END -->

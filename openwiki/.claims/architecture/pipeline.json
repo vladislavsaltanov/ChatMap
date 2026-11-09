@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:74dca15a1868d50bdce13de3aa741905d1e202e71a979a63fb14ba77565fc288",
+  "claims": [
+    {
+      "id": "claim_38a215f5a5744f39b6f3ca39f791a5ad",
+      "statement": "parse — единственная граница доверия: валидирует JSON экспорта, извлекает авторов и даты, HTML-экспорт отклоняет с подсказкой, файл свыше 200 МБ пропускает с предупреждением",
+      "evidence": [
+        {
+          "resource": "repo://src/core/parse.ts",
+          "version": "repo-file-v1:sha256:b866e5a9eeb2a5e11ecc1db49d7595a49b572bfa13442c85c6a8f8ef4ee5d984"
+        }
+      ]
+    },
+    {
+      "id": "claim_952cedc91f63465aa2cb8f8726a6a6ae",
+      "statement": "tokenize режет текст на токены классов plain/tech/digits; единицей связи является предложение, соседние единицы одного сообщения связываются слабее",
+      "evidence": [
+        {
+          "resource": "repo://src/core/tokenize.ts",
+          "version": "repo-file-v1:sha256:0bde5291eeea64fe1e3a307bd11e3924e16f164e94fdb28dabaa617b72f6e206"
+        }
+      ]
+    },
+    {
+      "id": "claim_1725bb91683548659b92fe5249045c8a",
+      "statement": "canon — стеммер по окончаниям без словарей, Intern присваивает каноническим формам числовые id и копит карту поверхностных форм с частотами",
+      "evidence": [
+        {
+          "resource": "repo://src/core/canon.ts",
+          "version": "repo-file-v1:sha256:02e9149be3c02bc172027e58bb303dff2dab37d1d067fa045c6818c4537fd918"
+        },
+        {
+          "resource": "repo://src/core/intern.ts",
+          "version": "repo-file-v1:sha256:6212f7823acff966dc8232f083323b634f45dad0c2ab8e5d182ccce8acaed4a1"
+        }
+      ]
+    },
+    {
+      "id": "claim_6796a8105f114ba7b6f7b65333994c00",
+      "statement": "FilterCfg — show-flags категорий (мат, смех, tech, digits, стоп-слова); false роняет категорию до tally, кастомные списки дополняют встроенные",
+      "evidence": [
+        {
+          "resource": "repo://src/core/filters.ts",
+          "version": "repo-file-v1:sha256:0d6aa8e7d3dc658dff9c97cd592e679571f477ee91f27b7c8ff95107b98a87c7"
+        }
+      ]
+    },
+    {
+      "id": "claim_1ade1c7357704687b5a84bc6bd846897",
+      "statement": "tally строит counts по авторам и pairs с затуханием 1/d в окне 4; reply весит 1.0, соседние сообщения до 10 минут — 0.7, большой разрыв — без связи",
+      "evidence": [
+        {
+          "resource": "repo://src/core/tally.ts",
+          "version": "repo-file-v1:sha256:6635c456c0032a68274ec06b1f245611672d01f1ee7d80cff854bb3d2bdb650a"
+        }
+      ]
+    },
+    {
+      "id": "claim_9ce3cca66f064b09b0aa109f6d229feb",
+      "statement": "smartMerge склеивает варианты слов от 6 символов по триграммному Жаккару не ниже 0.5",
+      "evidence": [
+        {
+          "resource": "repo://src/core/smart-merge.ts",
+          "version": "repo-file-v1:sha256:400b0ab6dada7df834a7588bbdd011f7f829b3007ed9ec5781efe27ebb48b0cf"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-09T15:02:00.342Z"
+  }
+}
