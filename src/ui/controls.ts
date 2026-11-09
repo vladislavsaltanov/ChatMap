@@ -1,10 +1,10 @@
 import { debounce } from '../core/debounce'
 import { escapeHtml } from '../core/escapeHtml'
-import type { ViewMode } from '../core/select'
+import type { ViewCfg, ViewMode } from '../core/select'
 import type { AuthorId, FilterCfg } from '../core/types'
 import { NODE_COLORS } from './neural'
 
-export type ControlsCallback = (cfg: FilterCfg & { mode: ViewMode }) => void
+export type ControlsCallback = (cfg: FilterCfg & ViewCfg) => void
 export type ColorChangeCallback = (colors: Map<AuthorId, string>) => void
 
 function hueToHex(hueDegrees: number): string {
@@ -66,6 +66,7 @@ export class Controls {
   private laughCheckbox: HTMLInputElement
   private techCheckbox: HTMLInputElement
   private digitsCheckbox: HTMLInputElement
+  private stopwordsCheckbox: HTMLInputElement
   private smartMergeCheckbox: HTMLInputElement
   private customMatText: HTMLTextAreaElement
   private customLaughText: HTMLTextAreaElement
@@ -105,12 +106,13 @@ export class Controls {
         </fieldset>
 
         <fieldset class="control-group">
-          <legend class="label">Фильтры</legend>
-          <label class="check-label"><input type="checkbox" id="filter-mat" /> Мат</label>
-          <label class="check-label"><input type="checkbox" id="filter-laugh" /> Смех</label>
-          <label class="check-label"><input type="checkbox" id="filter-tech" /> Ссылки и код</label>
-          <label class="check-label"><input type="checkbox" id="filter-digits" /> Числа</label>
-          <label class="check-label"><input type="checkbox" id="filter-smart-merge" /> Умные склейки</label>
+          <legend class="label">Показать на карте</legend>
+          <label class="check-label" title="Снято — мат не попадает в карту"><input type="checkbox" id="filter-mat" /> Мат</label>
+          <label class="check-label" title="Снято — смех (хаха, лол) не попадает в карту"><input type="checkbox" id="filter-laugh" /> Смех</label>
+          <label class="check-label" title="Снято — ссылки и код не попадают в карту"><input type="checkbox" id="filter-tech" /> Ссылки и код</label>
+          <label class="check-label" title="Снято — числа не попадают в карту"><input type="checkbox" id="filter-digits" /> Числа</label>
+          <label class="check-label" title="Снято — стоп-слова (и, в, не, …) не попадают в карту"><input type="checkbox" id="filter-stopwords" /> Стоп-слова</label>
+          <label class="check-label" title="Склеивает однокоренные формы в один узел"><input type="checkbox" id="filter-smart-merge" /> Умные склейки</label>
         </fieldset>
 
         <fieldset class="control-group">
@@ -122,7 +124,7 @@ export class Controls {
         </fieldset>
 
         <fieldset class="control-group">
-          <legend class="label">Слайдеры</legend>
+          <legend class="label">Отбор</legend>
           <label class="slider-label" for="slider-top-n">
             <span>Слов на карте: <span id="top-n-val" class="num">600</span></span>
             <input type="range" id="slider-top-n" min="100" max="1000" step="50" value="600" />
@@ -153,6 +155,7 @@ export class Controls {
     this.laughCheckbox = details.querySelector<HTMLInputElement>('#filter-laugh')!
     this.techCheckbox = details.querySelector<HTMLInputElement>('#filter-tech')!
     this.digitsCheckbox = details.querySelector<HTMLInputElement>('#filter-digits')!
+    this.stopwordsCheckbox = details.querySelector<HTMLInputElement>('#filter-stopwords')!
     this.smartMergeCheckbox = details.querySelector<HTMLInputElement>('#filter-smart-merge')!
     this.customMatText = details.querySelector<HTMLTextAreaElement>('#custom-mat')!
     this.customLaughText = details.querySelector<HTMLTextAreaElement>('#custom-laugh')!
@@ -172,6 +175,7 @@ export class Controls {
     this.laughCheckbox.addEventListener('change', onInputChange)
     this.techCheckbox.addEventListener('change', onInputChange)
     this.digitsCheckbox.addEventListener('change', onInputChange)
+    this.stopwordsCheckbox.addEventListener('change', onInputChange)
     this.smartMergeCheckbox.addEventListener('change', onInputChange)
     this.customMatText.addEventListener('input', onInputChange)
     this.customLaughText.addEventListener('input', onInputChange)
@@ -254,12 +258,13 @@ export class Controls {
     }
   }
 
-  getCfg(): FilterCfg & { mode: ViewMode } {
+  getCfg(): FilterCfg & ViewCfg {
     return {
       mat: this.matCheckbox.checked,
       laugh: this.laughCheckbox.checked,
       tech: this.techCheckbox.checked,
       digits: this.digitsCheckbox.checked,
+      stopwords: this.stopwordsCheckbox.checked,
       smartMerge: this.smartMergeCheckbox.checked,
       customMat: parseCustom(this.customMatText.value),
       customLaugh: parseCustom(this.customLaughText.value),

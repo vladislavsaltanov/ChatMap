@@ -38,7 +38,38 @@ const MAT_ROOTS = [
   'мудак', 'мудил', 'мудац', 'мудо', 'херн', 'херов', 'сучк', 'сучар', 'сукин',
   'хуй', 'хуе', 'хуи', 'хуя',
   'еба', 'ебем', 'ебет', 'ебеш', 'ебут', 'ебл', 'ебн', 'ебу', 'ебен',
+  'долбоеб', 'долбаеб', 'еблан', 'ебло', 'ебищ', 'ебок',
+  'пидор', 'пидар', 'пидорас', 'пидрил', 'гандон', 'залуп',
 ]
+
+// Common verb prefixes hiding the root: похуй, заебал, уебан, подъебнуть.
+// Longest match first; at most one prefix is stripped.
+const MAT_PREFIXES = [
+  'пере', 'пред',
+  'раз', 'рас', 'при', 'про', 'под', 'над', 'без', 'воз', 'вос',
+  'до', 'за', 'на', 'по', 'вы', 'об', 'от', 'из', 'ис',
+  'у', 'о', 'в', 'с',
+]
+
+// First-char index over a longest-first list: declaration order survives inside
+// each bucket, so longest-match-first semantics hold while the per-token scan
+// drops from the whole list to one bucket.
+function indexByFirst(list: string[]): Map<string, string[]> {
+  const map = new Map<string, string[]>()
+  for (const item of list) {
+    const first = item.at(0) ?? ''
+    let bucket = map.get(first)
+    if (!bucket) {
+      bucket = []
+      map.set(first, bucket)
+    }
+    bucket.push(item)
+  }
+  return map
+}
+
+const MAT_ROOTS_BY_FIRST = indexByFirst(MAT_ROOTS)
+const MAT_PREFIXES_BY_FIRST = indexByFirst(MAT_PREFIXES)
 
 const MAT_EXACT = new Set([
   'еб', 'ебись', 'ебитесь', 'сука', 'суки', 'суке', 'суку', 'сукой', 'бля', 'блять', 'блядь',
@@ -59,25 +90,65 @@ export function isStopword(word: string): boolean {
 function matchesRootRule(word: string, root: string): boolean {
   if (!word.startsWith(root)) return false
   const suffix = word.slice(root.length)
-  return suffix.length <= 4 && /^[а-яё]*$/u.test(suffix)
+  // Long productive endings (охуительный, ебанувшийся) still count; roots are
+  // specific enough that innocent words do not reach this branch (see tests).
+  return suffix.length <= 8 && /^[а-яё]*$/u.test(suffix)
+}
+
+// Strips one verb prefix (подъебнуть -> ебнуть); ъ/ь after it is dropped.
+// Returns the input unchanged when no prefix applies.
+function stripMatPrefix(clean: string): string {
+  const candidates = MAT_PREFIXES_BY_FIRST.get(clean.at(0) ?? '') ?? []
+  for (const prefix of candidates) {
+    if (clean.startsWith(prefix) && clean.length - prefix.length >= 2) {
+      return clean.slice(prefix.length).replace(/^[ъь]/u, '')
+    }
+  }
+  return clean
+}
+
+// Innocent words that start with a mat form: built-in rules skip the whole word.
+function isMatAllowlisted(s: string): boolean {
+  return MAT_ALLOWLIST.some((prefix) => s.startsWith(prefix))
+}
+
+// Root scan over the word's first-char bucket only: a root can match solely
+// words starting with the same char, so the result equals a full scan.
+function matchesIndexedRoots(word: string): boolean {
+  const candidates = MAT_ROOTS_BY_FIRST.get(word.at(0) ?? '') ?? []
+  for (const root of candidates) {
+    if (matchesRootRule(word, root)) return true
+  }
+  return false
+}
+
+// Built-in exact + root rules, with and without a verb prefix.
+function matchesMatBuiltin(clean: string): boolean {
+  const stripped = stripMatPrefix(clean)
+  if (isMatAllowlisted(clean) || (stripped !== clean && isMatAllowlisted(stripped))) return false
+  if (MAT_EXACT.has(clean)) return true
+  if (matchesIndexedRoots(clean)) return true
+  if (stripped !== clean) {
+    if (MAT_EXACT.has(stripped)) return true
+    if (matchesIndexedRoots(stripped)) return true
+  }
+  return false
 }
 
 export function matchesMat(word: string, customRoots: string[]): boolean {
   const clean = word.toLowerCase().replace(/ё/g, 'е')
-  const allowlisted = MAT_ALLOWLIST.some((prefix) => clean.startsWith(prefix))
-
-  if (!allowlisted) {
-    if (MAT_EXACT.has(clean)) {
-      return true
-    }
-
-    for (const root of MAT_ROOTS) {
-      if (matchesRootRule(clean, root)) {
-        return true
-      }
-    }
+  if (matchesMatBuiltin(clean) || matchesMatCustom(clean, customRoots)) return true
+  // Hyphenated compounds: ебать-копать. Each part follows the same rules;
+  // every part is allowlisted independently (бляха-муха stays clean).
+  if (/[-–—]/.test(clean)) {
+    return clean
+      .split(/[-–—]/u)
+      .some((part) => part.length >= 2 && (matchesMatBuiltin(part) || matchesMatCustom(part, customRoots)))
   }
+  return false
+}
 
+function matchesMatCustom(clean: string, customRoots: string[]): boolean {
   for (const item of customRoots) {
     const raw = item.trim().toLowerCase().replace(/ё/g, 'е')
     if (!raw) continue
