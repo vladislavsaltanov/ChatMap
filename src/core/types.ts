@@ -48,8 +48,11 @@ export type WorkerEdge = {
   tractRank: number
 }
 
+// 'open' carries the raw file bytes: the main thread transfers the buffer
+// (zero-copy), the worker decodes it. Never a string: that would duplicate
+// a 200 MB file in memory on postMessage structured-clone.
 export type WorkerIn =
-  | { type: 'open'; json: string }
+  | { type: 'open'; buf: ArrayBuffer }
   | { type: 'update'; cfg: FilterCfg & ViewCfg }
 
 export type WorkerOut =

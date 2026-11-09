@@ -62,6 +62,21 @@ describe('tally', () => {
     expect(res.pairs.size).toBe(19 + 18 + 17 + 16)
   })
 
+  it('(c0) adjacent links use only the first MAX_LINK_TOKENS of each unit', () => {
+    const head = new Uint32Array(Array.from({ length: 200 }, (_, i) => i + 1))
+    const tail = new Uint32Array(Array.from({ length: 300 }, (_, i) => i + 201))
+    const big = new Uint32Array([...head, ...tail])
+    const other = new Uint32Array(Array.from({ length: 500 }, (_, i) => i + 1001))
+    const u1: RawUnit = { id: 1, authorId: 10, dateMs: 1000, replyTo: null, tokens: big }
+    const u2: RawUnit = { id: 2, authorId: 10, dateMs: 61000, replyTo: null, tokens: other }
+    const res = tally([u1, u2])
+    // head token links at the adjacent weight
+    expect(res.pairs.get(edgeKey(1, 1001))?.nX.get(10)).toBe(0.7)
+    // tail tokens (past the cap) build no cross links
+    expect(res.pairs.has(edgeKey(201, 1201))).toBe(false)
+    expect(res.pairs.has(edgeKey(500, 1500))).toBe(false)
+  })
+
   it('(c) adjacent messages within 10min link at 0.7; beyond that no link', () => {
     // 60s gap -> adjacent link at 0.7
     const u1: RawUnit = { id: 1, authorId: 10, dateMs: 1000, replyTo: null, tokens: new Uint32Array([1, 2]) }

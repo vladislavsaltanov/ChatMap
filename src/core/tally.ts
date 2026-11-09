@@ -120,6 +120,16 @@ type Msg = {
   units: Uint32Array[]
 }
 
+// Cross-unit pair loops are O(Ta x Tb): one pasted article (3000 tokens) next to
+// another freezes the worker on a single adjacency. Only the head of each unit
+// builds cross links; inside-unit window pairs (already O(n)) are untouched.
+export const MAX_LINK_TOKENS = 200
+
+// Zero-copy view: subarray shares the buffer, so the common short case costs nothing.
+function capped(tokens: Uint32Array): Uint32Array {
+  return tokens.length > MAX_LINK_TOKENS ? tokens.subarray(0, MAX_LINK_TOKENS) : tokens
+}
+
 // Unknown dates (dateMs 0) count as close: never punish missing data.
 // Out-of-order timestamps (negative gap) count as far.
 function isCloseGap(prevMs: number, nextMs: number): boolean {
@@ -200,10 +210,11 @@ export function tally(units: RawUnit[]): TallyResult {
         }
       }
       for (let uj = ui + 1; uj < msg.units.length; uj++) {
-        const b = msg.units[uj]
-        for (let i = 0; i < a.length; i++) {
+        const b = capped(msg.units[uj])
+        const ca = capped(a)
+        for (let i = 0; i < ca.length; i++) {
           for (let j = 0; j < b.length; j++) {
-            relax(best, a[i], b[j], INTER_UNIT_WEIGHT)
+            relax(best, ca[i], b[j], INTER_UNIT_WEIGHT)
           }
         }
       }
@@ -229,8 +240,10 @@ export function tally(units: RawUnit[]): TallyResult {
     const prevA = intraMaxList[mi]
     const prevB = intraMaxList[mi + 1]
     const seen = new Set<number>()
-    for (const ua of a.units) {
-      for (const ub of b.units) {
+    for (const uaRaw of a.units) {
+      for (const ubRaw of b.units) {
+        const ua = capped(uaRaw)
+        const ub = capped(ubRaw)
         for (let i = 0; i < ua.length; i++) {
           for (let j = 0; j < ub.length; j++) {
             if (ua[i] === ub[j]) continue
@@ -253,10 +266,12 @@ export function tally(units: RawUnit[]): TallyResult {
       const isCross = unit.authorId !== targetUnit.authorId
       const seenReply = new Set<number>()
 
-      for (let i = 0; i < unit.tokens.length; i++) {
-        const u = unit.tokens[i]
-        for (let j = 0; j < targetUnit.tokens.length; j++) {
-          const v = targetUnit.tokens[j]
+      const cu = capped(unit.tokens)
+      const ct = capped(targetUnit.tokens)
+      for (let i = 0; i < cu.length; i++) {
+        const u = cu[i]
+        for (let j = 0; j < ct.length; j++) {
+          const v = ct[j]
           if (u === v) continue
           const key = edgeKey(u, v)
           if (!seenReply.has(key)) {

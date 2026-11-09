@@ -1,6 +1,6 @@
 import { escapeHtml } from '../core/escapeHtml'
 import type Graph from 'graphology'
-import { parseLabelOverrides } from '../core/labelOverrides'
+import { isOverridableKey, parseLabelOverrides } from '../core/labelOverrides'
 
 const STORAGE_KEY = 'chatmap.labels'
 
@@ -13,6 +13,7 @@ export function getLabelOverrides(): Record<string, string> {
 }
 
 export function saveLabelOverride(canon: string, label: string): void {
+  if (!isOverridableKey(canon)) return
   try {
     const overrides = getLabelOverrides()
     overrides[canon] = label
