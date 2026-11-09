@@ -332,8 +332,6 @@ function focusedLabelColor(attrs: any, g: CustomGraphState): string {
   return hexToRgba(LABEL_LIGHT, labelTextAlpha(attrs, g) * (1 - 0.55 * (g.dimAlpha ?? 0)))
 }
 
-const NODE_VARS = (extra: Record<string, unknown> = {}) => extra as Record<string, unknown>
-
 export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
   nodes: [
     {
@@ -356,7 +354,7 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
       labelVisibility: (attrs: any, _s: any, g: CustomGraphState) => baseLabelVisibility(attrs, g),
       labelBackgroundColor: labelBackgroundColorFor,
       labelBackgroundPadding: 3,
-      ...NODE_VARS({
+      ...({
         core: (attrs: any) => coreFrac(drawnCore(attrs)),
         glow: 1,
         phase: { attribute: 'phase', defaultValue: 0 },
@@ -365,7 +363,7 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
         arm2: { attribute: 'arm2', defaultValue: -1 },
         arm3: { attribute: 'arm3', defaultValue: -1 },
         arm4: { attribute: 'arm4', defaultValue: -1 },
-      }),
+      } as Record<string, unknown>),
     },
     {
       when: (_a, s) =>
@@ -397,9 +395,9 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
           egoLabelVisibility(attrs, g, baseLabelVisibility(attrs, g)),
         labelColor: () => hexToRgba(LABEL_LIGHT, 1),
         labelFont: labelFontFocus,
-        ...NODE_VARS({
+        ...({
           glow: (_a: any, _s: any, g: CustomGraphState) => 1 + 0.6 * (g.focusAlpha ?? 0),
-        }),
+        } as Record<string, unknown>),
       },
     },
     {
@@ -422,9 +420,9 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
         size: (attrs: any) => quadOf(drawnCore(attrs)) * 1.12,
         labelColor: () => hexToRgba(LABEL_LIGHT, 1),
         labelFont: labelFontFocus,
-        ...NODE_VARS({
+        ...({
           glow: (_a: any, _s: any, g: CustomGraphState) => 1 + 1.2 * (g.focusAlpha ?? 0),
-        }),
+        } as Record<string, unknown>),
       },
     },
     {

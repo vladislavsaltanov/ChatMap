@@ -26,7 +26,6 @@ export class MapView {
   private renderer: Sigma<any, any, any, CustomNodeState, CustomEdgeState, CustomGraphState> | null = null
   private pinnedId: number | null = null
   private highlight: SubgraphHighlight
-  private pinCallbacks: Array<(id: number | null) => void> = []
   private authorColors = new Map<AuthorId, string>()
   private nodePanel: NodePanel
   private lastMsg: MapMsg | null = null
@@ -659,14 +658,7 @@ export class MapView {
     }
 
     this.renderer.refresh({ skipIndexation: true })
-    for (const cb of this.pinCallbacks) {
-      cb(this.pinnedId)
-    }
     this.scheduleLayout()
-  }
-
-  onPin(cb: (id: number | null) => void): void {
-    this.pinCallbacks.push(cb)
   }
 
   // Photo of the selected node: a snapshot of the CURRENT camera view, with
@@ -748,10 +740,6 @@ export class MapView {
     } else {
       this.hoverLine.textContent = 'слово · 0'
     }
-  }
-
-  getRenderer(): Sigma<any, any, any, any, any, any> | null {
-    return this.renderer
   }
 }
 

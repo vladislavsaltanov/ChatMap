@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  armsFor,
+  armsFromIndex,
+  buildArmsIndex,
   bundleEdges,
   coreFrac,
   edgeAlpha,
@@ -339,7 +340,7 @@ describe('geometry', () => {
     }
   })
 
-  it('armsFor: angles to heaviest neighbors by weight, -1 for missing slots', () => {
+  it('armsFromIndex: angles to heaviest neighbors by weight, -1 for missing slots', () => {
     const nodes = [
       { id: 1, x: 0, y: 0 },
       { id: 2, x: 10, y: 0 },
@@ -351,14 +352,15 @@ describe('geometry', () => {
       { a: 1, b: 4, weight: 5 },
       { a: 1, b: 3, weight: 1 },
     ]
-    const arms = armsFor(nodes, edges, 1)
+    const index = buildArmsIndex(nodes, edges)
+    const arms = armsFromIndex(index, 1)
     expect(arms).toHaveLength(5)
     expect(arms[0]).toBeCloseTo(0)
     expect(arms[1]).toBeCloseTo(0.5)
     expect(arms[2]).toBeCloseTo(0.25)
     expect(arms[3]).toBe(-1)
     expect(arms[4]).toBe(-1)
-    expect(armsFor(nodes, edges, 99)).toEqual([-1, -1, -1, -1, -1])
+    expect(armsFromIndex(index, 99)).toEqual([-1, -1, -1, -1, -1])
   })
 
   it('phaseFor: deterministic and in [0, 1)', () => {
