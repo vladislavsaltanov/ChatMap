@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { Intern } from '../src/core/intern'
+import { Intern, MAX_TOKEN_ID } from '../src/core/intern'
 import { buildUnits, dropFor, edgeKey, filterCacheKey, mergeCacheKey, parseEdgeKey, PipelineCache, tally, type PairStat, type RawUnit } from '../src/core/tally'
 import { tokenize } from '../src/core/tokenize'
 import type { ChatExport, FilterCfg, Message } from '../src/core/types'
@@ -20,6 +20,11 @@ describe('tally', () => {
     expect(typeof edgeKey(2, 5)).toBe('number')
     expect(parseEdgeKey(edgeKey(5, 2))).toEqual([2, 5])
     expect(parseEdgeKey(edgeKey(1, 3006))).toEqual([1, 3006])
+  })
+
+  it('throws before pair keys can collide', () => {
+    expect(() => edgeKey(1, MAX_TOKEN_ID + 1)).toThrow(RangeError)
+    expect(parseEdgeKey(edgeKey(MAX_TOKEN_ID - 1, MAX_TOKEN_ID))).toEqual([MAX_TOKEN_ID - 1, MAX_TOKEN_ID])
   })
 
   it('(a) 5 tokens in one unit: all 10 pairs, weight 1/d for distance d <= W=4', () => {

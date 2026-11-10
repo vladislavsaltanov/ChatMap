@@ -1,5 +1,5 @@
 import { isStopword, matchesLaugh, matchesMat } from './filters'
-import { Intern } from './intern'
+import { Intern, MAX_TOKEN_ID } from './intern'
 import { smartMerge } from './smart-merge'
 import { tokenize } from './tokenize'
 import type { AuthorId, ChatExport, FilterCfg, Message, Tok, TokUnit } from './types'
@@ -32,12 +32,15 @@ export type TallyResult = {
   counts: Map<number, Map<AuthorId, number>>
 }
 
-// Numeric pair key min * 2^24 + max: exact while token ids stay below 2^24
-// (chat vocabularies are orders of magnitude smaller). Numeric keys skip the
-// per-pair template string plus split/Number parses on every lookup.
-const KEY_BASE = 2 ** 24
+// Numeric pair key min * KEY_BASE + max: exact while token ids stay in
+// [1, MAX_TOKEN_ID] (chat vocabularies are orders of magnitude smaller).
+// Numeric keys skip the per-pair template string plus split/Number parses.
+const KEY_BASE = MAX_TOKEN_ID + 1
 
 export function edgeKey(a: number, b: number): number {
+  if (!Number.isInteger(a) || !Number.isInteger(b) || a < 1 || b < 1 || a > MAX_TOKEN_ID || b > MAX_TOKEN_ID) {
+    throw new RangeError('token id out of range')
+  }
   return a < b ? a * KEY_BASE + b : b * KEY_BASE + a
 }
 
