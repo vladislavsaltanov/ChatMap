@@ -1,12 +1,14 @@
 import { armsFromIndex, buildArmsIndex, bundleEdges, edgeAlpha, nodeFitSize, phaseFor } from './geometry'
-import { getLruCache, layout, setLruCache } from './graph'
+import { getLruCache, layout, setLruCache, type LayoutNodeInput, type LayoutResult } from './graph'
+import type { Intern } from './intern'
 import { parse } from './parse'
-import { pruneSortedBackbone, select, type ViewCfg } from './select'
-import { PipelineCache } from './tally'
+import { pruneSortedBackbone, select, type Selection, type SelectionEdge, type ViewCfg } from './select'
+import { PipelineCache, type PipelineCallbacks, type TallyResult } from './tally'
 import type {
   AuthorId,
   ChatExport,
   FilterCfg,
+  MapMsg,
   WorkerIn,
   WorkerNode,
   WorkerOut,
@@ -43,46 +45,18 @@ function resetWorkerState(): void {
   positionsCache.clear()
 }
 
-function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
-  if (!chat) return
+type NodeInfo = { bestForm: string; forms: Array<[string, number]>; size: number }
+type PipelineData = { ia: Intern; tallyResult: TallyResult; merged?: Map<number, number> }
 
-  const cfg = currentFilterCfg
-  // cache hits skip the stages they reuse, so their ticks never show
-  const { ia, tallyResult, merged } = pipelineCache.resolve(chat, cfg, {
-    onTokenizeStart: () => send({ type: 'progress', done: 35, total: 100, stage: 'Токенизация и фильтрация...' }),
-    onTokenizeProgress: (doneMsgs, totalMsgs) =>
-      send({
-        type: 'progress',
-        done: 35 + Math.round((doneMsgs / totalMsgs) * 20),
-        total: 100,
-        stage: `Токенизация: ${doneMsgs} / ${totalMsgs} сообщ.`,
-      }),
-    onTallyStart: () => send({ type: 'progress', done: 60, total: 100, stage: 'Подсчёт частот и связей...' }),
-    onMergeStart: () => send({ type: 'progress', done: 70, total: 100, stage: 'Умные склейки слов...' }),
-  })
+function resolveData(chat: ChatExport, cfg: FilterCfg, callbacks: PipelineCallbacks): PipelineData {
+  return pipelineCache.resolve(chat, cfg, callbacks)
+}
 
-  // 'ready' needs the tallied counts, so it goes out here (full run only) and before any 'map'
-  if (fullRun && authorNames) {
-    const wordCounts = new Map<AuthorId, number>()
-    for (const tokenAuthors of tallyResult.counts.values()) {
-      for (const [authorId, cnt] of tokenAuthors) {
-        wordCounts.set(authorId, (wordCounts.get(authorId) || 0) + cnt)
-      }
-    }
-    send({
-      type: 'ready',
-      authors: Array.from(authorNames.entries()).map(([id, name]) => ({
-        id,
-        name,
-        wordCount: wordCounts.get(id) || 0,
-      })),
-      counts: { messages: chat.messages.length },
-    })
-  }
-
-  send({ type: 'progress', done: 75, total: 100, stage: 'Выборка узлов и рёбер...' })
-  const selection = select(tallyResult, currentViewCfg, merged)
-
+function buildLayoutInput(
+  selection: Selection,
+  ia: Intern,
+  positionsCache: Map<string, { x: number; y: number }>,
+): { layoutNodes: LayoutNodeInput[]; backboneEdges: SelectionEdge[]; nodeInfoMap: Map<number, NodeInfo> } {
   let minCount = Infinity
   for (const n of selection.nodes) {
     if (n.count < minCount) minCount = n.count
@@ -90,7 +64,7 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
   if (minCount === Infinity) minCount = 1
 
   // Pre-calculate best word form and cell sizes so layout spaces them properly
-  const nodeInfoMap = new Map<number, { bestForm: string; forms: Array<[string, number]>; size: number }>()
+  const nodeInfoMap = new Map<number, NodeInfo>()
   for (const n of selection.nodes) {
     const formMap = ia.forms.get(n.id)
     let bestForm = ia.getCanon(n.id) || String(n.id)
@@ -111,7 +85,6 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
     nodeInfoMap.set(n.id, { bestForm, forms: formsList, size })
   }
 
-  send({ type: 'progress', done: 85, total: 100, stage: 'Укладка графа (ForceAtlas2)...' })
   const layoutNodes = selection.nodes.map((n) => {
     const canonStr = ia.getCanon(n.id) || String(n.id)
     const info = nodeInfoMap.get(n.id)
@@ -126,18 +99,17 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
   // Selection edges arrive sorted weight-desc, so the backbone skips its own resort.
   const backboneEdges = pruneSortedBackbone(selection.edges, selection.nodes.length)
 
-  const layoutResult = layout(layoutNodes, backboneEdges, {
-    seed: 1337,
-    fullRun,
-    onStage: (done, stage) => send({ type: 'progress', done, total: 100, stage }),
-  })
+  return { layoutNodes, backboneEdges, nodeInfoMap }
+}
 
-  for (const [id, pos] of layoutResult.positions) {
-    const canonStr = ia.getCanon(id) || String(id)
-    setLruCache(positionsCache, canonStr, pos, MAX_POS_CACHE)
-  }
-
-  send({ type: 'progress', done: 95, total: 100, stage: 'Формирование карты...' })
+function buildMapMessage(
+  selection: Selection,
+  layoutResult: LayoutResult,
+  ia: Intern,
+  tallyResult: TallyResult,
+  backboneEdges: SelectionEdge[],
+  nodeInfoMap: Map<number, NodeInfo>,
+): MapMsg {
   const nodes: WorkerNode[] = []
   const forms = new Map<number, Array<[string, number]>>()
   const posList = selection.nodes.map((n) => {
@@ -185,7 +157,7 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
     })
   }
 
-  send({
+  return {
     type: 'map',
     nodes,
     edges: backboneEdges.map((e, i) => ({
@@ -200,7 +172,65 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
     maxCount: selection.maxCount,
     maxWeight: selection.maxWeight,
     forms,
+  }
+}
+
+function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
+  if (!chat) return
+
+  const cfg = currentFilterCfg
+  // cache hits skip the stages they reuse, so their ticks never show
+  const { ia, tallyResult, merged } = resolveData(chat, cfg, {
+    onTokenizeStart: () => send({ type: 'progress', done: 35, total: 100, stage: 'Токенизация и фильтрация...' }),
+    onTokenizeProgress: (doneMsgs, totalMsgs) =>
+      send({
+        type: 'progress',
+        done: 35 + Math.round((doneMsgs / totalMsgs) * 20),
+        total: 100,
+        stage: `Токенизация: ${doneMsgs} / ${totalMsgs} сообщ.`,
+      }),
+    onTallyStart: () => send({ type: 'progress', done: 60, total: 100, stage: 'Подсчёт частот и связей...' }),
+    onMergeStart: () => send({ type: 'progress', done: 70, total: 100, stage: 'Умные склейки слов...' }),
   })
+
+  // 'ready' needs the tallied counts, so it goes out here (full run only) and before any 'map'
+  if (fullRun && authorNames) {
+    const wordCounts = new Map<AuthorId, number>()
+    for (const tokenAuthors of tallyResult.counts.values()) {
+      for (const [authorId, cnt] of tokenAuthors) {
+        wordCounts.set(authorId, (wordCounts.get(authorId) || 0) + cnt)
+      }
+    }
+    send({
+      type: 'ready',
+      authors: Array.from(authorNames.entries()).map(([id, name]) => ({
+        id,
+        name,
+        wordCount: wordCounts.get(id) || 0,
+      })),
+      counts: { messages: chat.messages.length },
+    })
+  }
+
+  send({ type: 'progress', done: 75, total: 100, stage: 'Выборка узлов и рёбер...' })
+  const selection = select(tallyResult, currentViewCfg, merged)
+
+  const { layoutNodes, backboneEdges, nodeInfoMap } = buildLayoutInput(selection, ia, positionsCache)
+
+  send({ type: 'progress', done: 85, total: 100, stage: 'Укладка графа (ForceAtlas2)...' })
+  const layoutResult = layout(layoutNodes, backboneEdges, {
+    seed: 1337,
+    fullRun,
+    onStage: (done, stage) => send({ type: 'progress', done, total: 100, stage }),
+  })
+
+  for (const [id, pos] of layoutResult.positions) {
+    const canonStr = ia.getCanon(id) || String(id)
+    setLruCache(positionsCache, canonStr, pos, MAX_POS_CACHE)
+  }
+
+  send({ type: 'progress', done: 95, total: 100, stage: 'Формирование карты...' })
+  send(buildMapMessage(selection, layoutResult, ia, tallyResult, backboneEdges, nodeInfoMap))
 }
 
 self.onmessage = (e: MessageEvent<WorkerIn>) => {
