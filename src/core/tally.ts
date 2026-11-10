@@ -233,6 +233,10 @@ export function tally(units: RawUnit[]): TallyResult {
   // for different authors (that is what the cross-author view shows), into nX for
   // the same author. Pairs already linked inside either message are skipped
   // (max, not sum). A large gap contributes nothing.
+  // One stamp map serves all message pairs: a key is window-new only when its
+  // stamp differs from the current pair stamp (avoids a Set alloc per pair).
+  const seenStamp = new Map<number, number>()
+  let stamp = 0
   for (let mi = 0; mi + 1 < messages.length; mi++) {
     const a = messages[mi]
     const b = messages[mi + 1]
@@ -242,7 +246,7 @@ export function tally(units: RawUnit[]): TallyResult {
     // key sets: probe the intra maps directly, track only window-new pairs.
     const prevA = intraMaxList[mi]
     const prevB = intraMaxList[mi + 1]
-    const seen = new Set<number>()
+    stamp += 1
     for (const uaRaw of a.units) {
       for (const ubRaw of b.units) {
         const ua = capped(uaRaw)
@@ -251,8 +255,8 @@ export function tally(units: RawUnit[]): TallyResult {
           for (let j = 0; j < ub.length; j++) {
             if (ua[i] === ub[j]) continue
             const key = edgeKey(ua[i], ub[j])
-            if (seen.has(key) || prevA.has(key) || prevB.has(key)) continue
-            seen.add(key)
+            if (seenStamp.get(key) === stamp || prevA.has(key) || prevB.has(key)) continue
+            seenStamp.set(key, stamp)
             addPair(ua[i], ub[j], b.authorId, isCross, ADJACENT_CLOSE_WEIGHT)
           }
         }
@@ -260,6 +264,10 @@ export function tally(units: RawUnit[]): TallyResult {
     }
   }
 
+  // One stamp map serves all reply targets: a key is new only when its stamp
+  // differs from the current target stamp (avoids a Set alloc per target).
+  const seenReplyStamp = new Map<number, number>()
+  let replyStamp = 0
   for (const unit of units) {
     if (unit.replyTo == null) continue
     const targetUnits = unitsByMsgId.get(unit.replyTo)
@@ -267,7 +275,7 @@ export function tally(units: RawUnit[]): TallyResult {
 
     for (const targetUnit of targetUnits) {
       const isCross = unit.authorId !== targetUnit.authorId
-      const seenReply = new Set<number>()
+      replyStamp += 1
 
       const cu = capped(unit.tokens)
       const ct = capped(targetUnit.tokens)
@@ -277,8 +285,8 @@ export function tally(units: RawUnit[]): TallyResult {
           const v = ct[j]
           if (u === v) continue
           const key = edgeKey(u, v)
-          if (!seenReply.has(key)) {
-            seenReply.add(key)
+          if (seenReplyStamp.get(key) !== replyStamp) {
+            seenReplyStamp.set(key, replyStamp)
             addPair(u, v, unit.authorId, isCross, REPLY_WEIGHT)
           }
         }
