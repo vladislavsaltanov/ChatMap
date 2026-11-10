@@ -1,4 +1,4 @@
-import { isStopword, matchesLaugh, matchesMat } from './filters'
+import { compileWordRules, isStopword } from './filters'
 import { Intern, MAX_TOKEN_ID } from './intern'
 import { smartMerge } from './smart-merge'
 import { tokenize } from './tokenize'
@@ -299,13 +299,14 @@ export function tally(units: RawUnit[]): TallyResult {
 
 // Show-flags: a checked category stays on the map, an unchecked one is dropped
 // before tally. Custom lists extend their category (no-op when shown: nothing drops).
+// Category rules compile once here, not per token; cls and stopword flags stay cheap.
 export function dropFor(cfg: FilterCfg): (t: Tok) => boolean {
+  const dropWord = compileWordRules(cfg)
   return (tok) =>
     (!cfg.tech && tok.cls === 'tech') ||
     (!cfg.digits && tok.cls === 'digits') ||
     (!cfg.stopwords && isStopword(tok.word)) ||
-    (!cfg.mat && matchesMat(tok.word, cfg.customMat)) ||
-    (!cfg.laugh && matchesLaugh(tok.word, cfg.customLaugh))
+    dropWord(tok.word)
 }
 
 // topN and minWeight are not in the key: they only change selection, not the tally
