@@ -91,6 +91,24 @@ export class MapView {
     })
   }
 
+  // New map must not inherit hover/pin visuals: drop highlight states,
+  // snap tweens to zero, and clear the active-subgraph graph state.
+  private resetInteractionState(): void {
+    this.highlight.clear(this.renderer)
+    this.animator.jump('dim', 0)
+    this.animator.jump('focus', 0)
+    this.animator.jump('release', 0)
+    this.pinnedId = null
+    this.subgraphKey = null
+    this.renderer?.setGraphState({
+      hasActiveSubgraph: false,
+      dimAlpha: 0,
+      focusAlpha: 0,
+      releaseAlpha: 0,
+      pinActive: false,
+    })
+  }
+
   // Focus ego-subgraph: snaps instantly (1 frame) when moving between nodes, avoids animation queue latency
   private focusSubgraph(key: string, topN: number): void {
     this.cancelIdleTimer()
@@ -511,12 +529,11 @@ export class MapView {
   }
 
   render(msg: MapMsg): void {
+    this.resetInteractionState()
     this.cancelIdleTimer()
     this.lastMsg = msg
     this.graph.clear()
     this.transitHidden = new Set<string>()
-    this.highlight.reset()
-    this.subgraphKey = null
 
     const overrides = getLabelOverrides()
 
@@ -603,11 +620,9 @@ export class MapView {
       this.renderer.refresh()
     }
 
-    if (this.pinnedId !== null) {
-      this.pin(this.pinnedId)
-    } else {
-      this.renderer?.getCamera().reset()
-    }
+    // resetInteractionState() nulls pinnedId at the top of render, and only
+    // click handlers re-pin, so there is nothing to restore here.
+    this.renderer?.getCamera().reset()
     this.applyView(this.renderer?.getCamera().getState() ?? FLAT_VIEW)
     // Fonts are loaded by the time a map arrives; repaint with the real face.
     this.paintLegend()
