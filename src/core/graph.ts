@@ -635,7 +635,7 @@ export function layout(
     opts.onStage?.(92, 'Разведение пересечений...')
     // Large maps cost O(N^2) per pass: above 400 nodes reuse the helper's own
     // small budget (x2 for the final frame) instead of the 140/180 floor meant
-    // for small maps. Test graphs stay under 271 nodes, so this branch is prod-only.
+    // for small maps. The 600-node test covers the large-map branch.
     let fullPasses = Math.max(collisionIterationsForCount(positionedNodes.length), positionedNodes.length > 300 ? 180 : 140)
     if (positionedNodes.length > 400) {
       fullPasses = collisionIterationsForCount(positionedNodes.length) * 2
