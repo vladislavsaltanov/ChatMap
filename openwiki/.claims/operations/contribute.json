@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:5865b6add45719a6cfca38fec04d8ae947a5fce5600f755ca4c483cbe11116a6",
+  "claims": [
+    {
+      "id": "claim_0e1d7320f62a42c6b267011332950825",
+      "statement": "Preflight перед следующим шагом — npm run typecheck && npm run test && npm run build; красный гейт чинится или логируется, а не игнорируется",
+      "evidence": [
+        {
+          "resource": "repo://CONVENTIONS.md",
+          "version": "repo-file-v1:sha256:8ba4eb7ada4cf2f61642d03fc51351aad5fffcac19da59884413c6980ab56d59"
+        },
+        {
+          "resource": "repo://package.json",
+          "version": "repo-file-v1:sha256:9349e9d505625f19793b05c5426557a1f15728319cd976cacf46fa30e6fc0ea9"
+        }
+      ]
+    },
+    {
+      "id": "claim_9256ad8c613f4a2285e97b5cbac3d2be",
+      "statement": "Тесты пишутся только на чистую логику src/core через vitest на синтетической фикстуре; реальный экспорт чата не коммитится",
+      "evidence": [
+        {
+          "resource": "repo://tests/fixtures/sample-export.json",
+          "version": "repo-file-v1:sha256:b20ac31d05e20fd9f52719d135e95bea2baf3a3aa742de844f7403196d9715e7"
+        },
+        {
+          "resource": "repo://vitest.config.ts",
+          "version": "repo-file-v1:sha256:fca624d4f17585e218d85e46cd4cf7d15c9ca900d68cc1882ee108cb19f99dab"
+        }
+      ]
+    },
+    {
+      "id": "claim_bb27f4d11e204e8e8c43ac7070cb2547",
+      "statement": "Баг по пути чинится отдельным коммитом по лестнице quick-fix → fix-bug/investigate-bug → запись в specs/bugs/registry.yaml",
+      "evidence": [
+        {
+          "resource": "repo://CONVENTIONS.md",
+          "version": "repo-file-v1:sha256:8ba4eb7ada4cf2f61642d03fc51351aad5fffcac19da59884413c6980ab56d59"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-09T15:02:00.342Z"
+  }
+}

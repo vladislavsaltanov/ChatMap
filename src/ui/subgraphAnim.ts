@@ -4,12 +4,12 @@
 // порцией за кадр — два одновременных твина иначе дёргали refresh дважды за
 // кадр (пропуски кадров). release — затухание размеров «уходящих» узлов при
 // смене цели подсветки: без него старый узел снапается в базовый размер.
-export type TweenField = 'dim' | 'focus' | 'release'
+export type TweenField = 'dim' | 'focus' | 'release' | 'enter'
 
 type Tween = { from: number; to: number; t0: number; dur: number; onDone?: () => void }
 
 export class SubgraphAnimator {
-  private vals: Record<TweenField, number> = { dim: 0, focus: 0, release: 0 }
+  private vals: Record<TweenField, number> = { dim: 0, focus: 0, release: 0, enter: 1 }
   private tweens: Partial<Record<TweenField, Tween>> = {}
   private raf: number | null = null
 

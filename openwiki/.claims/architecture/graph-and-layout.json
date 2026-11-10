@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:84ef8d249afbc20b943ae4a341fd1a202cb2d713e537f81acb8ff1e141b1090b",
+  "claims": [
+    {
+      "id": "claim_68438a3089a943eead247df8dc50d673",
+      "statement": "select() отбирает до topN узлов по частоте и до 10000 рёбер с весом не ниже minWeight; режимы together/author/cross определяют способ подсчёта веса",
+      "evidence": [
+        {
+          "resource": "repo://src/core/select.ts",
+          "version": "repo-file-v1:sha256:e3009030bf438bd1fa5f9830d460904def38b7edc1c06afd8827425b59716c8b"
+        },
+        {
+          "resource": "repo://tests/select.test.ts",
+          "version": "repo-file-v1:sha256:0f9c6e100ff3aa9cdfe38f59f7c20fd3bf05f5b4f4e54d22ffffaaea5705341f"
+        }
+      ]
+    },
+    {
+      "id": "claim_ae01ff7eac8d4639b5dd5522539c6a00",
+      "statement": "pruneSortedBackbone сохраняет каждому узлу 2 сильнейших ребра и добирает значимые по Серрано рёбра в бюджет max(300, nodes*3.5)",
+      "evidence": [
+        {
+          "resource": "repo://src/core/select.ts",
+          "version": "repo-file-v1:sha256:e3009030bf438bd1fa5f9830d460904def38b7edc1c06afd8827425b59716c8b"
+        }
+      ]
+    },
+    {
+      "id": "claim_0a40beb101de46ce909c076be7897623",
+      "statement": "Раскладка графа запускается из воркера с фиксированным seed 1337,repeat runs детерминированы, а positionsCache (LRU, 2000 записей, ключ — каноническая форма) сохраняет стабильность карты при смене фильтров",
+      "evidence": [
+        {
+          "resource": "repo://src/core/graph.ts",
+          "version": "repo-file-v1:sha256:80dd222dbf042b3e357f97deccf447e0bb9300345df49bc764a7d3ec50bd4214"
+        },
+        {
+          "resource": "repo://src/core/worker.ts",
+          "version": "repo-file-v1:sha256:b7c3df84a6df9604f5be92039729666b18287aa76a27b1a709575f191f806419"
+        }
+      ]
+    },
+    {
+      "id": "claim_1197a719d0da42d79c643fc6459aad94",
+      "statement": "nodeFitSize резервирует место под узел по логарифмической частоте, а visualCoreRadius сжимает отрисовываемый радиус для зазоров в плотных кластерах",
+      "evidence": [
+        {
+          "resource": "repo://src/core/geometry.ts",
+          "version": "repo-file-v1:sha256:a54ad975c999414e49a16b642d9368db0a86fc510d914349885eb352b9db43ba"
+        }
+      ]
+    },
+    {
+      "id": "claim_ed9eb6105aed4c7fa4d80859c7268b19",
+      "statement": "Воркер передаёт в UI готовые WorkerNode (label, canon, x/y, size, count, authorLead, phase, arm0..arm4) и WorkerEdge плюс карту форм словоформ для панели узла",
+      "evidence": [
+        {
+          "resource": "repo://src/core/types.ts",
+          "version": "repo-file-v1:sha256:ed68ecf93dec7150cabe5632ec15f929b25955529b40431b171c14e836fc90c9"
+        },
+        {
+          "resource": "repo://src/core/worker.ts",
+          "version": "repo-file-v1:sha256:b7c3df84a6df9604f5be92039729666b18287aa76a27b1a709575f191f806419"
+        }
+      ]
+    },
+    {
+      "id": "claim_ae3b178127c14ecea3ac41fb523fde8d",
+      "statement": "MapView строит graphology-граф и рисует его через Sigma v4 на canvas; LOD, fisheye и стили вычисляются от состояния камеры",
+      "evidence": [
+        {
+          "resource": "repo://src/ui/mapStyles.ts",
+          "version": "repo-file-v1:sha256:1422262e296ec17d70c5adbaf45e01b8bdd331fccf367dd2c1b6d867d55db4c5"
+        },
+        {
+          "resource": "repo://src/ui/mapview.ts",
+          "version": "repo-file-v1:sha256:eec3a39f8ab3746824bd32aa5e68810c0b51047740442e0f81c9cfb7334e2838"
+        }
+      ]
+    },
+    {
+      "id": "claim_a948a33487914f12bf0b91a3cec461fe",
+      "statement": "Подписи проходят резолвер коллизий: при пересечении остаётся подпись более приоритетного узла, перекрытая чужим маркером подпись получает подложку",
+      "evidence": [
+        {
+          "resource": "repo://src/core/labels.ts",
+          "version": "repo-file-v1:sha256:a885e7462678193ca54fc5c41516e1b9b8063c06ee77624dfebe5b063d81c3bf"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-09T15:02:00.342Z"
+  }
+}

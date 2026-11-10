@@ -5,8 +5,12 @@ import { tokenize } from './tokenize'
 import type { AuthorId, ChatExport, FilterCfg, Message, Tok, TokUnit } from './types'
 
 const WINDOW_SIZE = 4 // 1/d decay within a sentence unit
-const INTER_UNIT_WEIGHT = 0.3 // weaker link across units in one burst series
-const REPLY_WEIGHT = 0.5 // reply context link weight
+const INTER_UNIT_WEIGHT = 0.3 // weaker link across units of one message
+// Three link levels: an explicit reply always links; neighbouring messages link
+// only on a small time gap; a large gap means no link at all.
+export const REPLY_WEIGHT = 1.0 // level 1: direct reply, time gap ignored
+export const ADJACENT_CLOSE_WEIGHT = 0.7 // level 2: neighbours, small gap
+export const ADJACENT_CLOSE_MS = 10 * 60_000 // level 2/3 boundary
 const PROGRESS_EVERY = 5000 // messages between onProgress calls
 
 export type RawUnit = {
@@ -24,17 +28,21 @@ export type PairStat = {
 }
 
 export type TallyResult = {
-  pairs: Map<string, PairStat>
+  pairs: Map<number, PairStat>
   counts: Map<number, Map<AuthorId, number>>
 }
 
-export function edgeKey(a: number, b: number): string {
-  return a < b ? `${a}:${b}` : `${b}:${a}`
+// Numeric pair key min * 2^24 + max: exact while token ids stay below 2^24
+// (chat vocabularies are orders of magnitude smaller). Numeric keys skip the
+// per-pair template string plus split/Number parses on every lookup.
+const KEY_BASE = 2 ** 24
+
+export function edgeKey(a: number, b: number): number {
+  return a < b ? a * KEY_BASE + b : b * KEY_BASE + a
 }
 
-export function parseEdgeKey(key: string): [number, number] {
-  const [a, b] = key.split(':')
-  return [Number(a), Number(b)]
+export function parseEdgeKey(key: number): [number, number] {
+  return [Math.floor(key / KEY_BASE), key % KEY_BASE]
 }
 
 type Progress = (doneMsgs: number, totalMsgs: number) => void
@@ -99,22 +107,39 @@ function tokenizeChat(chat: ChatExport, onProgress?: Progress): TokUnit[][] {
   return out
 }
 
-// keeps the max candidate weight per pair key within one series
-function relax(best: Map<string, number>, u: number, v: number, w: number) {
+// keeps the max candidate weight per pair key within one message
+function relax(best: Map<number, number>, u: number, v: number, w: number) {
   if (u === v) return
   const key = edgeKey(u, v)
   if ((best.get(key) ?? 0) < w) best.set(key, w)
 }
 
-type Series = {
+type Msg = {
   authorId: AuthorId
   dateMs: number
   units: Uint32Array[]
-  tokenCount: number
+}
+
+// Cross-unit pair loops are O(Ta x Tb): one pasted article (3000 tokens) next to
+// another freezes the worker on a single adjacency. Only the head of each unit
+// builds cross links; inside-unit window pairs (already O(n)) are untouched.
+export const MAX_LINK_TOKENS = 200
+
+// Zero-copy view: subarray shares the buffer, so the common short case costs nothing.
+function capped(tokens: Uint32Array): Uint32Array {
+  return tokens.length > MAX_LINK_TOKENS ? tokens.subarray(0, MAX_LINK_TOKENS) : tokens
+}
+
+// Unknown dates (dateMs 0) count as close: never punish missing data.
+// Out-of-order timestamps (negative gap) count as far.
+function isCloseGap(prevMs: number, nextMs: number): boolean {
+  if (prevMs <= 0 || nextMs <= 0) return true
+  const gap = nextMs - prevMs
+  return gap >= 0 && gap <= ADJACENT_CLOSE_MS
 }
 
 export function tally(units: RawUnit[]): TallyResult {
-  const pairs = new Map<string, PairStat>()
+  const pairs = new Map<number, PairStat>()
   const counts = new Map<number, Map<AuthorId, number>>()
   const unitsByMsgId = new Map<number, RawUnit[]>()
 
@@ -133,8 +158,10 @@ export function tally(units: RawUnit[]): TallyResult {
     }
   }
 
-  const seriesList: Series[] = []
-  let currentSeries: Series | null = null
+  // Group units into messages in export order. Units without an id (tests only;
+  // buildUnits always sets one) each stand as their own message.
+  const messages: Msg[] = []
+  const msgIndexById = new Map<number, number>()
 
   for (const unit of units) {
     const msgId = unit.id ?? unit.msgId
@@ -157,59 +184,76 @@ export function tally(units: RawUnit[]): TallyResult {
       authorMap.set(unit.authorId, (authorMap.get(unit.authorId) || 0) + 1)
     }
 
-    // dateMs 0 means unknown date: undated or out-of-order units never glue into a series
-    if (
-      currentSeries &&
-      currentSeries.authorId === unit.authorId &&
-      unit.dateMs > 0 &&
-      currentSeries.dateMs > 0 &&
-      unit.dateMs - currentSeries.dateMs >= 0 &&
-      unit.dateMs - currentSeries.dateMs <= 120_000 &&
-      currentSeries.tokenCount + unit.tokens.length <= 30
-    ) {
-      currentSeries.units.push(unit.tokens)
-      currentSeries.tokenCount += unit.tokens.length
-      currentSeries.dateMs = unit.dateMs
-    } else {
-      if (currentSeries) {
-        seriesList.push(currentSeries)
-      }
-      currentSeries = {
-        authorId: unit.authorId,
-        dateMs: unit.dateMs,
-        units: [unit.tokens],
-        tokenCount: unit.tokens.length,
-      }
+    if (msgId === undefined) {
+      messages.push({ authorId: unit.authorId, dateMs: unit.dateMs, units: [unit.tokens] })
+      continue
     }
+    let idx = msgIndexById.get(msgId)
+    if (idx === undefined) {
+      idx = messages.length
+      msgIndexById.set(msgId, idx)
+      messages.push({ authorId: unit.authorId, dateMs: unit.dateMs, units: [] })
+    }
+    messages[idx].units.push(unit.tokens)
   }
 
-  if (currentSeries) {
-    seriesList.push(currentSeries)
-  }
-
-  for (const series of seriesList) {
-    // one series adds each pair at most once, at its max candidate weight (seriesMax)
-    const seriesMax = new Map<string, number>()
-    const seriesUnits = series.units
-    for (let ui = 0; ui < seriesUnits.length; ui++) {
-      const a = seriesUnits[ui]
+  // Intra-message pairs: each message contributes its pairs once, at max weight.
+  const intraMaxList: Array<Map<number, number>> = []
+  for (const msg of messages) {
+    // one message adds each pair at most once, at its max candidate weight
+    const best = new Map<number, number>()
+    for (let ui = 0; ui < msg.units.length; ui++) {
+      const a = msg.units[ui]
       for (let i = 0; i < a.length; i++) {
         for (let d = 1; d <= WINDOW_SIZE && i + d < a.length; d++) {
-          relax(seriesMax, a[i], a[i + d], 1 / d)
+          relax(best, a[i], a[i + d], 1 / d)
         }
       }
-      for (let uj = ui + 1; uj < seriesUnits.length; uj++) {
-        const b = seriesUnits[uj]
-        for (let i = 0; i < a.length; i++) {
+      for (let uj = ui + 1; uj < msg.units.length; uj++) {
+        const b = capped(msg.units[uj])
+        const ca = capped(a)
+        for (let i = 0; i < ca.length; i++) {
           for (let j = 0; j < b.length; j++) {
-            relax(seriesMax, a[i], b[j], INTER_UNIT_WEIGHT)
+            relax(best, ca[i], b[j], INTER_UNIT_WEIGHT)
           }
         }
       }
     }
-    for (const [key, w] of seriesMax) {
+    intraMaxList.push(best)
+    for (const [key, w] of best) {
       const [u, v] = parseEdgeKey(key)
-      addPair(u, v, series.authorId, false, w)
+      addPair(u, v, msg.authorId, false, w)
+    }
+  }
+
+  // Adjacent messages with a small gap link at ADJACENT_CLOSE_WEIGHT: into nCross
+  // for different authors (that is what the cross-author view shows), into nX for
+  // the same author. Pairs already linked inside either message are skipped
+  // (max, not sum). A large gap contributes nothing.
+  for (let mi = 0; mi + 1 < messages.length; mi++) {
+    const a = messages[mi]
+    const b = messages[mi + 1]
+    if (!isCloseGap(a.dateMs, b.dateMs)) continue
+    const isCross = a.authorId !== b.authorId
+    // Skip pairs already linked inside either message without copying both
+    // key sets: probe the intra maps directly, track only window-new pairs.
+    const prevA = intraMaxList[mi]
+    const prevB = intraMaxList[mi + 1]
+    const seen = new Set<number>()
+    for (const uaRaw of a.units) {
+      for (const ubRaw of b.units) {
+        const ua = capped(uaRaw)
+        const ub = capped(ubRaw)
+        for (let i = 0; i < ua.length; i++) {
+          for (let j = 0; j < ub.length; j++) {
+            if (ua[i] === ub[j]) continue
+            const key = edgeKey(ua[i], ub[j])
+            if (seen.has(key) || prevA.has(key) || prevB.has(key)) continue
+            seen.add(key)
+            addPair(ua[i], ub[j], b.authorId, isCross, ADJACENT_CLOSE_WEIGHT)
+          }
+        }
+      }
     }
   }
 
@@ -220,12 +264,14 @@ export function tally(units: RawUnit[]): TallyResult {
 
     for (const targetUnit of targetUnits) {
       const isCross = unit.authorId !== targetUnit.authorId
-      const seenReply = new Set<string>()
+      const seenReply = new Set<number>()
 
-      for (let i = 0; i < unit.tokens.length; i++) {
-        const u = unit.tokens[i]
-        for (let j = 0; j < targetUnit.tokens.length; j++) {
-          const v = targetUnit.tokens[j]
+      const cu = capped(unit.tokens)
+      const ct = capped(targetUnit.tokens)
+      for (let i = 0; i < cu.length; i++) {
+        const u = cu[i]
+        for (let j = 0; j < ct.length; j++) {
+          const v = ct[j]
           if (u === v) continue
           const key = edgeKey(u, v)
           if (!seenReply.has(key)) {
@@ -240,19 +286,20 @@ export function tally(units: RawUnit[]): TallyResult {
   return { pairs, counts }
 }
 
-// reads only cfg fields that filterCacheKey covers; add new ones there
+// Show-flags: a checked category stays on the map, an unchecked one is dropped
+// before tally. Custom lists extend their category (no-op when shown: nothing drops).
 function dropFor(cfg: FilterCfg): (t: Tok) => boolean {
   return (tok) =>
     (!cfg.tech && tok.cls === 'tech') ||
     (!cfg.digits && tok.cls === 'digits') ||
-    isStopword(tok.word) ||
+    (!cfg.stopwords && isStopword(tok.word)) ||
     (!cfg.mat && matchesMat(tok.word, cfg.customMat)) ||
     (!cfg.laugh && matchesLaugh(tok.word, cfg.customLaugh))
 }
 
 // topN and minWeight are not in the key: they only change selection, not the tally
 export function filterCacheKey(cfg: FilterCfg): string {
-  return JSON.stringify([cfg.mat, cfg.laugh, cfg.tech, cfg.digits, cfg.customMat, cfg.customLaugh])
+  return JSON.stringify([cfg.mat, cfg.laugh, cfg.tech, cfg.digits, cfg.stopwords, cfg.customMat, cfg.customLaugh])
 }
 
 export function mergeCacheKey(cfg: FilterCfg): string {

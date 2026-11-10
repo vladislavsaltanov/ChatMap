@@ -54,7 +54,7 @@ export function select(
     }
     counts = remappedCounts
 
-    const remappedPairs = new Map<string, PairStat>()
+    const remappedPairs = new Map<number, PairStat>()
     for (const [key, stat] of pairs) {
       const [a, b] = parseEdgeKey(key)
       const rootA = merged.get(a) ?? a
@@ -144,12 +144,9 @@ export function select(
   }
 }
 
-// Serrano disparity filter plus each node's top-2 edges. nodeCount must count every node in edges.
-export function pruneBackbone(edges: SelectionEdge[], nodeCount: number, alpha = 0.05): SelectionEdge[] {
-  if (edges.length === 0) return []
-
-  const sorted = [...edges].sort((e1, e2) => e2.weight - e1.weight || e1.a - e2.a || e1.b - e2.b)
-
+// Serrano disparity filter plus each node's top-2 edges. The input must already
+// be sorted weight-desc (select() returns edges in that order).
+export function pruneSortedBackbone(sorted: SelectionEdge[], nodeCount: number, alpha = 0.05): SelectionEdge[] {
   const degree = new Map<number, number>()
   const strength = new Map<number, number>()
   for (const e of sorted) {

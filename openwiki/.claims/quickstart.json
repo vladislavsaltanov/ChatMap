@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:9211b7268cafe5720e49ebcab093479deff1d079a25f258f2f2249bdca389f70",
+  "claims": [
+    {
+      "id": "claim_5e7bbabaa622411899d32fa044074480",
+      "statement": "Старт требует машиночитаемый JSON-экспорт Telegram Desktop или AyuGram, загружается перетаскиванием result.json в окно",
+      "evidence": [
+        {
+          "resource": "repo://README.md",
+          "version": "repo-file-v1:sha256:3c08c99aa91a4563209b2bc9592c10814d9a8f0546d7a6d7822e9e022fc7a4c1"
+        },
+        {
+          "resource": "repo://src/ui/landing.ts",
+          "version": "repo-file-v1:sha256:d6242fcab060afd1b99c93178d3ee282ba039d7214bab31fc915de898f87872e"
+        }
+      ]
+    },
+    {
+      "id": "claim_00404ecc270b4873a50c4d63653af190",
+      "statement": "На карте узел — слово с размером по частоте, ребро — совместная встреча с яркостью по весу, цвет — голос участника",
+      "evidence": [
+        {
+          "resource": "repo://README.md",
+          "version": "repo-file-v1:sha256:3c08c99aa91a4563209b2bc9592c10814d9a8f0546d7a6d7822e9e022fc7a4c1"
+        },
+        {
+          "resource": "repo://src/ui/mapview.ts",
+          "version": "repo-file-v1:sha256:eec3a39f8ab3746824bd32aa5e68810c0b51047740442e0f81c9cfb7334e2838"
+        }
+      ]
+    },
+    {
+      "id": "claim_3dfed2c4560548509d5bec0f6ff55484",
+      "statement": "Вся обработка выполняется локально в браузере без сетевых запросов, страница работает офлайн",
+      "evidence": [
+        {
+          "resource": "repo://README.md",
+          "version": "repo-file-v1:sha256:3c08c99aa91a4563209b2bc9592c10814d9a8f0546d7a6d7822e9e022fc7a4c1"
+        },
+        {
+          "resource": "repo://src/main.ts",
+          "version": "repo-file-v1:sha256:41f4f56c7ef7282614e20886c003c42105993d04f85b1d6d32a253cc5c381aa9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-09T15:02:00.342Z"
+  }
+}

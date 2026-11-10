@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:9498c3f318132ebdab383e4457b58d7dfda211e05f0860c5fc744d20f5464118",
+  "claims": [
+    {
+      "id": "claim_fee7d56bae9342389cdf804221ddbe3a",
+      "statement": "Файл читается через FileReader в память вкладки, сетевых запросов с содержимым чата нет, страница работает офлайн",
+      "evidence": [
+        {
+          "resource": "repo://src/main.ts",
+          "version": "repo-file-v1:sha256:41f4f56c7ef7282614e20886c003c42105993d04f85b1d6d32a253cc5c381aa9"
+        },
+        {
+          "resource": "repo://src/ui/landing.ts",
+          "version": "repo-file-v1:sha256:d6242fcab060afd1b99c93178d3ee282ba039d7214bab31fc915de898f87872e"
+        }
+      ]
+    },
+    {
+      "id": "claim_201134bc2a03427691d407afcb4c40f4",
+      "statement": "parse валидирует вход один раз: не-JSON отклоняет ошибкой формата, HTML-экспорт — подсказкой включить машиночитаемый JSON",
+      "evidence": [
+        {
+          "resource": "repo://src/core/parse.ts",
+          "version": "repo-file-v1:sha256:b866e5a9eeb2a5e11ecc1db49d7595a49b572bfa13442c85c6a8f8ef4ee5d984"
+        }
+      ]
+    },
+    {
+      "id": "claim_5330135bb44b4b58810b00084a10a8e4",
+      "statement": "Файл больше 200 МБ обрабатывается с предупреждением UI, а не отказом",
+      "evidence": [
+        {
+          "resource": "repo://src/main.ts",
+          "version": "repo-file-v1:sha256:41f4f56c7ef7282614e20886c003c42105993d04f85b1d6d32a253cc5c381aa9"
+        },
+        {
+          "resource": "repo://src/ui/landing.ts",
+          "version": "repo-file-v1:sha256:d6242fcab060afd1b99c93178d3ee282ba039d7214bab31fc915de898f87872e"
+        }
+      ]
+    },
+    {
+      "id": "claim_8f10805479d34910b3a9a2c399a11ac6",
+      "statement": "При числе участников больше двух режим пересечения скрывается, остаются режимы вместе и по авторам",
+      "evidence": [
+        {
+          "resource": "repo://src/ui/controls.ts",
+          "version": "repo-file-v1:sha256:afd4275b006988868a7f8be195b0e9e7282f1d4f841afeb0c71c8f3e10639087"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-09T15:02:00.342Z"
+  }
+}

@@ -60,9 +60,11 @@ export class SubgraphHighlight {
       }
     }
     neighborsWithWeights.sort((a, b) => b.weight - a.weight)
+    // Top-N is computed once: both the diff sets and the state loop read it.
+    const top = neighborsWithWeights.slice(0, topN)
     const nextNodes = new Set<string>([key])
     const nextEdges = new Set<string>()
-    for (const conn of neighborsWithWeights.slice(0, topN)) {
+    for (const conn of top) {
       nextNodes.add(conn.neighbor)
       nextEdges.add(conn.edge)
     }
@@ -82,7 +84,7 @@ export class SubgraphHighlight {
       if (!nextEdges.has(e)) renderer.setEdgeState(e, { isActive: false })
     }
     renderer.setNodeState(key, { isActive: true, isHighlighted: true, released: false })
-    for (const conn of this.weightedTop(neighborsWithWeights, topN)) {
+    for (const conn of top) {
       renderer.setNodeState(conn.neighbor, { isActive: true, isHighlighted: false })
       renderer.setEdgeState(conn.edge, { isActive: true })
     }
@@ -90,9 +92,5 @@ export class SubgraphHighlight {
     this.edges = [...nextEdges]
     this.center = key
     renderer.setGraphState({ hasActiveSubgraph: true })
-  }
-
-  private weightedTop(list: Array<{ neighbor: string; edge: string; weight: number }>, topN: number) {
-    return [...list].sort((a, b) => b.weight - a.weight).slice(0, topN)
   }
 }

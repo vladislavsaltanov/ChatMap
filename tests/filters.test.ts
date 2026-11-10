@@ -46,6 +46,29 @@ describe('filters', () => {
       expect(profane.filter((word) => !matchesMat(word, []))).toEqual([])
     })
 
+    it('catches profanity behind verb prefixes (похуй, заебись)', () => {
+      const prefixed = ['похуй', 'похуист', 'похуизм', 'нахуя', 'заебись', 'заебал', 'заебало',
+        'доебаться', 'уебан', 'уебище', 'уебок', 'подъебнуть', 'съебать', 'захуярить', 'переебать']
+      expect(prefixed.filter((word) => !matchesMat(word, []))).toEqual([])
+    })
+
+    it('catches missing roots (долбоеб, пидорас, гандон, залупа, еблан)', () => {
+      const roots = ['долбоеб', 'долбаеб', 'долбоебы', 'еблан', 'ебланы', 'ебло',
+        'пидорас', 'пидоры', 'пидрила', 'гандон', 'залупа', 'охуительный', 'ебанувшийся', 'ебальник']
+      expect(roots.filter((word) => !matchesMat(word, []))).toEqual([])
+    })
+
+    it('catches hyphenated compounds (ебать-копать)', () => {
+      expect(matchesMat('ебать-копать', [])).toBe(true)
+      expect(matchesMat('бляха-муха', [])).toBe(false)
+    })
+
+    it('does not flag innocent words that share a prefix with a mat root', () => {
+      const innocent = ['заедать', 'заеда', 'похудеть', 'подъезд', 'съесть', 'доесть',
+        'переезд', 'всучить', 'посуда', 'засуха', 'похерить']
+      expect(innocent.filter((word) => matchesMat(word, []))).toEqual([])
+    })
+
     it('keeps custom roots working for allowlisted prefixes', () => {
       expect(matchesMat('мудрец', ['мудр-'])).toBe(true)
       expect(matchesMat('бляха', ['бляха'])).toBe(true)
