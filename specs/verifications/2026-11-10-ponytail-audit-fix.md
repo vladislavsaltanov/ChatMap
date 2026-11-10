@@ -70,7 +70,7 @@
 | 4 | Переполнение id токенов | T4 | `tests/tally.test.ts`, `tests/canon.test.ts` | PASS |
 | 5 | Тот же контур, что 1 (сброс до `parse`) | T1 | ручная A | PASS |
 | 6 | `edgeKey` вне диапазона | T4 | `tests/tally.test.ts` | PASS |
-| 7 | Оракул дублировал правила фильтра | T5 | `tests/tally.test.ts` (37) | PASS |
+| 7 | Оракул дублировал правила фильтра | T5 | `tests/tally.test.ts` (27) | PASS |
 | 8 | Тихая ошибка записи `localStorage` | T6 | юнит + storage-проверка | PASS |
 | 9 | O(N²) перебор коллизий | T7 | `tests/graph.test.ts` (35) | PASS |
 | 10 | `runPipeline` — один длинный блок | T8 | smoke + core-сьюты (78) | PASS |
@@ -88,6 +88,73 @@
 - **T2 удалил мёртвую ветку.** `if (this.pinnedId !== null) this.pin(...)` в конце `render()` стал недостижим после сброса в начале метода — удалён под гейт «zero dead code».
 - **`Math.max(...radii)` заменён циклом** в `collisionCandidatePairs`: spread падает с `RangeError` на очень больших картах (тот же класс дефекта, что чинили в `parse.ts`).
 
+## Повторная верификация (2026-11-10, второй проход)
+
+Проведена полная независимая перепроверка всей работы после первичного отчёта.
+
+### Cold-start smoke
+
+| Шаг | Действие | Результат |
+| --- | --- | --- |
+| 1 | Остановлены dev-серверы (PID 9812, 2188) | порты 5173/5174 свободны |
+| 2 | Удалены `node_modules/.vite` и `dist/` | кеши очищены |
+| 3 | Холодный запуск `npm run dev` | HTTP 200 за 1 с |
+| 4 | `node tools/e2e-headless.mjs fixture` | `graphOrder: 33`, `errorOpen: false` |
+
+### Terminal verdict (один непрерывный прогон)
+
+```text
+npm run typecheck && npm run test && npm run build
+PREFLIGHT_EXIT=0
+```
+
+Извлечённые числа: 13 файлов, 200 тестов, `dist/` собран без ошибок.
+
+### Повтор ручных проверок на чистом сервере
+
+| Проверка | Результат | Вердикт |
+| --- | --- | --- |
+| A (T1) | `{"errorOpen":true,"mapHidden":true}` | PASS |
+| B (T2) | `{"dimAlpha":0,"focusAlpha":0,"hasActiveSubgraph":false,"pinnedId":null}` | PASS |
+| Storage (T6) | `{"before":"дом","after":"дом","unchanged":true}` | PASS |
+| C (T10) | `{"updates":1}` | PASS |
+| 1000-node (T12) | `order 1000`, 7.98 с, без зависаний | PASS |
+
+### Мутационная проверка (тесты действительно ловят регрессии)
+
+Каждая защита временно ломалась, затем восстанавливалась.
+
+| Мутация | Вердикт |
+| --- | --- |
+| `parsePositiveInt` снова принимает строки с экспонентой | CAUGHT |
+| `edgeKey` без проверки диапазона | CAUGHT |
+| стамп-карта не помечает пару как увиденную | CAUGHT |
+| grid-поиск только в своей ячейке (range = 0) | CAUGHT |
+| дерево после восстановления | зелёное, файлы байт-в-байт совпадают с пре-мутационными |
+
+### Независимый ревьюер diff
+
+Отдельный агент (`oracle`, xhigh) проверил `git diff 6840009..HEAD` по 6 подозрениям
+(диапазон id у `edgeKey`, пропуск коллизий в grid, стампы, `resetInteractionState`
+до инициализации рендерера, разсинхрон `commitLabelOverrides`, порядок прогресса
+в `runPipeline`). Вердикт: **NO DEFECTS FOUND**.
+
+### Гигиена репозитория
+
+| Проверка | Результат |
+| --- | --- |
+| Дерево | чистое (кроме этого отчёта) |
+| `dist/` в `.gitignore` | да, строка 2 |
+| Реальный экспорт в git | нет; только `tests/fixtures/sample-export.json` |
+| Мёртвые ссылки на `debounce` | нет |
+| `TODO`/`FIXME`/`HACK` в `src/` | нет |
+| Мёртвые экспорты | нет (все 8 новых используются) |
+| `any`-касты в новых правках | нет (существующие в `mapStyles.ts` не трогались) |
+
+### Исправлено по итогам перепроверки
+
+- В отчёте стояло `tests/tally.test.ts (37)`; фактически 27 (37 — сумма `tally` + `canon`). Исправлено.
+
 ## Связанные планы
 
 - `specs/2026-11-09-perf-pass-a-plan.md`: шаг 8 (`new Set` на пару) **закрыт** в T9. Шаги 0 (baseline) и 9 (замер «после» + вердикт) остаются открытыми: HARD GATE требует отдельного воспроизводимого замера, эти правки его не заменяют.
@@ -95,7 +162,7 @@
 
 ## Изменённые файлы
 
-```
+```text
 src/core/parse.ts          T3  boundary-хелперы parsePositiveInt/parseFinitePositiveNumber
 src/core/intern.ts         T4  MAX_TOKEN_ID + guard
 src/core/tally.ts          T4 T5 T9  edgeKey range, export dropFor, stamp-карты
