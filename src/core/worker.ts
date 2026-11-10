@@ -1,7 +1,7 @@
-import { armsFor, bundleEdges, edgeAlpha, nodeFitSize, phaseFor } from './geometry'
+import { armsFromIndex, buildArmsIndex, bundleEdges, edgeAlpha, nodeFitSize, phaseFor } from './geometry'
 import { getLruCache, layout, setLruCache } from './graph'
 import { parse } from './parse'
-import { pruneBackbone, select, type ViewMode } from './select'
+import { pruneSortedBackbone, select, type ViewCfg } from './select'
 import { PipelineCache } from './tally'
 import type {
   AuthorId,
@@ -22,15 +22,14 @@ const DEFAULT_FILTER_CFG: FilterCfg = {
   laugh: false,
   tech: false,
   digits: false,
+  stopwords: false,
   customMat: [],
   customLaugh: [],
   smartMerge: false,
-  topN: 600,
-  minWeight: 0,
 }
 
 let currentFilterCfg: FilterCfg = { ...DEFAULT_FILTER_CFG }
-let currentViewMode: ViewMode = { kind: 'together' }
+let currentViewCfg: ViewCfg = { mode: { kind: 'together' }, topN: 600, minWeight: 0 }
 
 function send(msg: WorkerOut) {
   self.postMessage(msg)
@@ -74,11 +73,7 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
   }
 
   send({ type: 'progress', done: 75, total: 100, stage: 'Выборка узлов и рёбер...' })
-  const selection = select(
-    tallyResult,
-    { mode: currentViewMode, topN: cfg.topN, minWeight: cfg.minWeight },
-    merged
-  )
+  const selection = select(tallyResult, currentViewCfg, merged)
 
   let minCount = Infinity
   for (const n of selection.nodes) {
@@ -120,7 +115,8 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
   })
 
   // Serrano disparity backbone; every node keeps its 2 strongest edges
-  const backboneEdges = pruneBackbone(selection.edges, selection.nodes.length)
+  // Selection edges arrive sorted weight-desc, so the backbone skips its own resort.
+  const backboneEdges = pruneSortedBackbone(selection.edges, selection.nodes.length)
 
   const layoutResult = layout(layoutNodes, backboneEdges, {
     seed: 1337,
@@ -141,6 +137,7 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
     return { id: n.id, x: p.x, y: p.y }
   })
   const bundles = bundleEdges(posList, backboneEdges, selection.maxWeight)
+  const armsIndex = buildArmsIndex(posList, backboneEdges)
 
   for (const n of selection.nodes) {
     const info = nodeInfoMap.get(n.id)!
@@ -161,7 +158,7 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
       }
     }
 
-    const arms = armsFor(posList, backboneEdges, n.id)
+    const arms = armsFromIndex(armsIndex, n.id)
     nodes.push({
       id: n.id,
       label: info.bestForm,
@@ -203,9 +200,12 @@ self.onmessage = (e: MessageEvent<WorkerIn>) => {
   try {
     if (msg.type === 'open') {
       send({ type: 'progress', done: 5, total: 100, stage: 'Чтение JSON...' })
-      chat = parse(msg.json)
+      chat = parse(new TextDecoder().decode(msg.buf))
       if (chat.warn) send({ type: 'warn', message: chat.warn })
       pipelineCache = new PipelineCache()
+      // New file = new identity space: stale canon->position entries would
+      // pin same-spelled words of the new chat to the old chat's coordinates.
+      positionsCache.clear()
       send({ type: 'progress', done: 30, total: 100, stage: 'Определение авторов...' })
 
       const authorMap = new Map<AuthorId, string>()
@@ -228,13 +228,16 @@ self.onmessage = (e: MessageEvent<WorkerIn>) => {
         laugh: msg.cfg.laugh,
         tech: msg.cfg.tech,
         digits: msg.cfg.digits,
+        stopwords: msg.cfg.stopwords,
         customMat: msg.cfg.customMat,
         customLaugh: msg.cfg.customLaugh,
         smartMerge: msg.cfg.smartMerge,
+      }
+      currentViewCfg = {
+        mode: msg.cfg.mode,
         topN: msg.cfg.topN,
         minWeight: msg.cfg.minWeight,
       }
-      currentViewMode = msg.cfg.mode
       runPipeline(false)
     }
   } catch (err: unknown) {

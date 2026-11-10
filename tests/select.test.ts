@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { pruneBackbone, select, type SelectionEdge } from '../src/core/select'
+import { pruneSortedBackbone, select, type SelectionEdge } from '../src/core/select'
 import { edgeKey, type TallyResult } from '../src/core/tally'
+
+// pruneSortedBackbone requires weight-desc input, the order select() emits.
+const byWeight = (edges: SelectionEdge[]) => [...edges].sort((x, y) => y.weight - x.weight || x.a - y.a || x.b - y.b)
 
 describe('select', () => {
   it('(a) computes weights and counts for together, author X, and cross modes', () => {
@@ -162,9 +165,9 @@ describe('select', () => {
   })
 })
 
-describe('pruneBackbone', () => {
+describe('pruneSortedBackbone', () => {
   it('returns [] for empty input', () => {
-    expect(pruneBackbone([], 0)).toEqual([])
+    expect(pruneSortedBackbone([], 0)).toEqual([])
   })
 
   it('hub: drops weak edges that are neither top-2 at an endpoint nor disparity-significant', () => {
@@ -177,7 +180,7 @@ describe('pruneBackbone', () => {
     for (let j = 3; j <= 10; j++) {
       edges.push({ a: 0, b: j, weight: 1 }, { a: j, b: 11, weight: 50 }, { a: j, b: 12, weight: 50 })
     }
-    const out = pruneBackbone(edges, 13)
+    const out = pruneSortedBackbone(byWeight(edges), 13)
     expect(out.filter((e) => e.a === 0)).toEqual([
       { a: 0, b: 1, weight: 20 },
       { a: 0, b: 2, weight: 20 },
@@ -194,7 +197,7 @@ describe('pruneBackbone', () => {
       { a: 3, b: 12, weight: 50 },
     ]
     for (let j = 4; j <= 10; j++) edges.push({ a: 0, b: j, weight: 1 })
-    expect(pruneBackbone(edges, 13)).toContainEqual({ a: 0, b: 3, weight: 19 })
+    expect(pruneSortedBackbone(byWeight(edges), 13)).toContainEqual({ a: 0, b: 3, weight: 19 })
   })
 
   it('hub: significance counts when the hub is the larger-id endpoint', () => {
@@ -207,7 +210,7 @@ describe('pruneBackbone', () => {
       { a: 3, b: 12, weight: 50 },
     ]
     for (let j = 4; j <= 10; j++) edges.push({ a: j, b: 20, weight: 1 })
-    expect(pruneBackbone(edges, 13)).toContainEqual({ a: 3, b: 20, weight: 19 })
+    expect(pruneSortedBackbone(byWeight(edges), 13)).toContainEqual({ a: 3, b: 20, weight: 19 })
   })
 
   it('triangle of equal weights survives intact via the top-2 rule', () => {
@@ -217,7 +220,7 @@ describe('pruneBackbone', () => {
       { a: 0, b: 2, weight: 2 },
       { a: 1, b: 2, weight: 2 },
     ]
-    expect(pruneBackbone(edges, 3)).toEqual(edges)
+    expect(pruneSortedBackbone(byWeight(edges), 3)).toEqual(edges)
   })
 
   it('leaf (k=1) keeps its single weak edge', () => {
@@ -227,7 +230,7 @@ describe('pruneBackbone', () => {
       { a: 0, b: 2, weight: 20 },
       { a: 0, b: 3, weight: 1 },
     ]
-    expect(pruneBackbone(edges, 4)).toEqual(edges)
+    expect(pruneSortedBackbone(byWeight(edges), 4)).toEqual(edges)
   })
 
   // Ring of `ring` nodes, each with 4 heavy (w=100) and 11 light (w=1) neighbours per side, plus weak leaves
@@ -245,14 +248,14 @@ describe('pruneBackbone', () => {
 
   it('budget: 100-node ring caps at round(nodeCount * 3.5) and keeps every leaf edge', () => {
     // 400 heavy edges exceed the cap of 385; leaf edges are top-2 and must survive the trim
-    const out = pruneBackbone(ringWithLeaves(100, 10), 110)
+    const out = pruneSortedBackbone(byWeight(ringWithLeaves(100, 10)), 110)
     expect(out.length).toBe(385) // round(110 * 3.5)
     expect(out.filter((e) => e.b >= 100)).toHaveLength(10)
   })
 
   it('budget: small graphs still get the 300-edge floor', () => {
     // 304 heavy edges exceed the floor; round(81 * 3.5) = 284 would trim too much
-    const out = pruneBackbone(ringWithLeaves(76, 5), 81)
+    const out = pruneSortedBackbone(byWeight(ringWithLeaves(76, 5)), 81)
     expect(out.length).toBe(300)
     expect(out.filter((e) => e.b >= 76)).toHaveLength(5)
   })

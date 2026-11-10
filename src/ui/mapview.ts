@@ -26,7 +26,6 @@ export class MapView {
   private renderer: Sigma<any, any, any, CustomNodeState, CustomEdgeState, CustomGraphState> | null = null
   private pinnedId: number | null = null
   private highlight: SubgraphHighlight
-  private pinCallbacks: Array<(id: number | null) => void> = []
   private authorColors = new Map<AuthorId, string>()
   private nodePanel: NodePanel
   private lastMsg: MapMsg | null = null
@@ -36,7 +35,7 @@ export class MapView {
   private layoutRaf: number | null = null
   private idleTimer: number | null = null
   private animator = new SubgraphAnimator((v) => {
-    this.renderer?.setGraphState({ dimAlpha: v.dim, focusAlpha: v.focus, releaseAlpha: v.release })
+    this.renderer?.setGraphState({ dimAlpha: v.dim, focusAlpha: v.focus, releaseAlpha: v.release, enterAlpha: v.enter })
     this.renderer?.refresh({ skipIndexation: true })
   })
 
@@ -245,6 +244,7 @@ export class MapView {
         dimAlpha: 0,
         focusAlpha: 0,
         releaseAlpha: 0,
+        enterAlpha: 1,
         lodRatio: 1,
         cameraRatio: 1,
         mapDensity: 0,
@@ -265,6 +265,7 @@ export class MapView {
       dimAlpha: 0,
       focusAlpha: 0,
       releaseAlpha: 0,
+      enterAlpha: 1,
       lodRatio: 1,
       cameraRatio: 1,
       mapDensity: 0,
@@ -407,6 +408,57 @@ export class MapView {
     return true
   }
 
+  // Transit culling: sigma draws every edge, so on zoom-in the viewport fills
+  // with lines whose endpoints are offscreen. Hide every edge that is not
+  // fully inside the viewport: a line exiting the screen carries no local
+  // information at that zoom. Focused ego-network edges are exempt.
+  // Runs on camera updates only (called from applyView), diffed, O(edges).
+  private transitHidden = new Set<string>()
+
+  private cullTransitEdges(cam: ViewState, fisheye: FisheyeConfig): void {
+    const r = this.renderer
+    if (!r || this.graph.order === 0) return
+    const dims = r.getDimensions()
+    const mX = dims.width * 0.12
+    const mY = dims.height * 0.12
+    const tl = r.viewportToGraph({ x: -mX, y: -mY }, { cameraState: cam })
+    const br = r.viewportToGraph({ x: dims.width + mX, y: dims.height + mY }, { cameraState: cam })
+    const minX = Math.min(tl.x, br.x)
+    const maxX = Math.max(tl.x, br.x)
+    const minY = Math.min(tl.y, br.y)
+    const maxY = Math.max(tl.y, br.y)
+
+    const keep = new Set<string>()
+    const focusKeys = [this.pinnedId !== null ? String(this.pinnedId) : null, this.subgraphKey]
+    for (const nk of focusKeys) {
+      if (nk !== null && this.graph.hasNode(nk)) {
+        for (const ek of this.graph.edges(nk)) keep.add(ek)
+      }
+    }
+
+    const next = new Set<string>()
+    for (const ek of this.graph.edges()) {
+      if (keep.has(ek)) continue
+      const a = this.graph.getNodeAttributes(this.graph.source(ek))
+      const b = this.graph.getNodeAttributes(this.graph.target(ek))
+      // Edges are drawn from fisheye-displaced positions on zoom; cull in the
+      // same space or the lines and the test disagree.
+      const pa = fisheyePoint(a.x, a.y, fisheye)
+      const pb = fisheyePoint(b.x, b.y, fisheye)
+      const aIn = pa.x >= minX && pa.x <= maxX && pa.y >= minY && pa.y <= maxY
+      const bIn = pb.x >= minX && pb.x <= maxX && pb.y >= minY && pb.y <= maxY
+      if (!aIn || !bIn) next.add(ek)
+    }
+
+    for (const ek of this.transitHidden) {
+      if (!next.has(ek) && this.graph.hasEdge(ek)) r.setEdgeState(ek, { isHidden: false })
+    }
+    for (const ek of next) {
+      if (!this.transitHidden.has(ek)) r.setEdgeState(ek, { isHidden: true })
+    }
+    this.transitHidden = next
+  }
+
   private applyView(cam: ViewState): void {
     const r = this.renderer
     if (!r) return
@@ -422,9 +474,10 @@ export class MapView {
     const fisheye = {
       fisheyeX: center.x,
       fisheyeY: center.y,
-      fisheyeRadius: Math.max(1, 360 * unitsPerPx),
-      // No spread on the overview; it grows only while zooming in.
-      fisheyeStrength: Math.max(0, Math.min(1, (1 - ratio) / 0.6)),
+      // Wide reach: the spread must be felt, not just measured.
+      fisheyeRadius: Math.max(1, 440 * unitsPerPx),
+      // Full strength early: the effect grows while zooming in.
+      fisheyeStrength: Math.max(0, Math.min(1, (1 - ratio) / 0.5)),
     }
 
     const layout = this.computeLabelLayout(cam, fisheye)
@@ -453,6 +506,7 @@ export class MapView {
       labelBackdrop: layout.backdrop,
       ...fisheye,
     })
+    this.cullTransitEdges(cam, fisheye)
     r.refresh({ skipIndexation: true })
   }
 
@@ -460,6 +514,7 @@ export class MapView {
     this.cancelIdleTimer()
     this.lastMsg = msg
     this.graph.clear()
+    this.transitHidden = new Set<string>()
     this.highlight.reset()
     this.subgraphKey = null
 
@@ -490,6 +545,19 @@ export class MapView {
       })
     }
 
+    // Geometric reach of each edge vs the map median: long weak links dissolve
+    // in edgeOpacity, sparing strong corridors. Computed from layout coords.
+    const nodePos = new Map(msg.nodes.map((n) => [n.id, n]))
+    const edgeLens = msg.edges
+      .map((e) => {
+        const a = nodePos.get(e.a)
+        const b = nodePos.get(e.b)
+        return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0
+      })
+      .filter((l) => l > 0)
+      .sort((x, y) => x - y)
+    const medianLen = edgeLens.length > 0 ? edgeLens[Math.floor(edgeLens.length / 2)] : 0
+
     for (const edge of msg.edges) {
       const a = String(edge.a)
       const b = String(edge.b)
@@ -516,6 +584,12 @@ export class MapView {
           rank: edge.rank,
           tractRank: edge.tractRank,
           strength: w,
+          reach: (() => {
+            const a = nodePos.get(edge.a)
+            const b = nodePos.get(edge.b)
+            if (!a || !b || medianLen <= 0) return 1
+            return Math.hypot(a.x - b.x, a.y - b.y) / medianLen
+          })(),
           phase: phaseFor(edge.a ^ edge.b),
           lodSize,
           tract: edge.tract,
@@ -537,6 +611,9 @@ export class MapView {
     this.applyView(this.renderer?.getCamera().getState() ?? FLAT_VIEW)
     // Fonts are loaded by the time a map arrives; repaint with the real face.
     this.paintLegend()
+    // Fresh map fades in instead of popping: restart the enter tween.
+    this.animator.jump('enter', 0)
+    this.animator.to('enter', 1, 600)
   }
 
   renderAuthors(colors: Map<AuthorId, string>): void {
@@ -581,14 +658,7 @@ export class MapView {
     }
 
     this.renderer.refresh({ skipIndexation: true })
-    for (const cb of this.pinCallbacks) {
-      cb(this.pinnedId)
-    }
     this.scheduleLayout()
-  }
-
-  onPin(cb: (id: number | null) => void): void {
-    this.pinCallbacks.push(cb)
   }
 
   // Photo of the selected node: a snapshot of the CURRENT camera view, with
@@ -670,10 +740,6 @@ export class MapView {
     } else {
       this.hoverLine.textContent = 'слово · 0'
     }
-  }
-
-  getRenderer(): Sigma<any, any, any, any, any, any> | null {
-    return this.renderer
   }
 }
 

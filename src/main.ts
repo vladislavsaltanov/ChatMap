@@ -121,13 +121,15 @@ function sendFile(file: File) {
     }
   }
   reader.onload = () => {
-    const text = reader.result as string
-    worker.postMessage({ type: 'open', json: text } satisfies WorkerIn)
+    // Transfer, not copy: the buffer moves to the worker, so a 200 MB file
+    // lives in memory once instead of twice (string + structured-clone).
+    const buf = reader.result as ArrayBuffer
+    worker.postMessage({ type: 'open', buf } satisfies WorkerIn, [buf])
   }
   reader.onerror = () => {
     showError('Не удалось прочитать файл.')
   }
-  reader.readAsText(file)
+  reader.readAsArrayBuffer(file)
 }
 
 renderLanding(screens.landing, sendFile, addWarning)
@@ -139,9 +141,10 @@ show('landing')
 if (import.meta.env.DEV && location.search.includes('fixture=1')) {
   import('../tests/fixtures/sample-export.json').then((module) => {
     show('progress')
+    const bytes = new TextEncoder().encode(JSON.stringify(module.default))
     worker.postMessage({
       type: 'open',
-      json: JSON.stringify(module.default),
-    } satisfies WorkerIn)
+      buf: bytes.buffer as ArrayBuffer,
+    } satisfies WorkerIn, [bytes.buffer as ArrayBuffer])
   })
 }

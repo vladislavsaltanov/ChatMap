@@ -1,3 +1,5 @@
+import type { ViewCfg } from './select'
+
 export type Entity = 'plain'|'link'|'code'|'mention'|'other'
 export type TextPart = { text: string; entity: Entity }
 export type Message = { id: number; kind: 'message'|'service'; authorId: number; dateMs: number; parts: TextPart[]; replyTo: number|null }
@@ -8,7 +10,9 @@ export type ChatExport = {
   authors?: Map<AuthorId, string>
   warn?: string
 }
-export type FilterCfg = { mat: boolean; laugh: boolean; tech: boolean; digits: boolean; customMat: string[]; customLaugh: string[]; smartMerge: boolean; topN: number; minWeight: number }
+// Show-flags: true = category stays on the map, false = dropped before tally.
+// Selection (topN/minWeight/mode) lives in ViewCfg, not here.
+export type FilterCfg = { mat: boolean; laugh: boolean; tech: boolean; digits: boolean; stopwords: boolean; customMat: string[]; customLaugh: string[]; smartMerge: boolean }
 export type AuthorId = number
 
 export type TokClass = 'plain'|'tech'|'digits'
@@ -44,9 +48,12 @@ export type WorkerEdge = {
   tractRank: number
 }
 
+// 'open' carries the raw file bytes: the main thread transfers the buffer
+// (zero-copy), the worker decodes it. Never a string: that would duplicate
+// a 200 MB file in memory on postMessage structured-clone.
 export type WorkerIn =
-  | { type: 'open'; json: string }
-  | { type: 'update'; cfg: FilterCfg & { mode: import('./select').ViewMode } }
+  | { type: 'open'; buf: ArrayBuffer }
+  | { type: 'update'; cfg: FilterCfg & ViewCfg }
 
 export type WorkerOut =
   | { type: 'progress'; done: number; total: number; stage?: string }

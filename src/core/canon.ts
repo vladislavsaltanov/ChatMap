@@ -13,10 +13,29 @@ const RU_ENDINGS = [
   'а', 'я', 'у', 'ю', 'о', 'е', 'ы', 'и', 'ь', 'й',
 ].sort((a, b) => b.length - a.length)
 
+// Endings indexed by final char: stemming checks only the handful of endings
+// that can match instead of scanning all ~60 per token. Buckets keep the
+// longest-first order, so the longest applicable ending still wins (an ending
+// can only match a word ending in the same char).
+const RU_ENDINGS_BY_LAST = (() => {
+  const map = new Map<string, string[]>()
+  for (const ending of RU_ENDINGS) {
+    const last = ending.at(-1) ?? ''
+    let list = map.get(last)
+    if (!list) {
+      list = []
+      map.set(last, list)
+    }
+    list.push(ending)
+  }
+  return map
+})()
+
 const LATIN_ENDINGS = ['ing', 'ed', 'es', 's']
 
 function stemRu(word: string): string {
-  for (const ending of RU_ENDINGS) {
+  const candidates = RU_ENDINGS_BY_LAST.get(word.at(-1) ?? '') ?? []
+  for (const ending of candidates) {
     if (word.endsWith(ending)) {
       const remainder = word.slice(0, -ending.length)
       if (remainder.length >= 4 || remainder === 'дом') {

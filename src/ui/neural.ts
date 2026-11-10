@@ -13,8 +13,6 @@ export function setNeuralTime(seconds: number, motion: number): void {
   edgeMotion.value = motion
 }
 
-export const MAX_ARMS = 5
-
 // Node captions are rasterised by Sigma's SDF atlas from a CSS font shorthand.
 // The primitive and the node styles must name the SAME family, otherwise the
 // atlas and the measured label boxes disagree. Obel Mono is self-hosted.

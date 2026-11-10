@@ -16,9 +16,9 @@ const total = (s: PairStat | undefined): number =>
   s ? s.nCross + [...s.nX.values()].reduce((a, b) => a + b, 0) : 0
 
 describe('tally', () => {
-  it('(f) edgeKey is "min:max" for either argument order; parseEdgeKey inverts it', () => {
-    expect(edgeKey(2, 5)).toBe('2:5')
-    expect(edgeKey(5, 2)).toBe('2:5')
+  it('(f) edgeKey is order-free and numeric; parseEdgeKey inverts it', () => {
+    expect(edgeKey(2, 5)).toBe(edgeKey(5, 2))
+    expect(typeof edgeKey(2, 5)).toBe('number')
     expect(parseEdgeKey(edgeKey(5, 2))).toEqual([2, 5])
     expect(parseEdgeKey(edgeKey(1, 3006))).toEqual([1, 3006])
   })
@@ -62,28 +62,48 @@ describe('tally', () => {
     expect(res.pairs.size).toBe(19 + 18 + 17 + 16)
   })
 
-  it('(c) units within 120s merge into series with cross-boundary pairs; >120s separate', () => {
-    // 60s pause -> merged
-    const u1: RawUnit = { authorId: 10, dateMs: 1000, replyTo: null, tokens: new Uint32Array([1, 2]) }
-    const u2: RawUnit = { authorId: 10, dateMs: 61000, replyTo: null, tokens: new Uint32Array([3, 4]) }
-    const resMerged = tally([u1, u2])
-    expect(resMerged.pairs.has(edgeKey(1, 3))).toBe(true)
-    expect(resMerged.pairs.get(edgeKey(1, 2))?.nX.get(10)).toBe(1) // intra-unit, d=1
-    expect(resMerged.pairs.get(edgeKey(1, 3))?.nX.get(10)).toBe(0.3) // cross-unit, beta
-
-    // 150s pause -> separate
-    const u3: RawUnit = { authorId: 10, dateMs: 1000, replyTo: null, tokens: new Uint32Array([1, 2]) }
-    const u4: RawUnit = { authorId: 10, dateMs: 151000, replyTo: null, tokens: new Uint32Array([3, 4]) }
-    const resSeparate = tally([u3, u4])
-    expect(resSeparate.pairs.has(edgeKey(1, 3))).toBe(false)
+  it('(c0) adjacent links use only the first MAX_LINK_TOKENS of each unit', () => {
+    const head = new Uint32Array(Array.from({ length: 200 }, (_, i) => i + 1))
+    const tail = new Uint32Array(Array.from({ length: 300 }, (_, i) => i + 201))
+    const big = new Uint32Array([...head, ...tail])
+    const other = new Uint32Array(Array.from({ length: 500 }, (_, i) => i + 1001))
+    const u1: RawUnit = { id: 1, authorId: 10, dateMs: 1000, replyTo: null, tokens: big }
+    const u2: RawUnit = { id: 2, authorId: 10, dateMs: 61000, replyTo: null, tokens: other }
+    const res = tally([u1, u2])
+    // head token links at the adjacent weight
+    expect(res.pairs.get(edgeKey(1, 1001))?.nX.get(10)).toBe(0.7)
+    // tail tokens (past the cap) build no cross links
+    expect(res.pairs.has(edgeKey(201, 1201))).toBe(false)
+    expect(res.pairs.has(edgeKey(500, 1500))).toBe(false)
   })
 
-  it('(c2) seriesMax: pair adjacent in one unit and cross-unit in one series counts max, not sum', () => {
-    const u1: RawUnit = { authorId: 10, dateMs: 1000, replyTo: null, tokens: new Uint32Array([1, 2]) }
-    const u2: RawUnit = { authorId: 10, dateMs: 61000, replyTo: null, tokens: new Uint32Array([3, 1]) }
+  it('(c) adjacent messages within 10min link at 0.7; beyond that no link', () => {
+    // 60s gap -> adjacent link at 0.7
+    const u1: RawUnit = { id: 1, authorId: 10, dateMs: 1000, replyTo: null, tokens: new Uint32Array([1, 2]) }
+    const u2: RawUnit = { id: 2, authorId: 10, dateMs: 61000, replyTo: null, tokens: new Uint32Array([3, 4]) }
+    const resClose = tally([u1, u2])
+    expect(resClose.pairs.get(edgeKey(1, 2))?.nX.get(10)).toBe(1) // intra-unit, d=1
+    expect(resClose.pairs.get(edgeKey(1, 3))?.nX.get(10)).toBe(0.7) // adjacent, close gap
+
+    // gap of exactly 10min is still close; 10min + 1ms is far
+    const edge: RawUnit = { id: 3, authorId: 10, dateMs: 1000, replyTo: null, tokens: new Uint32Array([1, 2]) }
+    const atEdge: RawUnit = { id: 4, authorId: 10, dateMs: 1000 + 600_000, replyTo: null, tokens: new Uint32Array([3, 4]) }
+    expect(tally([edge, atEdge]).pairs.has(edgeKey(1, 3))).toBe(true)
+    const pastEdge: RawUnit = { id: 5, authorId: 10, dateMs: 1000 + 600_001, replyTo: null, tokens: new Uint32Array([3, 4]) }
+    const resFar = tally([edge, pastEdge])
+    expect(resFar.pairs.has(edgeKey(1, 3))).toBe(false)
+    // intra-message pairs survive the far gap
+    expect(resFar.pairs.get(edgeKey(1, 2))?.nX.get(10)).toBe(1)
+  })
+
+  it('(c2) max-not-sum: pair intra-linked in one message and adjacent across messages counts max', () => {
+    // (1,2): adjacent in M1 (1.0) and adjacent M1xM2 (0.7) -> 1.0, not 1.7
+    const u1: RawUnit = { id: 1, authorId: 10, dateMs: 1000, replyTo: null, tokens: new Uint32Array([1, 2]) }
+    const u2: RawUnit = { id: 2, authorId: 10, dateMs: 61000, replyTo: null, tokens: new Uint32Array([3, 1]) }
     const res = tally([u1, u2])
-    // (1,2): adjacent in u1 (1.0) and cross-unit (0.3) in the same series -> 1.0, not 1.3
     expect(res.pairs.get(edgeKey(1, 2))?.nX.get(10)).toBe(1)
+    // genuinely new adjacent pairs still appear
+    expect(res.pairs.get(edgeKey(2, 3))?.nX.get(10)).toBe(0.7)
   })
 
   it('(k) phrase [10,11,12] in 5 separate messages forms the top triangle', () => {
@@ -105,39 +125,64 @@ describe('tally', () => {
     expect(top3).toEqual([edgeKey(10, 11), edgeKey(10, 12), edgeKey(11, 12)].sort())
   })
 
-  it('(d) series caps at 30 tokens, splitting 35 tokens into two series', () => {
-    const u1: RawUnit = { authorId: 10, dateMs: 1000, replyTo: null, tokens: new Uint32Array(Array.from({ length: 20 }, (_, i) => i + 1)) }
-    const u2: RawUnit = { authorId: 10, dateMs: 2000, replyTo: null, tokens: new Uint32Array(Array.from({ length: 15 }, (_, i) => i + 21)) }
-    const res = tally([u1, u2])
-    // 20 + 15 = 35 > 30, so u2 is in a separate series; pair between 1 and 21 does not exist
-    expect(res.pairs.has(edgeKey(1, 21))).toBe(false)
+  it('(d) only neighbours link: three close messages form a chain, ends stay unlinked', () => {
+    const m1: RawUnit = { id: 1, authorId: 10, dateMs: 1000, replyTo: null, tokens: new Uint32Array([1]) }
+    const m2: RawUnit = { id: 2, authorId: 10, dateMs: 2000, replyTo: null, tokens: new Uint32Array([2]) }
+    const m3: RawUnit = { id: 3, authorId: 10, dateMs: 3000, replyTo: null, tokens: new Uint32Array([3]) }
+    const res = tally([m1, m2, m3])
+    expect(res.pairs.get(edgeKey(1, 2))?.nX.get(10)).toBe(0.7)
+    expect(res.pairs.get(edgeKey(2, 3))?.nX.get(10)).toBe(0.7)
+    expect(res.pairs.has(edgeKey(1, 3))).toBe(false)
   })
 
-  it('(e) reply to another author adds 0.5 to nCross; self-reply adds 0.5 to nX', () => {
+  it('(d2) multi-unit message links all its units against the neighbour message', () => {
+    const a1: RawUnit = { id: 1, authorId: 10, dateMs: 1000, replyTo: null, tokens: new Uint32Array([1]) }
+    const a2: RawUnit = { id: 1, authorId: 10, dateMs: 1000, replyTo: null, tokens: new Uint32Array([2]) }
+    const b: RawUnit = { id: 2, authorId: 10, dateMs: 2000, replyTo: null, tokens: new Uint32Array([3]) }
+    const res = tally([a1, a2, b])
+    expect(res.pairs.get(edgeKey(1, 3))?.nX.get(10)).toBe(0.7)
+    expect(res.pairs.get(edgeKey(2, 3))?.nX.get(10)).toBe(0.7)
+  })
+
+  it('(e) reply links at 1.0 regardless of gap: cross-author to nCross, self-reply to nX', () => {
     const target: RawUnit = { id: 100, authorId: 10, dateMs: 1000, replyTo: null, tokens: new Uint32Array([1]) }
     const replyOther: RawUnit = { id: 101, authorId: 20, dateMs: 2000, replyTo: 100, tokens: new Uint32Array([2]) }
     const resOther = tally([target, replyOther])
     const key = edgeKey(1, 2)
-    expect(resOther.pairs.get(key)?.nCross).toBe(0.5)
+    // reply (1.0) and close adjacency (0.7) are independent evidence: they add up
+    expect(resOther.pairs.get(key)?.nCross).toBe(1.7)
     expect(resOther.pairs.get(key)?.nX.get(20) || 0).toBe(0)
 
     const replySelf: RawUnit = { id: 102, authorId: 10, dateMs: 150000, replyTo: 100, tokens: new Uint32Array([3]) }
     const resSelf = tally([target, replySelf])
     const keySelf = edgeKey(1, 3)
     expect(resSelf.pairs.get(keySelf)?.nCross).toBe(0)
-    expect(resSelf.pairs.get(keySelf)?.nX.get(10)).toBe(0.5)
+    // self-reply (1.0) plus close adjacency (0.7): independent evidence adds up
+    expect(resSelf.pairs.get(keySelf)?.nX.get(10)).toBe(1.7)
   })
 
-  it('(g) different authors do not merge into serial even with short pause', () => {
-    const u1: RawUnit = { authorId: 10, dateMs: 1000, replyTo: null, tokens: new Uint32Array([1, 2]) }
-    const u2: RawUnit = { authorId: 20, dateMs: 2000, replyTo: null, tokens: new Uint32Array([3, 4]) }
+  it('(e2) reply bridges a far gap that adjacency alone would not', () => {
+    const target: RawUnit = { id: 100, authorId: 10, dateMs: 1000, replyTo: null, tokens: new Uint32Array([1]) }
+    // 1h later: far beyond the 10min adjacency window, but an explicit reply still links
+    const reply: RawUnit = { id: 101, authorId: 20, dateMs: 3601000, replyTo: 100, tokens: new Uint32Array([2]) }
+    const res = tally([target, reply])
+    expect(res.pairs.get(edgeKey(1, 2))?.nCross).toBe(1.0)
+  })
+
+  it('(g) adjacent messages of different authors link at 0.7 into nCross', () => {
+    const u1: RawUnit = { id: 1, authorId: 10, dateMs: 1000, replyTo: null, tokens: new Uint32Array([1, 2]) }
+    const u2: RawUnit = { id: 2, authorId: 20, dateMs: 2000, replyTo: null, tokens: new Uint32Array([3, 4]) }
     const res = tally([u1, u2])
-    expect(res.pairs.has(edgeKey(1, 3))).toBe(false)
+    expect(res.pairs.get(edgeKey(1, 3))?.nCross).toBe(0.7)
+    expect(res.pairs.get(edgeKey(1, 3))?.nX.size).toBe(0)
+    // intra-message pairs keep their own author
+    expect(res.pairs.get(edgeKey(1, 2))?.nX.get(10)).toBe(1)
+    expect(res.pairs.get(edgeKey(3, 4))?.nX.get(20)).toBe(1)
   })
 
   it('(h) pairs (1, 3006) and (2, 5) are two distinct edges, not a key collision', () => {
-    const u1: RawUnit = { authorId: 10, dateMs: 1000, replyTo: null, tokens: new Uint32Array([1, 3006]) }
-    const u2: RawUnit = { authorId: 20, dateMs: 2000, replyTo: null, tokens: new Uint32Array([2, 5]) }
+    const u1: RawUnit = { id: 1, authorId: 10, dateMs: 1000, replyTo: null, tokens: new Uint32Array([1, 3006]) }
+    const u2: RawUnit = { id: 2, authorId: 20, dateMs: 2000000, replyTo: null, tokens: new Uint32Array([2, 5]) }
     const res = tally([u1, u2])
     expect(edgeKey(1, 3006)).not.toBe(edgeKey(2, 5))
     expect(res.pairs.size).toBe(2)
@@ -145,21 +190,21 @@ describe('tally', () => {
     expect(res.pairs.get(edgeKey(2, 5))?.nX).toEqual(new Map([[20, 1]]))
   })
 
-  it('(i) undated units (dateMs 0) never glue into one series, in either order', () => {
-    const u1: RawUnit = { authorId: 10, dateMs: 0, replyTo: null, tokens: new Uint32Array([1, 2]) }
-    const u2: RawUnit = { authorId: 10, dateMs: 0, replyTo: null, tokens: new Uint32Array([3, 4]) }
-    const u3: RawUnit = { authorId: 10, dateMs: 1000, replyTo: null, tokens: new Uint32Array([5, 6]) }
+  it('(i) unknown dates (dateMs 0) count as close: never punished for missing data', () => {
+    const u1: RawUnit = { id: 1, authorId: 10, dateMs: 0, replyTo: null, tokens: new Uint32Array([1, 2]) }
+    const u2: RawUnit = { id: 2, authorId: 10, dateMs: 0, replyTo: null, tokens: new Uint32Array([3, 4]) }
+    const u3: RawUnit = { id: 3, authorId: 10, dateMs: 1000, replyTo: null, tokens: new Uint32Array([5, 6]) }
     const res = tally([u1, u2])
     expect(res.pairs.has(edgeKey(1, 2))).toBe(true)
     expect(res.pairs.has(edgeKey(3, 4))).toBe(true)
-    expect(res.pairs.has(edgeKey(1, 3))).toBe(false)
-    // a dated unit right after an undated one must not glue either
-    expect(tally([u1, u3]).pairs.has(edgeKey(1, 5))).toBe(false)
+    expect(res.pairs.get(edgeKey(1, 3))?.nX.get(10)).toBe(0.7)
+    // a dated message right after an undated one links too
+    expect(tally([u1, u3]).pairs.get(edgeKey(1, 5))?.nX.get(10)).toBe(0.7)
   })
 
-  it('(j) out-of-order timestamps (second dateMs < first) never glue into one series', () => {
-    const u1: RawUnit = { authorId: 10, dateMs: 61000, replyTo: null, tokens: new Uint32Array([1, 2]) }
-    const u2: RawUnit = { authorId: 10, dateMs: 1000, replyTo: null, tokens: new Uint32Array([3, 4]) }
+  it('(j) out-of-order timestamps (second dateMs < first) never link as adjacent', () => {
+    const u1: RawUnit = { id: 1, authorId: 10, dateMs: 61000, replyTo: null, tokens: new Uint32Array([1, 2]) }
+    const u2: RawUnit = { id: 2, authorId: 10, dateMs: 1000, replyTo: null, tokens: new Uint32Array([3, 4]) }
     const res = tally([u1, u2])
     expect(res.pairs.has(edgeKey(1, 2))).toBe(true)
     expect(res.pairs.has(edgeKey(3, 4))).toBe(true)
@@ -213,18 +258,17 @@ const CFG: FilterCfg = {
   laugh: false,
   tech: false,
   digits: false,
+  stopwords: false,
   customMat: [],
   customLaugh: [],
   smartMerge: false,
-  topN: 600,
-  minWeight: 0,
 }
 
 // uncached oracle: buildUnits + tally with the same drop rules as worker.ts runPipeline
 const dropFor = (cfg: FilterCfg) => (t: Tok) =>
   (!cfg.tech && t.cls === 'tech') ||
   (!cfg.digits && t.cls === 'digits') ||
-  isStopword(t.word) ||
+  (!cfg.stopwords && isStopword(t.word)) ||
   (!cfg.mat && matchesMat(t.word, cfg.customMat)) ||
   (!cfg.laugh && matchesLaugh(t.word, cfg.customLaugh))
 
@@ -252,15 +296,15 @@ describe('buildUnits progress', () => {
 })
 
 describe('cache keys', () => {
-  it('filterCacheKey ignores topN, minWeight and smartMerge, and keeps custom lists apart', () => {
+  it('filterCacheKey covers stopwords and custom lists, ignores smartMerge', () => {
     const key = filterCacheKey(CFG)
-    expect(filterCacheKey({ ...CFG, topN: 5, minWeight: 2, smartMerge: true })).toBe(key)
+    expect(filterCacheKey({ ...CFG, smartMerge: true })).toBe(key)
     expect(filterCacheKey({ ...CFG, mat: true })).not.toBe(key)
     expect(filterCacheKey({ ...CFG, customMat: ['a', 'b'] })).not.toBe(filterCacheKey({ ...CFG, customMat: ['a,b'] }))
   })
 
   it('mergeCacheKey is the filter key plus smartMerge', () => {
-    expect(mergeCacheKey({ ...CFG, smartMerge: true, topN: 9 })).toBe(mergeCacheKey({ ...CFG, smartMerge: true }))
+    expect(mergeCacheKey({ ...CFG, smartMerge: true, stopwords: true })).not.toBe(mergeCacheKey({ ...CFG, smartMerge: true }))
     expect(mergeCacheKey({ ...CFG, smartMerge: true })).not.toBe(mergeCacheKey(CFG))
     expect(mergeCacheKey({ ...CFG, mat: true })).not.toBe(mergeCacheKey(CFG))
   })
@@ -285,23 +329,27 @@ describe('PipelineCache', () => {
     ],
   }
 
-  it('changing only topN/minWeight reuses tokens, tally and merge', () => {
+  it('toggling stopwords recomputes tally and merge without re-tokenizing', () => {
     const cache = new PipelineCache()
     const cfg = { ...CFG, smartMerge: true }
-    const first = cache.resolve(chat, cfg)
-    const onStart = vi.fn()
-    const second = cache.resolve(chat, { ...cfg, topN: 10, minWeight: 0.5 }, {
-      onTokenizeStart: onStart,
-      onTallyStart: onStart,
-      onMergeStart: onStart,
+    const before = cache.resolve(chat, cfg)
+
+    const onTokenize = vi.fn()
+    const onTally = vi.fn()
+    const onMerge = vi.fn()
+    const after = cache.resolve(chat, { ...cfg, stopwords: true }, {
+      onTokenizeStart: onTokenize,
+      onTallyStart: onTally,
+      onMergeStart: onMerge,
     })
-    expect(onStart).not.toHaveBeenCalled()
+    expect(onTokenize).not.toHaveBeenCalled()
     expect(tokenizeSpy).toHaveBeenCalledTimes(3)
-    expect(second).toMatchObject({ tallyCached: true, mergeCached: true })
-    expect(first.merged).toBeInstanceOf(Map)
-    expect(second.ia).toBe(first.ia)
-    expect(second.tallyResult).toBe(first.tallyResult)
-    expect(second.merged).toBe(first.merged)
+    expect(onTally).toHaveBeenCalledTimes(1)
+    expect(onMerge).toHaveBeenCalledTimes(1)
+    expect(after).toMatchObject({ tallyCached: false, mergeCached: false })
+    // 'ну' and 'про' are stopwords: kept now, so the tally must change
+    expect(after.tallyResult).not.toEqual(before.tallyResult)
+    expect(after.tallyResult).toEqual(oracle(chat, { ...cfg, stopwords: true }).tallyResult)
   })
 
   it('toggling smartMerge recomputes only the merge', () => {
