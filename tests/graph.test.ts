@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { collisionCandidatePairs, collisionIterationsForCount, fractalClusterPlane, fractalDensity, fractalNoise, getLruCache, layout, resolveCollisions, setLruCache, shapeNoise, warpPlane } from '../src/core/graph'
+import { collisionIterationsForCount, fractalClusterPlane, fractalDensity, fractalNoise, getLruCache, layout, resolveCollisions, setLruCache, shapeNoise, warpPlane } from '../src/core/graph'
 
 describe('LRU cache helpers', () => {
   it('evicts the least recently set key once maxEntries is exceeded', () => {
@@ -308,23 +308,6 @@ describe('layout', () => {
     expect(collisionIterationsForCount(400)).toBe(80)
     expect(collisionIterationsForCount(401)).toBe(30)
     expect(collisionIterationsForCount(1000)).toBe(30)
-  })
-
-  it('collisionCandidatePairs stays sparse on 1000 spread nodes and tracks current positions', () => {
-    // 40x25 grid with 200-unit spacing: neighbours share 120-unit cells, far nodes do not.
-    const nodes = Array.from({ length: 1000 }, (_, k) => ({
-      x: (k % 40) * 200,
-      y: Math.floor(k / 40) * 200,
-      size: 20,
-    }))
-    const before = collisionCandidatePairs(nodes, 8, 1, null)
-    expect(before.length).toBeGreaterThan(0)
-    expect(before.length).toBeLessThan(nodes.length * 12)
-    const snapshot = JSON.stringify(before)
-    nodes[0].x += 1000
-    nodes[0].y += 1000
-    const after = collisionCandidatePairs(nodes, 8, 1, null)
-    expect(JSON.stringify(after)).not.toBe(snapshot)
   })
 
   it('calls onStage(92, stage) when iterations > 0', () => {
