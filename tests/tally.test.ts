@@ -110,6 +110,14 @@ describe('tally', () => {
     expect(res.pairs.get(edgeKey(2, 3))?.nX.get(10)).toBe(0.7)
   })
 
+  it('adjacent messages count a repeated cross pair once', () => {
+    const u1: RawUnit = { id: 1, authorId: 10, dateMs: 1000, replyTo: null, tokens: new Uint32Array([1, 2, 1]) }
+    const u2: RawUnit = { id: 2, authorId: 10, dateMs: 2000, replyTo: null, tokens: new Uint32Array([3]) }
+    const res = tally([u1, u2])
+    expect(res.pairs.get(edgeKey(1, 3))?.nX.get(10)).toBe(0.7)
+    expect(res.pairs.get(edgeKey(2, 3))?.nX.get(10)).toBe(0.7)
+  })
+
   it('(k) phrase [10,11,12] in 5 separate messages forms the top triangle', () => {
     const units: RawUnit[] = Array.from({ length: 5 }, (_, k) => ({
       authorId: 10, dateMs: 1000 + k * 200_000, replyTo: null, tokens: new Uint32Array([10, 11, 12]),
