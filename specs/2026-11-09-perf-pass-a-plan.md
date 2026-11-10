@@ -91,10 +91,12 @@ Preflight. `specs/state.yaml` не ведётся.
 
 Рассматриваются только после HARD GATE:
 
-- Многослотовый LRU-кеш `PipelineCache` по `filterCacheKey` / `mergeCacheKey`.
+- Два слота `PipelineCache` по `filterCacheKey` / `mergeCacheKey` — СДЕЛАНО (вердикт).
 - Top-5 соседей без полной сортировки в `armsFromIndex`.
+- Итерации FA2 1200 → 600/400 — ждёт визуального A/B, числа есть.
 
-Снят: замена per-pair `Set` — закрыта шагом 8.
+Сняты: замена per-pair `Set` (шаг 8), grid-broadphase в `resolveCollisions` (оказался в 7–38 раз
+медленнее наивного цикла — откачен).
 
 ## Финал
 
