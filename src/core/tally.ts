@@ -288,7 +288,7 @@ export function tally(units: RawUnit[]): TallyResult {
 
 // Show-flags: a checked category stays on the map, an unchecked one is dropped
 // before tally. Custom lists extend their category (no-op when shown: nothing drops).
-function dropFor(cfg: FilterCfg): (t: Tok) => boolean {
+export function dropFor(cfg: FilterCfg): (t: Tok) => boolean {
   return (tok) =>
     (!cfg.tech && tok.cls === 'tech') ||
     (!cfg.digits && tok.cls === 'digits') ||

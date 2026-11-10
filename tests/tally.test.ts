@@ -1,9 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { isStopword, matchesLaugh, matchesMat } from '../src/core/filters'
 import { Intern } from '../src/core/intern'
-import { buildUnits, edgeKey, filterCacheKey, mergeCacheKey, parseEdgeKey, PipelineCache, tally, type PairStat, type RawUnit } from '../src/core/tally'
+import { buildUnits, dropFor, edgeKey, filterCacheKey, mergeCacheKey, parseEdgeKey, PipelineCache, tally, type PairStat, type RawUnit } from '../src/core/tally'
 import { tokenize } from '../src/core/tokenize'
-import type { ChatExport, FilterCfg, Message, Tok } from '../src/core/types'
+import type { ChatExport, FilterCfg, Message } from '../src/core/types'
 
 // pass-through spy so tests can count tokenize() calls
 vi.mock('../src/core/tokenize', async (importOriginal) => {
@@ -264,14 +263,7 @@ const CFG: FilterCfg = {
   smartMerge: false,
 }
 
-// uncached oracle: buildUnits + tally with the same drop rules as worker.ts runPipeline
-const dropFor = (cfg: FilterCfg) => (t: Tok) =>
-  (!cfg.tech && t.cls === 'tech') ||
-  (!cfg.digits && t.cls === 'digits') ||
-  (!cfg.stopwords && isStopword(t.word)) ||
-  (!cfg.mat && matchesMat(t.word, cfg.customMat)) ||
-  (!cfg.laugh && matchesLaugh(t.word, cfg.customLaugh))
-
+// uncached oracle: buildUnits + tally with the production drop rules
 const oracle = (chat: ChatExport, cfg: FilterCfg) => {
   const ia = new Intern()
   return { ia, tallyResult: tally(buildUnits(chat, ia, dropFor(cfg))) }
