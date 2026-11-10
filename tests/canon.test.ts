@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { canon } from '../src/core/canon'
 import * as canonMod from '../src/core/canon'
-import { Intern } from '../src/core/intern'
+import { Intern, MAX_TOKEN_ID } from '../src/core/intern'
 
 describe('canon', () => {
   it('stems verb forms into a single key', () => {
@@ -77,5 +77,12 @@ describe('Intern memoization', () => {
     expect(tech.id).not.toBe(plain.id)
     expect(interner.forms.get(plain.id)!.get('talked')).toBe(1)
     expect(interner.forms.get(tech.id)!.get('talked')).toBe(1)
+  })
+
+  it('assigns the last valid id, then throws', () => {
+    const ia = new Intern()
+    Reflect.set(ia, 'nextId', MAX_TOKEN_ID)
+    expect(ia.intern('last', 'plain').id).toBe(MAX_TOKEN_ID)
+    expect(() => ia.intern('overflow', 'plain')).toThrow(RangeError)
   })
 })

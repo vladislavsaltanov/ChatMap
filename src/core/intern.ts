@@ -1,6 +1,9 @@
 import { canon } from './canon'
 import type { TokClass } from './types'
 
+// Token ids stay below 2^24 so edgeKey can pack a pair into one exact number.
+export const MAX_TOKEN_ID = 2 ** 24 - 1
+
 export class Intern {
   private nextId = 1
   private canonToId = new Map<string, number>()
@@ -19,6 +22,7 @@ export class Intern {
     const key = canon(word, cls)
     let id = this.canonToId.get(key)
     if (id === undefined) {
+      if (this.nextId > MAX_TOKEN_ID) throw new RangeError('token id overflow')
       id = this.nextId++
       this.canonToId.set(key, id)
       this.idToCanon.set(id, key)
