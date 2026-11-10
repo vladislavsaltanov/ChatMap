@@ -1,6 +1,7 @@
 import { escapeHtml } from '../core/escapeHtml'
 import type Graph from 'graphology'
-import { isOverridableKey, parseLabelOverrides } from '../core/labelOverrides'
+import { applyLabelOverrides, parseLabelOverrides } from '../core/labelOverrides'
+import type { LabelOverrideChange } from '../core/labelOverrides'
 
 const STORAGE_KEY = 'chatmap.labels'
 
@@ -12,25 +13,12 @@ export function getLabelOverrides(): Record<string, string> {
   }
 }
 
-export function saveLabelOverride(canon: string, label: string): void {
-  if (!isOverridableKey(canon)) return
-  try {
-    const overrides = getLabelOverrides()
-    overrides[canon] = label
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides))
-  } catch {
-    // Ignore storage quota or disabled errors
-  }
-}
-
-export function clearLabelOverride(canon: string): void {
-  try {
-    const overrides = getLabelOverrides()
-    delete overrides[canon]
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides))
-  } catch {
-    // Ignore storage errors
-  }
+// UI Command: single read, single write, throws on storage failure.
+// Null result (forbidden key) skips the write silently, like parse skips it.
+export function commitLabelOverrides(changes: LabelOverrideChange[]): void {
+  const next = applyLabelOverrides(localStorage.getItem(STORAGE_KEY), changes)
+  if (next === null) return
+  localStorage.setItem(STORAGE_KEY, next)
 }
 
 export type NodeDetails = {
@@ -131,9 +119,16 @@ export class NodePanel {
       if (!this.currentDetails) return
       // Also drop a legacy key saved under the label itself, otherwise an old
       // override could survive the reset and be re-applied on the next render.
-      clearLabelOverride(this.currentDetails.canon)
-      clearLabelOverride(this.currentDetails.label)
-      clearLabelOverride(this.currentDetails.defaultLabel)
+      try {
+        commitLabelOverrides([
+          [this.currentDetails.canon, null],
+          [this.currentDetails.label, null],
+          [this.currentDetails.defaultLabel, null],
+        ])
+      } catch {
+        // Storage failed: keep the old label visible.
+        return
+      }
       this.currentDetails.label = this.currentDetails.defaultLabel
       this.titleEl.textContent = this.currentDetails.label
       this.renderForms()
@@ -212,9 +207,14 @@ export class NodePanel {
       btn.innerHTML = `<span>${escapeHtml(form)}</span><span class="num">${cnt}</span>`
       btn.addEventListener('click', () => {
         if (!this.currentDetails) return
+        try {
+          commitLabelOverrides([[this.currentDetails.canon, form]])
+        } catch {
+          // Storage failed: keep the old label visible.
+          return
+        }
         this.currentDetails.label = form
         this.titleEl.textContent = form
-        saveLabelOverride(this.currentDetails.canon, form)
         this.renderForms()
         this.syncAutoState()
         if (this.onOverrideCallback) {

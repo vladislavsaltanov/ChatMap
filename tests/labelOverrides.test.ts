@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isOverridableKey, parseLabelOverrides } from '../src/core/labelOverrides'
+import { applyLabelOverrides, isOverridableKey, parseLabelOverrides } from '../src/core/labelOverrides'
 
 describe('parseLabelOverrides', () => {
   it('keeps a valid flat object of string values', () => {
@@ -37,5 +37,17 @@ describe('parseLabelOverrides', () => {
     expect(Object.keys(result)).toEqual(['ok'])
     expect(result.constructor).toBeUndefined()
     expect(result.toString).toBeUndefined()
+  })
+})
+
+describe('applyLabelOverrides', () => {
+  it('applies several changes in one serialization', () => {
+    expect(applyLabelOverrides('{"a":"x","b":"y"}', [['a', null], ['b', null]])).toBe('{}')
+    expect(applyLabelOverrides(null, [['дом', 'домик']])).toBe('{"дом":"домик"}')
+  })
+
+  it('rejects forbidden keys for save and clear', () => {
+    expect(applyLabelOverrides(null, [['__proto__', 'x']])).toBeNull()
+    expect(applyLabelOverrides(null, [['__proto__', null]])).toBeNull()
   })
 })
