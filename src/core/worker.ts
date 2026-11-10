@@ -35,6 +35,14 @@ function send(msg: WorkerOut) {
   self.postMessage(msg)
 }
 
+// New file = new identity space: stale canon->position entries would
+// pin same-spelled words of the new chat to the old chat's coordinates.
+function resetWorkerState(): void {
+  chat = null
+  pipelineCache = new PipelineCache()
+  positionsCache.clear()
+}
+
 function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
   if (!chat) return
 
@@ -199,13 +207,11 @@ self.onmessage = (e: MessageEvent<WorkerIn>) => {
   const msg = e.data
   try {
     if (msg.type === 'open') {
+      resetWorkerState()
       send({ type: 'progress', done: 5, total: 100, stage: 'Чтение JSON...' })
-      chat = parse(new TextDecoder().decode(msg.buf))
-      if (chat.warn) send({ type: 'warn', message: chat.warn })
-      pipelineCache = new PipelineCache()
-      // New file = new identity space: stale canon->position entries would
-      // pin same-spelled words of the new chat to the old chat's coordinates.
-      positionsCache.clear()
+      const nextChat = parse(new TextDecoder().decode(msg.buf))
+      if (nextChat.warn) send({ type: 'warn', message: nextChat.warn })
+      chat = nextChat
       send({ type: 'progress', done: 30, total: 100, stage: 'Определение авторов...' })
 
       const authorMap = new Map<AuthorId, string>()
