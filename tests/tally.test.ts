@@ -423,6 +423,43 @@ describe('PipelineCache', () => {
     expect(onTokenizeProgress.mock.calls).toEqual([[5000, 5005]])
   })
 
+  it('keeps a second filter slot so an A->B->A toggle recomputes once', () => {
+    const cache = new PipelineCache()
+    const cfgA = { ...CFG, smartMerge: true }
+    const cfgB = { ...cfgA, mat: true }
+    cache.resolve(chat, cfgA)
+
+    const onTally = vi.fn()
+    const onMerge = vi.fn()
+    cache.resolve(chat, cfgB, { onTallyStart: onTally, onMergeStart: onMerge })
+    expect(onTally).toHaveBeenCalledTimes(1)
+    expect(onMerge).toHaveBeenCalledTimes(1)
+
+    // Coming back must reuse the first slot instead of paying for the tally again.
+    const back = cache.resolve(chat, cfgA, { onTallyStart: onTally, onMergeStart: onMerge })
+    expect(onTally).toHaveBeenCalledTimes(1)
+    expect(onMerge).toHaveBeenCalledTimes(1)
+    expect(back).toMatchObject({ tallyCached: true, mergeCached: true })
+    expect(back.tallyResult).toEqual(oracle(chat, cfgA).tallyResult)
+  })
+
+  it('evicts the least recently used filter slot beyond the cap', () => {
+    const cache = new PipelineCache()
+    const cfgB = { ...CFG, mat: true }
+    const cfgC = { ...CFG, laugh: true }
+    cache.resolve(chat, CFG)
+    cache.resolve(chat, cfgB)
+    // The third distinct filter key drops the least recently used one (CFG).
+    cache.resolve(chat, cfgC)
+
+    const onTally = vi.fn()
+    cache.resolve(chat, cfgB, { onTallyStart: onTally })
+    expect(onTally).not.toHaveBeenCalled()
+
+    cache.resolve(chat, CFG, { onTallyStart: onTally })
+    expect(onTally).toHaveBeenCalledTimes(1)
+  })
+
   it('matches the uncached buildUnits + tally result across a sequence of filter changes', () => {
     const cache = new PipelineCache()
     const cfgs: FilterCfg[] = [

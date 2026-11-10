@@ -350,19 +350,34 @@ export type PipelineResult = {
   mergeCached: boolean
 }
 
-// shortcut: keeps one chat and one tally/merge entry, so flipping back to an older filter recomputes; upgrade to a Map keyed by filterKey if the UI flips often
+// Filter toggles in the UI are A->B->A, so two slots make the return trip free.
+// Each tally slot keeps a full pairs map: two slots = two tallies alive at once.
+// shortcut: fixed two slots, no byte accounting; raise slots only with a memory budget
+const CACHE_SLOTS = 2
+
+// Insertion order doubles as recency: the first key is the oldest. Re-inserting an
+// existing key refreshes it, so one function covers both store and touch.
+function remember<K, V>(map: Map<K, V>, key: K, value: V, slots: number): V {
+  map.delete(key)
+  map.set(key, value)
+  while (map.size > slots) map.delete(map.keys().next().value as K)
+  return value
+}
+
+// Keeps one chat, its tokens, and up to CACHE_SLOTS tally/merge entries.
+// Tokenization is chat-scoped; only the filter-dependent stages are slotted.
 export class PipelineCache {
   private chat?: ChatExport
   private tokenized?: TokUnit[][]
-  private tallied?: { key: string; ia: Intern; tallyResult: TallyResult }
-  private merged?: { key: string; merged: Map<number, number> }
+  private tallied = new Map<string, { ia: Intern; tallyResult: TallyResult }>()
+  private merged = new Map<string, Map<number, number>>()
 
   resolve(chat: ChatExport, cfg: FilterCfg, callbacks: PipelineCallbacks = {}): PipelineResult {
     if (chat !== this.chat) {
       this.chat = chat
       this.tokenized = undefined
-      this.tallied = undefined
-      this.merged = undefined
+      this.tallied.clear()
+      this.merged.clear()
     }
 
     if (!this.tokenized) {
@@ -372,7 +387,11 @@ export class PipelineCache {
 
     const filterKey = filterCacheKey(cfg)
     let tallyCached = true
-    if (!this.tallied || this.tallied.key !== filterKey) {
+    let tallied = this.tallied.get(filterKey)
+    if (tallied) {
+      // touch so the least recently used key stays first in insertion order
+      tallied = remember(this.tallied, filterKey, tallied, CACHE_SLOTS)
+    } else {
       tallyCached = false
       callbacks.onTallyStart?.()
       const tallyIa = new Intern()
@@ -381,20 +400,22 @@ export class PipelineCache {
       for (let i = 0; i < chat.messages.length; i++) {
         addUnits(units, chat.messages[i], this.tokenized[i], tallyIa, dropTok)
       }
-      this.tallied = { key: filterKey, ia: tallyIa, tallyResult: tally(units) }
+      tallied = remember(this.tallied, filterKey, { ia: tallyIa, tallyResult: tally(units) }, CACHE_SLOTS)
     }
-    const { ia, tallyResult } = this.tallied
+    const { ia, tallyResult } = tallied
 
     let merged: Map<number, number> | undefined
     let mergeCached = true
     if (cfg.smartMerge) {
       const mergeKey = mergeCacheKey(cfg)
-      if (!this.merged || this.merged.key !== mergeKey) {
+      const cached = this.merged.get(mergeKey)
+      if (cached) {
+        merged = remember(this.merged, mergeKey, cached, CACHE_SLOTS)
+      } else {
         mergeCached = false
         callbacks.onMergeStart?.()
-        this.merged = { key: mergeKey, merged: mergeTokens(tallyResult, ia) }
+        merged = remember(this.merged, mergeKey, mergeTokens(tallyResult, ia), CACHE_SLOTS)
       }
-      merged = this.merged.merged
     }
 
     return { ia, tallyResult, merged, tallyCached, mergeCached }
