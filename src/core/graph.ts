@@ -263,6 +263,54 @@ export function collisionIterationsForCount(nodeCount: number): number {
   return nodeCount <= 400 ? 80 : 30
 }
 
+// Grid broadphase for collision relaxation: index current positions into
+// 120-unit cells and return index pairs sharing a neighbourhood. The range
+// covers the largest possible overlap so big hubs stay correct; the exact
+// distance check stays in resolveCollisions. Rebuilt on every pass.
+const COLLISION_CELL = 120
+
+export function collisionCandidatePairs(
+  nodes: Array<{ x: number; y: number; size?: number }>,
+  padding: number,
+  scaleFactor: number,
+  padScale: ((size: number) => number) | null
+): Array<[number, number]> {
+  const count = nodes.length
+  if (count < 2) return []
+  const scale = Math.min(scaleFactor, MAX_SCALE_FACTOR)
+  const padFor = (size: number | undefined): number => {
+    const s = size || 20
+    return padScale ? padScale(s) : padding
+  }
+  const radii = nodes.map((n) => (n.size || 20) * scale + padFor(n.size) * 0.5)
+  // Plain loop: Math.max(...radii) throws RangeError on very large maps.
+  let maxR = 0
+  for (const r of radii) if (r > maxR) maxR = r
+  const grid = new Map<string, number[]>()
+  for (let i = 0; i < count; i++) {
+    const key = `${Math.floor(nodes[i].x / COLLISION_CELL)}:${Math.floor(nodes[i].y / COLLISION_CELL)}`
+    const bucket = grid.get(key)
+    if (bucket) bucket.push(i)
+    else grid.set(key, [i])
+  }
+  const pairs: Array<[number, number]> = []
+  for (let i = 0; i < count; i++) {
+    const cx = Math.floor(nodes[i].x / COLLISION_CELL)
+    const cy = Math.floor(nodes[i].y / COLLISION_CELL)
+    const range = Math.max(1, Math.ceil((radii[i] + maxR) / COLLISION_CELL))
+    for (let gx = cx - range; gx <= cx + range; gx++) {
+      for (let gy = cy - range; gy <= cy + range; gy++) {
+        const bucket = grid.get(`${gx}:${gy}`)
+        if (!bucket) continue
+        for (const j of bucket) {
+          if (j > i) pairs.push([i, j])
+        }
+      }
+    }
+  }
+  return pairs
+}
+
 export function resolveCollisions(
   nodes: Array<{ id: number; x: number; y: number; size?: number }>,
   padding: number = 8,
@@ -283,42 +331,41 @@ export function resolveCollisions(
     let hasCollision = false
     let maxShift = 0
 
-    for (let i = 0; i < count; i++) {
+    const pairs = collisionCandidatePairs(nodes, padding, scaleFactor, padScale)
+
+    for (const [i, j] of pairs) {
       const a = nodes[i]
       const ra = (a.size || 20) * scale + padFor(a.size) * 0.5
+      const b = nodes[j]
+      const rb = (b.size || 20) * scale + padFor(b.size) * 0.5
+      const minDist = ra + rb
 
-      for (let j = i + 1; j < count; j++) {
-        const b = nodes[j]
-        const rb = (b.size || 20) * scale + padFor(b.size) * 0.5
-        const minDist = ra + rb
+      let dx = b.x - a.x
+      let dy = b.y - a.y
+      let distSq = dx * dx + dy * dy
 
-        let dx = b.x - a.x
-        let dy = b.y - a.y
-        let distSq = dx * dx + dy * dy
-
-        if (distSq < minDist * minDist) {
-          hasCollision = true
-          let dist = Math.sqrt(distSq)
-          if (dist < 0.001) {
-            dx = ((i * 17 + j * 31) % 10 - 5) || 1
-            dy = ((i * 23 + j * 13) % 10 - 5) || 1
-            dist = Math.sqrt(dx * dx + dy * dy)
-          }
-
-          const overlap = minDist - dist
-          if (overlap > maxShift) {
-            maxShift = overlap
-          }
-
-          const nx = dx / dist
-          const ny = dy / dist
-          const shift = overlap * 0.5
-
-          a.x -= nx * shift
-          a.y -= ny * shift
-          b.x += nx * shift
-          b.y += ny * shift
+      if (distSq < minDist * minDist) {
+        hasCollision = true
+        let dist = Math.sqrt(distSq)
+        if (dist < 0.001) {
+          dx = ((i * 17 + j * 31) % 10 - 5) || 1
+          dy = ((i * 23 + j * 13) % 10 - 5) || 1
+          dist = Math.sqrt(dx * dx + dy * dy)
         }
+
+        const overlap = minDist - dist
+        if (overlap > maxShift) {
+          maxShift = overlap
+        }
+
+        const nx = dx / dist
+        const ny = dy / dist
+        const shift = overlap * 0.5
+
+        a.x -= nx * shift
+        a.y -= ny * shift
+        b.x += nx * shift
+        b.y += ny * shift
       }
     }
 
