@@ -1,7 +1,7 @@
 # Perf Pass A — дешёвые победы (без смены архитектуры)
 
 Актуализировано: 2026-11-10. План добавлен `cd14976`; код после 09.11 ушёл вперёд.
-Статус: приведён к `main`; это не список невыполненных работ.
+Статус: ЗАКРЫТ. Вердикт: `specs/verifications/2026-11-10-perf-pass-a.md`.
 
 ## Контекст
 
@@ -55,16 +55,16 @@ Preflight. `specs/state.yaml` не ведётся.
 
 | N | Статус | Что в коде | Verify |
 | --- | --- | --- | --- |
-| 0 | TODO | Baseline до правок | `npm run test -- tests/graph.test.ts --reporter=verbose`, 3 прогона |
+| 0 | DONE | База снята с `326f0e9` (гейт) и `42159fc` (до pass A); метод и числа — в вердикте | `tests/bench-tmp.test.ts`, 3 прогона |
 | 1 | DONE | `worker.ts:208` `positionsCache.clear()` в `open` | `typecheck` + `test` + ручной open→open |
 | 2 | DONE | `graph.ts:388` FA2 1200/20; `graph.ts:596` collision full/25 | `tests/graph.test.ts` |
 | 3 | DONE | `tally.ts:40` числовой `edgeKey`, `KEY_BASE = 2**24` | `tests/tally.test.ts`, `tests/select.test.ts` |
 | 4 | DONE | `geometry.ts:466` индекс смежности | `tests/geometry.test.ts` |
 | 5 | DONE | `canon.ts:20` `RU_ENDINGS_BY_LAST` | `tests/canon.test.ts` |
-| 6 | PARTIAL | `dropFor` short-circuit; индекс встроенных корней в `filters.ts` | `tests/tally.test.ts`, `tests/filters.test.ts` |
+| 6 | DONE | `compileWordRules`: списки компилируются раз на конфиг, слово нормализуется раз; `dropFor` — тонкая обёртка | `tests/tally.test.ts`, `tests/filters.test.ts` |
 | 7 | DONE | `pruneSortedBackbone` не пересортировывает вход | `tests/select.test.ts` |
-| 8 | TODO | `tally.ts:242,267` `new Set<number>()` на пару | `tests/tally.test.ts` |
-| 9 | TODO | Замер «после» + вердикт | `npm run typecheck && npm run test && npm run build` |
+| 8 | DONE | `92ac1dd`: stamp-мапы вместо `new Set` на пару | `tests/tally.test.ts` |
+| 9 | DONE | Замер «после» + вердикт | `npm run typecheck && npm run test && npm run build` |
 
 ## Находки аудита
 
@@ -82,13 +82,19 @@ Preflight. `specs/state.yaml` не ведётся.
   `O(N + Σ d·log d)`, а не `O(N+E)`.
 - `matchesMatCustom` и `isMatAllowlisted` остаются линейными; шаг 6 частичен.
 
+Статус находок на 2026-11-10: закрыты `Intern.nextId` (`fbe8314`), устаревший комментарий
+(`e55b0e8`), дубль `dropFor` в тестах (`521f078` + тесты в `tests/filters.test.ts`),
+линейные `matchesMatCustom`/`isMatAllowlisted` (шаг 6), per-pair `Set` (шаг 8).
+Открыты: один слот `PipelineCache`, лишние сортировки, `armsFromIndex`.
+
 ## Кандидаты B/C
 
 Рассматриваются только после HARD GATE:
 
 - Многослотовый LRU-кеш `PipelineCache` по `filterCacheKey` / `mergeCacheKey`.
-- Замена per-pair `Set` на stamp-массив или прямой probe `pairs`.
 - Top-5 соседей без полной сортировки в `armsFromIndex`.
+
+Снят: замена per-pair `Set` — закрыта шагом 8.
 
 ## Финал
 
