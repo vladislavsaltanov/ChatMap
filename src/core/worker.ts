@@ -256,7 +256,7 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
     }
     const aspect = (maxX - minX) / Math.max(1e-9, maxY - minY)
     console.log(
-      `[chatmap-layout] leaf-P1 aspect hold 1.8: nodes=${layoutResult.positions.size} aspect=${aspect.toFixed(2)} fullRun=${fullRun}`,
+      `[chatmap-layout] leaf-P1 aspect hold 2.0: nodes=${layoutResult.positions.size} aspect=${aspect.toFixed(2)} fullRun=${fullRun}`,
     )
   }
 

@@ -474,7 +474,8 @@ export function spread(
   // being owned by one stray leaf while the tissue stays round.
   // Stretch-only, never shrink: expanding one axis only grows clearances, so the
   // solver's work is never undone (S4 stays green).
-  const SPREAD_ASPECT = 1.8
+  // Must match the hold target in graph.ts: 2.0 = a flattened plane, 1.8 read too round.
+  const SPREAD_ASPECT = 2.0
   let minX = Infinity
   let minY = Infinity
   let maxX = -Infinity
