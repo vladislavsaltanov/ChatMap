@@ -1,4 +1,4 @@
-import { armsFromIndex, buildArmsIndex, bundleEdges, edgeAlpha, nodeFitSize, phaseFor } from './geometry'
+import { armsFromIndex, buildArmsIndex, bundleEdges, edgeAlpha, footprintScale, nodeFitSize, phaseFor } from './geometry'
 import { getLruCache, layout, setLruCache, type LayoutNodeInput, type LayoutResult } from './graph'
 import type { Intern } from './intern'
 import { parse } from './parse'
@@ -85,6 +85,16 @@ function buildLayoutInput(
     nodeInfoMap.set(n.id, { bestForm, forms: formsList, size })
   }
 
+  // Screen-area budget: the same px size law cannot serve a 33-word and a
+  // 1000-word map. Rescale the whole distribution once — uniformly, so the size
+  // hierarchy survives and only its on-screen scale adapts to the map size.
+  const sizeScale = footprintScale([...nodeInfoMap.values()].map((info) => info.size))
+  if (sizeScale < 1) {
+    for (const info of nodeInfoMap.values()) {
+      info.size = Math.round(info.size * sizeScale * 10) / 10
+    }
+  }
+
   const layoutNodes = selection.nodes.map((n) => {
     const canonStr = ia.getCanon(n.id) || String(n.id)
     const info = nodeInfoMap.get(n.id)
@@ -116,7 +126,15 @@ function buildMapMessage(
     const p = layoutResult.positions.get(n.id) || { x: 0, y: 0 }
     return { id: n.id, x: p.x, y: p.y }
   })
-  const bundles = bundleEdges(posList, backboneEdges, selection.maxWeight)
+  // Edge geometry is routed through the figure's own funnels: fibres of one
+  // corridor share control points, so they land on top of each other and merge.
+  const bundles = bundleEdges(posList, backboneEdges, selection.maxWeight, {
+    ports: layoutResult.ports ?? new Map(),
+    groupOf: layoutResult.groupOf ?? new Map(),
+    // Fascicle identity lets intra-topic fibres share one trunk per stem instead of
+    // fanning 200 individual curves out of the soma.
+    stemOf: layoutResult.stemOf,
+  })
   const armsIndex = buildArmsIndex(posList, backboneEdges)
 
   for (const n of selection.nodes) {
@@ -217,12 +235,30 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
 
   const { layoutNodes, backboneEdges, nodeInfoMap } = buildLayoutInput(selection, ia, positionsCache)
 
-  send({ type: 'progress', done: 85, total: 100, stage: 'Укладка графа (ForceAtlas2)...' })
+  send({ type: 'progress', done: 85, total: 100, stage: 'Раскладка карты...' })
   const layoutResult = layout(layoutNodes, backboneEdges, {
     seed: 1337,
     fullRun,
     onStage: (done, stage) => send({ type: 'progress', done, total: 100, stage }),
   })
+  // Runtime stamp: proves which layout code the browser runs and what shape
+  // it produced. Read it in DevTools console after reopening the export.
+  {
+    let minX = Infinity
+    let maxX = -Infinity
+    let minY = Infinity
+    let maxY = -Infinity
+    for (const p of layoutResult.positions.values()) {
+      if (p.x < minX) minX = p.x
+      if (p.x > maxX) maxX = p.x
+      if (p.y < minY) minY = p.y
+      if (p.y > maxY) maxY = p.y
+    }
+    const aspect = (maxX - minX) / Math.max(1e-9, maxY - minY)
+    console.log(
+      `[chatmap-layout] leaf-P1 aspect hold 1.8: nodes=${layoutResult.positions.size} aspect=${aspect.toFixed(2)} fullRun=${fullRun}`,
+    )
+  }
 
   for (const [id, pos] of layoutResult.positions) {
     const canonStr = ia.getCanon(id) || String(id)

@@ -110,6 +110,25 @@ function tokenizeChat(chat: ChatExport, onProgress?: Progress): TokUnit[][] {
   return out
 }
 
+// Corpus-wide surface counts for the stemmer. The corpus IS the dictionary: a stem
+// that is itself a far more frequent standalone word must not absorb a rare one
+// (see canon.ts). Counted BEFORE any filter, so the answer does not depend on the
+// active filter or on token order.
+// ponytail: one linear pass over the cached units (~100k distinct forms); revisit
+// only if tokenize ever stops dominating the pipeline.
+function countSurfaces(tokenized: TokUnit[][]): Map<string, number> {
+  const counts = new Map<string, number>()
+  for (const units of tokenized) {
+    for (const unit of units) {
+      for (const tok of unit) {
+        if (tok.cls !== 'plain') continue
+        counts.set(tok.word, (counts.get(tok.word) ?? 0) + 1)
+      }
+    }
+  }
+  return counts
+}
+
 // keeps the max candidate weight per pair key within one message
 function relax(best: Map<number, number>, u: number, v: number, w: number) {
   if (u === v) return
@@ -369,6 +388,7 @@ function remember<K, V>(map: Map<K, V>, key: K, value: V, slots: number): V {
 export class PipelineCache {
   private chat?: ChatExport
   private tokenized?: TokUnit[][]
+  private surfaceCounts?: Map<string, number>
   private tallied = new Map<string, { ia: Intern; tallyResult: TallyResult }>()
   private merged = new Map<string, Map<number, number>>()
 
@@ -376,6 +396,7 @@ export class PipelineCache {
     if (chat !== this.chat) {
       this.chat = chat
       this.tokenized = undefined
+      this.surfaceCounts = undefined
       this.tallied.clear()
       this.merged.clear()
     }
@@ -383,6 +404,7 @@ export class PipelineCache {
     if (!this.tokenized) {
       callbacks.onTokenizeStart?.()
       this.tokenized = tokenizeChat(chat, callbacks.onTokenizeProgress)
+      this.surfaceCounts = countSurfaces(this.tokenized)
     }
 
     const filterKey = filterCacheKey(cfg)
@@ -394,7 +416,7 @@ export class PipelineCache {
     } else {
       tallyCached = false
       callbacks.onTallyStart?.()
-      const tallyIa = new Intern()
+      const tallyIa = new Intern(this.surfaceCounts)
       const dropTok = dropFor(cfg)
       const units: RawUnit[] = []
       for (let i = 0; i < chat.messages.length; i++) {

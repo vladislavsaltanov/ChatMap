@@ -12,6 +12,11 @@ export class Intern {
   public idToCanon = new Map<number, string>()
   public idToCls = new Map<number, TokClass>()
 
+  // formCounts: corpus-wide surface frequencies. The stemmer uses them to refuse a
+  // merge into a standalone word that dominates the candidate (see canon.ts).
+  // Omitted by tests and single-token callers, which keep the old stemming.
+  constructor(private readonly formCounts?: Map<string, number>) {}
+
   intern(word: string, cls: TokClass): { id: number; cls: TokClass } {
     const surfKey = `${cls}:\0${word}`
     const hit = this.surfaceToId.get(surfKey)
@@ -19,7 +24,7 @@ export class Intern {
       this.forms.get(hit)!.set(word, (this.forms.get(hit)!.get(word) || 0) + 1)
       return { id: hit, cls: this.idToCls.get(hit)! }
     }
-    const key = canon(word, cls)
+    const key = canon(word, cls, this.formCounts)
     let id = this.canonToId.get(key)
     if (id === undefined) {
       if (this.nextId > MAX_TOKEN_ID) throw new RangeError('token id overflow')
