@@ -32,6 +32,9 @@ const DEFAULT_FILTER_CFG: FilterCfg = {
 
 let currentFilterCfg: FilterCfg = { ...DEFAULT_FILTER_CFG }
 let currentViewCfg: ViewCfg = { mode: { kind: 'together' }, topN: 600, minWeight: 0 }
+// Rolled on every open so each generation gets its own figure; filter switches
+// keep it so the silhouette stays stable while browsing one chat.
+let layoutSeed = 1337
 
 function send(msg: WorkerOut) {
   self.postMessage(msg)
@@ -237,7 +240,7 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
 
   send({ type: 'progress', done: 85, total: 100, stage: 'Раскладка карты...' })
   const layoutResult = layout(layoutNodes, backboneEdges, {
-    seed: 1337,
+    seed: layoutSeed,
     fullRun,
     onStage: (done, stage) => send({ type: 'progress', done, total: 100, stage }),
   })
@@ -256,7 +259,7 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
     }
     const aspect = (maxX - minX) / Math.max(1e-9, maxY - minY)
     console.log(
-      `[chatmap-layout] leaf-P1 aspect hold 2.0: nodes=${layoutResult.positions.size} aspect=${aspect.toFixed(2)} fullRun=${fullRun}`,
+      `[chatmap-layout] leaf-P1 aspect hold 2.0: nodes=${layoutResult.positions.size} aspect=${aspect.toFixed(2)} fullRun=${fullRun} seed=${layoutSeed}`,
     )
   }
 
@@ -274,6 +277,7 @@ self.onmessage = (e: MessageEvent<WorkerIn>) => {
   try {
     if (msg.type === 'open') {
       resetWorkerState()
+      layoutSeed = (Math.random() * 0x7fffffff) | 0
       send({ type: 'progress', done: 5, total: 100, stage: 'Чтение JSON...' })
       const nextChat = parse(new TextDecoder().decode(msg.buf))
       if (nextChat.warn) send({ type: 'warn', message: nextChat.warn })
