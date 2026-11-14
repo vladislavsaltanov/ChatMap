@@ -5,6 +5,9 @@ import {
   clamp01,
   edgeFrequencyTier as edgeFrequencyTierCore,
   edgeOpacity as edgeOpacityCore,
+  enterProgress as enterProgressCore,
+  labelAlphaFor as labelAlphaForCore,
+  plateAlpha,
   scalePhase,
   smoothstep,
 } from '../core/style-math'
@@ -138,70 +141,16 @@ function lodNodeOpacity(sizePx: number, g: CustomGraphState, attrs: any): number
   return Math.round(bodyAlpha(sizePx, g) * enterProgress(attrs, g) * 50) / 50
 }
 
-// Fresh-map entrance: the whole map fades in over ENTER_TOTAL, and every word
-// starts on its own offset, so the figure assembles as a wave instead of a
-// single global fade. Both timings must match the tween in MapView.render().
-const ENTER_MS = 900
-const ENTER_OFFSET_MS = 900
-export const ENTER_TOTAL_MS = ENTER_MS + ENTER_OFFSET_MS
+export { ENTER_TOTAL_MS } from '../core/style-math'
 
-// Per-node entrance progress 0..1 (eased). The offset comes from the node's own
-// deterministic phase, so the same words always arrive in the same order.
 function enterProgress(attrs: any, g: CustomGraphState): number {
-  const clock = clamp01(g.enterAlpha ?? 1)
-  const phase = clamp01((attrs?.phase as number) ?? 0)
-  const elapsed = clock * ENTER_TOTAL_MS - phase * ENTER_OFFSET_MS
-  const p = clamp01(elapsed / ENTER_MS)
-  // easeOutCubic: quick arrival, soft settle
-  return 1 - Math.pow(1 - p, 3)
+  return enterProgressCore((attrs?.phase as number) ?? 0, g.enterAlpha ?? 1)
 }
 
-// Query: label alpha. Words stay readable much farther out than before:
-// hubs never fade, medium words survive to ratio 2.2, satellites to ~1.8.
-// The kegel itself is constant in screen px (labelZoomRatio), so there is no
-// "inside a shrunken bubble" penalty any more.
-// Default when the map has not published its own bar yet (tiny fixtures, first frame).
-const DEFAULT_LABEL_CORE_MIN = 6
+// Caption alpha kernels (labelMinCore, labelAlphaFor) live in style-math.
 
-// A caption is a NAME, not a texture: at the overview only bodies above the map's
-// own prominence bar carry one. The bar is the p80 of the filled size distribution,
-// published per map by MapView, because a fixed px threshold fails in both
-// directions — measured: with 12px captions a 600-word map rendered 221 captions
-// (text on almost every dot), while the old 18.5px kegel allowed only 48 by
-// collision alone. The bar rises slightly on zoom-out so words stay landmarks.
-function labelMinCore(ratio: number, minCore: number): number {
-  return Math.max(3.5, minCore * (0.85 + 0.15 * clamp01(ratio)))
-}
-
-function labelAlphaFor(attrs: any, ratio: number, minCore: number = DEFAULT_LABEL_CORE_MIN): number {
-  const size = drawnCore(attrs)
-  // The gate moves with the camera, so the decision is continuous instead of a pop.
-  const bar = labelMinCore(ratio, minCore)
-  const gate = smoothstep(bar - 1.2, bar + 1.2, size)
-  let alpha: number
-  if (size >= 22) {
-    // Landmark hubs: always readable; only a slight soften on deep zoom-in.
-    if (ratio < 0.7) {
-      const hubK = clamp01((size - 22) / 30)
-      const zoomDepth = clamp01((0.7 - ratio) / 0.5)
-      alpha = 1 - 0.3 * hubK * Math.pow(zoomDepth, 1.2)
-    } else {
-      alpha = 1
-    }
-  } else if (ratio > 3.4) {
-    alpha = 0
-  } else if (size >= 12) {
-    // Medium words stay legible far beyond the default overview.
-    alpha = ratio <= 1.6 ? 1 : clamp01((3.4 - ratio) / 1.8)
-  } else {
-    // Small satellites: full strength at the default view, slow fade afterwards.
-    const progress = clamp01((2.6 - ratio) / 1.4)
-    const threshold = clamp01((12 - size) / 13) * 0.5
-    alpha = progress <= threshold
-      ? 0
-      : Math.pow((progress - threshold) / (1 - threshold), 1.1)
-  }
-  return Math.round(alpha * gate * 40) / 40
+function labelAlphaFor(attrs: any, ratio: number, minCore?: number): number {
+  return labelAlphaForCore(drawnCore(attrs), ratio, minCore)
 }
 
 // Labels answer to the REAL camera, not the density-biased lodRatio used for
@@ -303,11 +252,12 @@ const LABEL_LIGHT = '#f4f1e8'
 // 20%-alpha text reads as an empty frame, and its edge flickers while the dim
 // tween moves on every hover retarget.
 function plateAlphaFor(s: any, attrs: any, g: CustomGraphState): number {
-  const ego = Boolean(s?.isActive || s?.isHighlighted)
-  const alpha = ego
-    ? enterProgress(attrs, g)
-    : labelTextAlpha(attrs, g) * (1 - 0.55 * (g.dimAlpha ?? 0))
-  return Math.max(0, Math.min(1, alpha))
+  return plateAlpha(
+    Boolean(s?.isActive || s?.isHighlighted),
+    labelTextAlpha(attrs, g),
+    enterProgress(attrs, g),
+    g.dimAlpha ?? 0,
+  )
 }
 
 function labelBackgroundColorFor(attrs: any, s: any, g: CustomGraphState): string {
@@ -335,7 +285,7 @@ export const MAP_SIGMA_SETTINGS: Partial<ReturnType<MapSigma['getSettings']>> = 
   // Words must be readable from afar: never cull a caption just because the
   // body shrank to dust. Collision resolution is done by resolveLabelBoxes.
   labelRenderedSizeThreshold: 0,
-  // ceil(density / ratio²) captions per cell: the heavier 18.5px kegel needs
+  // ceil(density / ratio²) captions per cell: the heavier 20px kegel needs
   // a little more air, so the grid admits fewer words per cell than before.
   labelDensity: 5,
   labelGridCellSize: 120,
@@ -360,12 +310,12 @@ export const MAP_SIGMA_SETTINGS: Partial<ReturnType<MapSigma['getSettings']>> = 
 
 // One kegel for every word. Sigma divides it by labelZoomRatio in the shader;
 // the style pre-multiplies by the same value so the caption stays at its
-// designed 18.5px at every zoom level. Exported because the label collision
+// designed 20px at every zoom level. Exported because the label collision
 // resolver must predict the SAME on-screen text size without reading the applied
 // display data (that read closed a feedback loop and made captions flicker).
-export const LABEL_FONT_PX = 18.5
+export const LABEL_FONT_PX = 20
 
-// Caption weight answers to the body: a 5px dot must not carry the same 18.5px word
+// Caption weight answers to the body: a 5px dot must not carry the same 20px word
 // as a landmark hub, or the text outweighs the map it describes (reported from a real
 // export: captions were the largest thing on screen). 0.62 at dust, 1.0 from ~18px.
 export function labelFontPxFor(attrs: any): number {
@@ -555,6 +505,8 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
     {
       // Photo export: the ego-network is the subject, but the rest of the map
       // keeps the SAME captions as the live screenshot — just quieter.
+      // SAFETY: Sigma hands untyped state to style rules; the cast only reads
+      // an optional flag, never writes through it.
       when: (_a, s, g: CustomGraphState) =>
         Boolean(g.photoMode) && !(s as unknown as CustomNodeState)?.isActive,
       then: {
@@ -633,6 +585,8 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
     },
     {
       // Photo export: context lines remain as a barely visible trace.
+      // SAFETY: Sigma hands untyped state to style rules; the cast only reads
+      // an optional flag, never writes through it.
       when: (_a, s, g: CustomGraphState) =>
         Boolean(g.photoMode) && !(s as unknown as CustomEdgeState)?.isActive,
       then: {
