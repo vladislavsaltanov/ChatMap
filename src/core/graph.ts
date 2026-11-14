@@ -557,7 +557,9 @@ export function layout(
     }
     return { cx, cy, kx, ky }
   }
-  const aspectMap = holdAspect(1.8)
+  // Target 2.0 (was 1.8): the user asked for a clearly flattened plane. This number
+  // must match SPREAD_ASPECT in spread.ts and stay under the S1 upper bound.
+  const aspectMap = holdAspect(2.0)
   for (const p of points) positions.set(p.id, { x: p.x, y: p.y })
 
   const ports = new Map<number, LayoutPort>()

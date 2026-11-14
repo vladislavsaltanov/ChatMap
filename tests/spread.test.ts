@@ -307,11 +307,9 @@ describe('spread — форма фигуры', () => {
       )
       const pts = nodes.map((nd) => res.positions.get(nd.id)!).filter(Boolean)
       expect(knnComponents(pts, 5), `${n} nodes`).toBe(1)
-      // Elongated plane, not a round blob: layout holds data aspect at 1.8
-      // (ink reads ~1.5 on real corpora — labels inflate vertical).
-      // User verdict 2026-11-13: 0.79 reads as a circle.
-      // Elongated plane, not a round blob: the layout holds w/h == 1.5 exactly
-      // (stretch-only aspect hold; user complaint 2026-11-13: measured 0.79).
+      // Elongated plane, not a round blob: the stretch-only hold sets w/h to 2.0.
+      // User verdicts: 0.79 read as a circle (2026-11-13), 1.8 still too round
+      // (2026-11-14), hence the flattened target.
       let minX = Infinity
       let maxX = -Infinity
       let minY = Infinity
@@ -324,7 +322,7 @@ describe('spread — форма фигуры', () => {
       }
       const ratio = (maxX - minX) / Math.max(1e-9, maxY - minY)
       expect(ratio, `${n} nodes aspect`).toBeGreaterThanOrEqual(1.6)
-      expect(ratio, `${n} nodes aspect`).toBeLessThanOrEqual(2.0)
+      expect(ratio, `${n} nodes aspect`).toBeLessThanOrEqual(2.1)
     }
   })
 
