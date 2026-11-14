@@ -1,5 +1,14 @@
 import type Sigma from 'sigma'
-import { coreFrac, egoNodeScale, fanCoreFrac, fisheyePoint, focusYield, labelZoomRatio, lengthFade, LOD_GONE_PX, lodPresence, quadOf, renderedNodeSize, smallness, visualCoreRadius, weakEdgeCeiling, zoomSizeRatio } from '../core/geometry'
+import { coreFrac, egoNodeScale, fanCoreFrac, fisheyePoint, focusYield, labelZoomRatio, quadOf, renderedNodeSize, smallness, visualCoreRadius, zoomSizeRatio } from '../core/geometry'
+import {
+  bodyAlpha as bodyAlphaCore,
+  clamp01,
+  edgeFrequencyTier as edgeFrequencyTierCore,
+  edgeOpacity as edgeOpacityCore,
+  scalePhase,
+  smoothstep,
+} from '../core/style-math'
+import type { EdgeOpacityInput } from '../core/style-math'
 import { DEFAULT_NODE_COLOR, NODE_LABEL_FAMILY } from './neural'
 
 export type CustomNodeState = {
@@ -68,38 +77,8 @@ export type CustomGraphState = {
 
 type MapSigma = Sigma<any, any, any, CustomNodeState, CustomEdgeState, CustomGraphState>
 
-// LOD thresholds for distant overview. Spray dots stay visible (7, not 9):
-// the references show bright terminals everywhere — dissolved dust would erase
-// the very spray the figure is made of.
-const LOD_DUST = 7
-
-const clamp01 = (v: number): number => Math.max(0, Math.min(1, v))
-const smoothstep = (a: number, b: number, x: number): number => {
-  const t = clamp01((x - a) / (b - a))
-  return t * t * (3 - 2 * t)
-}
-
-// Two disclosure stages, both driven by the REAL camera ratio (lodRatio keeps
-// its density bias and stays responsible for labels only).
-//   1. scalePhase — gradual, acts first: small bodies and edge thickness shrink.
-//   2. fadePhase  — short and sharp, acts last: only then opacity removes noise.
-function densityOf(g: CustomGraphState): number {
-  return clamp01(g.mapDensity ?? 0)
-}
-function scalePhase(r: number, g: CustomGraphState): number {
-  return smoothstep(0.35, 0.78, r) * (0.12 + 0.88 * densityOf(g))
-}
-function fadePhase(r: number, g: CustomGraphState): number {
-  return smoothstep(0.82, 1.05, r) * (0.12 + 0.88 * densityOf(g))
-}
-function deepPhase(r: number): number { return smoothstep(1.00, 2.20, r) }
-
-// Lines are quiet by default. They only become visible on hover (active edges
-// bypass this entirely) or on a strong zoom-in. Absolute camera ratio: LOD
-// stages must not resurrect hundreds of fibres on a close-up.
-function edgeReveal(r: number): number {
-  return 1 - smoothstep(0.42, 0.85, r)
-}
+// Style math (clamp, LOD stages, alpha kernels) lives in src/core/style-math.ts;
+// below are only thin adapters extracting Sigma attrs/state into plain numbers.
 
 // Hover and pin both focus an ego-network; the photo uses the same focus.
 function egoActive(g: CustomGraphState): boolean {
@@ -121,110 +100,35 @@ function drawnCore(attrs: any): number {
 // dense map, which turned the silhouette into a sprinkle of invisible dots; 0.62
 // keeps the dust legible as texture while the haystack still recedes.
 function lodNodeScale(core: number, g: CustomGraphState): number {
-  return 1 - 0.62 * smallness(core) * scalePhase(g.cameraRatio ?? 1, g)
+  return 1 - 0.62 * smallness(core) * scalePhase(g.cameraRatio ?? 1, g.mapDensity ?? 0)
 }
 
-// A connection is only as bright as often it is used. The contrast steepens
-// only on DEEP zoom-out; at the default overview frequency stays roughly linear.
+// Thin adapter: Sigma attrs/state in, pure kernel in style-math out.
 function edgeFrequencyTier(attrs: any, g: CustomGraphState): number {
-  const s = clamp01((attrs?.strength as number) ?? 0)
-  return 0.22 + 0.78 * Math.pow(s, 1 + 3 * deepPhase(g.cameraRatio ?? 1))
+  return edgeFrequencyTierCore((attrs?.strength as number) ?? 0, g.cameraRatio ?? 1)
 }
 
-// Overview composition: an edge survives only if its endpoints are still there,
-// it belongs to a tract, and it is the tract's spine rather than a redundant fibre.
-// Every suppressive factor is gated by fadePhase, i.e. applied AFTER the scale stage.
+// Thin adapter: extracts plain numbers from Sigma attrs/state for the pure kernel.
+// Overview cap lives in the kernel (0.16 via weakEdgeCeiling, lifted on zoom-in).
 function edgeOpacity(attrs: any, g: CustomGraphState): number {
-  const r = g.cameraRatio ?? 1
-  const fade = fadePhase(r, g)
-  const core = visualCoreRadius((attrs.lodSize as number) ?? 99)
-  // Point 1: an edge is exactly as present as its WEAKER endpoint. Sharing the
-  // node's own LOD alpha (not a second size guess) is what killed the old bug of
-  // 1000 lines still pointing at bodies that were already gone. No floor: 10% of
-  // a line is still a line into nothing.
-  const ends = bodyAlpha(core, g)
-  // Point 2: a link whose weaker end is a small word never becomes a corridor.
-  const ceiling = weakEdgeCeiling(core)
-  // Only the axis of a tract stays legible; dozens of stacked fibres made the
-  // white slabs. They all come back on zoom-in (fade -> 0).
-  const rank = Math.max(0, (attrs.rank as number) ?? 0)
-  // Fibre suppression is an OVERVIEW treatment. Zoomed into a chunk interior the
-  // eye needs the axons: dots without fibres read as uniform sprinkle no matter
-  // how the nodes are placed. The gate relaxes spine/skeleton below on close-up
-  // (rank-6 fibre 0.13 -> 0.38, not full) while the overview keeps clean axes.
-  const suppressGate = 0.25 + 0.75 * smoothstep(0.30, 0.85, r)
-  // Once a chat is big enough to have crossing corridors, the whole spine
-  // treatment applies; a 30-word map keeps every fibre on close-up.
-  const dense = Math.min(1, densityOf(g) * 1.6) * suppressGate
-  // The axis of a tract stays legible at EVERY LOD, not just on the overview:
-  // dozens of stacked fibres are the visual noise on a close-up, even when each
-  // individual hairline is faint.
-  // Neurone look: every dendrite stays visible. Suppression is dialed to a whisper
-  // (was 1.1/0.6 hiding all but the axis) so fans read as fans, not single lines.
-  const spine = 1 / (1 + rank * (0.35 * dense + 0.3 * fade))
-  // Keep a handful of whole corridors; one stray fibre from every tract is
-  // exactly the "scattered everywhere" noise the overview must not show.
-  const tractRank = Math.max(0, (attrs.tractRank as number) ?? 0)
-  // Only a handful of whole corridors are legible at ANY LOD. On a close-up
-  // that keeps the detail view from turning back into a mesh of stray fibres.
-  const skeleton = 1 - (0.6 * dense + 0.15 * fade) * smoothstep(10, 40, tractRank)
-  const bundle = clamp01((attrs.bundle as number) ?? 0)
-  const isolated = 1 - 0.82 * fade * (1 - bundle)
-  // Fibres are legible in the general view, brighter on strong zoom-in;
-  // hovered edges take the `isActive` style below and stay bright.
-  const quiet = 0.30 + 0.55 * edgeReveal(r)
-  const base = edgeFrequencyTier(attrs, g) * ends * spine * skeleton * isolated * quiet
-  // The web itself is the figure: every fibre gets its whisper, gated only by
-  // endpoint presence (`ends`). Thousands of thin hairlines on black read as
-  // tissue, not mesh — the references prove it. Mesh insurance that stays:
-  // `ends`, the weak cap, `skeleton` for extreme ranks, `reachFade`.
-  const es = clamp01((attrs.strength as number) ?? 0)
-  const trace = 0.07 * (1 - edgeReveal(r)) * (1 - 0.7 * deepPhase(r))
-  // A lone wire across a void is figure, not noise: links much longer than the
-  // median hang off satellites in empty paper — few and isolated by construction,
-  // so showing them cannot rebuild the mesh. Hiding them strands the satellites
-  // as debris and the map reads as broken pieces instead of one web.
-  const reach = (attrs.reach as number) ?? 1
-  const loneWire = 0.10 * smoothstep(2.0, 3.2, reach) * (1 - smoothstep(0.10, 0.40, es)) * ends
-  // Long weak links dissolve by geometric reach (mapview sets it); strong
-  // corridors are spared. Applied to the trace too, or the mesh persists.
-  // The lone wire above is exempt on purpose: it is the anti-debris exception.
-  const reachFade = lengthFade(reach, (attrs.strength as number) ?? 0)
-  // The universal whisper is gated by the SAME endpoint presence: a trace is for
-  // the web of live bodies, not for a link into a body that is no longer drawn.
-  // The weak-link cap is a MAX alpha, not a factor: capping an already quiet line
-  // twice would erase the very connection the cap is supposed to mark as weak.
-  return Math.min(clamp01((g.enterAlpha ?? 1) * reachFade * Math.max(base, trace * ends) + loneWire), ceiling)
+  const input: EdgeOpacityInput = {
+    strength: (attrs?.strength as number) ?? 0,
+    core: visualCoreRadius((attrs.lodSize as number) ?? 99),
+    reach: (attrs.reach as number) ?? 1,
+    rank: (attrs.rank as number) ?? 0,
+    tractRank: (attrs.tractRank as number) ?? 0,
+    bundle: (attrs.bundle as number) ?? 0,
+    cameraRatio: g.cameraRatio ?? 1,
+    lodRatio: g.lodRatio ?? 1,
+    mapDensity: g.mapDensity ?? 0,
+    enterAlpha: g.enterAlpha ?? 1,
+  }
+  return edgeOpacityCore(input)
 }
 
-// Query: LOD alpha of a BODY before the entrance tween — the single number that
-// both the node style and its edges answer to. 0 means the body does not exist:
-// no caption, no line into it, and nothing downstream may resurrect it.
+// Thin adapter: the LOD law itself lives in style-math (single bodyAlpha there).
 function bodyAlpha(core: number, g: CustomGraphState): number {
-  const lodRatio = g.lodRatio ?? 1
-  const alpha = lodTier(core, lodRatio) * (1 - lodDust(core, lodRatio)) * lodPresence(renderedNodeSize(core, g.cameraRatio ?? 1))
-  // Dead zone at the first visible step (the opacity style is quantised to 0.02):
-  // without it a 1% body still counted as alive and kept a 1% line alive with it.
-  return alpha < 0.02 ? 0 : alpha
-}
-
-// Overview dust fade degree: 0 = full brightness, up to 1 = dissolved.
-// The ramp ends exactly where `lodPresence` reaches zero, so brightness and
-// existence never disagree about a body.
-// Quantized to 0.02 to avoid thrashing per-frame caches.
-function lodDust(sizePx: number, lodRatio: number): number {
-  const s = lodScale(sizePx, lodRatio)
-  if (s >= LOD_DUST) return 0
-  const dust = Math.max(0, Math.min(1, (LOD_DUST - s) / (LOD_DUST - LOD_GONE_PX)))
-  return Math.round(dust * 50) / 50
-}
-
-// Zoom-resolved LOD brightness tier: large hubs bright on overview, small nodes dim background.
-function lodTier(sizePx: number, lodRatio: number): number {
-  const s = lodScale(sizePx, lodRatio)
-  if (s >= 8) return 1
-  const ramp = s < 4 ? 0.15 : 0.15 + 0.85 * ((s - 4) / 4)
-  return Math.round(ramp * 20) / 20
+  return bodyAlphaCore(core, g.lodRatio ?? 1, g.cameraRatio ?? 1)
 }
 
 // Query: computes overall node opacity. Hubs stay fully opaque at every zoom:
@@ -667,7 +571,7 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
       // rule: custom stages replace the default visibility mapping.
       visibility: (_a: any, s: { isHidden?: boolean }) => (s.isHidden ? 'hidden' : 'visible'),
       size: (attrs: any, _s: any, g: CustomGraphState) =>
-        ((attrs.size as number) ?? 2.4) * (1 - 0.3 * scalePhase(g.cameraRatio ?? 1, g)),
+        ((attrs.size as number) ?? 2.4) * (1 - 0.3 * scalePhase(g.cameraRatio ?? 1, g.mapDensity ?? 0)),
       opacity: (attrs: any, _s: any, g: CustomGraphState) => edgeOpacity(attrs, g),
       ...({
         path: 'tract',
@@ -676,11 +580,13 @@ export const MAP_SIGMA_STYLES: ReturnType<MapSigma['getStyles']> = {
         strength: { attribute: 'strength', defaultValue: 0 },
         rank: { attribute: 'rank', defaultValue: 0 },
         tractRank: { attribute: 'tractRank', defaultValue: 0 },
-        lod: (_a: any, _s: any, g: CustomGraphState) => scalePhase(g.cameraRatio ?? 1, g),
+        lod: (_a: any, _s: any, g: CustomGraphState) => scalePhase(g.cameraRatio ?? 1, g.mapDensity ?? 0),
         pulse: 0,
       } as Record<string, unknown>),
     },
     {
+      // SAFETY: Sigma hands untyped state to style rules; the cast only reads
+      // an optional flag, never writes through it.
       when: (_a, s) => !(s as unknown as CustomEdgeState)?.isActive,
       then: {
         // Outside the fan the rest of the web must stay VISIBLE, not vanish: the
