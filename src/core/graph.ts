@@ -167,6 +167,45 @@ export type SolverOpts = {
 // the solver reserves `reservePx(size) >= size` plus air.
 const SAME_STEM_PACK = 0.88
 
+// Radius compression factor for the dust tail: past the P90 radius the tail is
+// squeezed toward this multiple of it. 1.45 keeps real structure (a hub stratum can
+// sit wide) while stopping a few leaves from owning the frame.
+const TAIL_CAP = 1.2
+
+// Command: pulls the dust tail inside the frame. The renderer normalises the map by
+// its bounding box, so a few low-degree leaves on the rim cost the whole tissue its
+// scale (real export: the outermost 10% of nodes owned 60% of the width). The radius
+// past P90 is compressed monotonically with an asymptote, so the order of points
+// along a ray never changes; whatever this tightens, the collision passes either
+// side of it clear again.
+function containTail(points: Array<{ x: number; y: number }>): void {
+  const n = points.length
+  // Guard: too few points to have a mass and a tail at all.
+  if (n < 8) return
+  const median = (values: number[]): number => {
+    const s = [...values].sort((a, b) => a - b)
+    return s[Math.min(s.length - 1, Math.floor(s.length * 0.5))]!
+  }
+  const cx = median(points.map((p) => p.x))
+  const cy = median(points.map((p) => p.y))
+  const radii = points.map((p) => Math.hypot(p.x - cx, p.y - cy)).sort((a, b) => a - b)
+  const r0 = radii[Math.min(radii.length - 1, Math.floor(radii.length * 0.9))]!
+  // Guard: a collapsed cloud has no tail worth containing.
+  if (!(r0 > 1e-6)) return
+  const knee = r0 * (TAIL_CAP - 1)
+  for (const p of points) {
+    const dx = p.x - cx
+    const dy = p.y - cy
+    const r = Math.hypot(dx, dy)
+    if (r <= r0) continue
+    const over = r - r0
+    // Strictly increasing in `over` and always below `r`: shrink only, never reorder.
+    const k = (r0 + (over * knee) / (knee + over)) / r
+    p.x = cx + dx * k
+    p.y = cy + dy * k
+  }
+}
+
 export function resolveCollisions(
   nodes: Array<{ id: number; x: number; y: number; size?: number }>,
   padding: number = 8,
@@ -467,18 +506,28 @@ export function layout(
     sulcusPad: 10 * pxToWorld,
   }
   resolveCollisions(points, 0, 8, Math.min(MAX_SCALE_FACTOR, pxToWorld), padScale, zoneOpts)
+  // Tail containment between the phases: the renderer normalises the map by its
+  // bounding box, so a handful of low-degree leaves on the rim shrink the whole
+  // tissue into a small clump with empty margins (measured on a real export: 10% of
+  // nodes owned 60% of the width — bbox aspect 1.80 against a q05..q95 mass of 1.52,
+  // which is why "elongated" never showed). Radius is compressed monotonically past
+  // R0 with an asymptote, never reordered, and phase 1 runs again below so any
+  // overlap this creates is cleared before the anchored phase.
+  containTail(points)
+  resolveCollisions(points, 0, 8, Math.min(MAX_SCALE_FACTOR, pxToWorld), padScale, zoneOpts)
   const anchors = new Map(points.map((p) => [p.id, { x: p.x, y: p.y }] as const))
-  resolveCollisions(points, 0, SOLVER_PASSES - 8, Math.min(MAX_SCALE_FACTOR, pxToWorld), padScale, {
+  resolveCollisions(points, 0, SOLVER_PASSES - 16, Math.min(MAX_SCALE_FACTOR, pxToWorld), padScale, {
     anchors,
     ...zoneOpts,
   })
-  // Aspect hold: the collision pass expands along the crowded axis and blurs
-  // the plane back toward round. Re-enforce by stretch-only: growing one axis
-  // can only grow clearances, so S4 stays green. Target 1.8: ink tracks data at
-  // ~0.85x on real corpora (giant top/bottom hubs + labels inflate vertical),
-  // so data 1.8 reads as ~1.5. Measured: synthetic ink 1.54 at data 1.5.
-  // Returns the affine map; ports ride it at conversion time so corridors stay
-  // glued to their zones (figure.ports stay in screen px until converted).
+  // Aspect hold by bounding box: the renderer normalises the map by its box, so the
+  // box is what the eye sees. holdAspect must run AFTER containTail, otherwise a
+  // single stray leaf satisfies the ratio while the tissue stays a fat oval
+  // (measured on a real export: bbox 1.80 against a q05..q95 mass of 1.52).
+  // Stretch-only (kx, ky >= 1): growing an axis can only grow clearances, so S4
+  // cannot regress. Returns the affine map; ports ride it at conversion time so
+  // corridors stay glued to their zones (figure.ports stay in screen px until
+  // converted).
   const holdAspect = (target: number): { cx: number; cy: number; kx: number; ky: number } => {
     let minX = Infinity
     let minY = Infinity
@@ -496,6 +545,7 @@ export function layout(
     const cy = (minY + maxY) / 2
     let kx = 1
     let ky = 1
+    // Guard: a degenerate frame has no ratio to correct.
     if (w > 1e-9 && h > 1e-9) {
       const ratio = w / h
       if (ratio < target) kx = target / ratio

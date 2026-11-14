@@ -468,9 +468,13 @@ export function spread(
     corridors.set(key, (corridors.get(key) ?? 0) + 1)
   }
 
-  // Frame: one uniform normalisation. Word sizes are a separate attribute, so the
-  // transform can never squash a body — and the solver runs after it, in the same
-  // units, so it has nothing to undo.
+  // Frame: centre + enforce an elongated plane by bounding box. The renderer
+  // normalises the map by its box, so the box IS what the eye sees: the tail is
+  // already contained in layout() (containTail), which is what keeps this box from
+  // being owned by one stray leaf while the tissue stays round.
+  // Stretch-only, never shrink: expanding one axis only grows clearances, so the
+  // solver's work is never undone (S4 stays green).
+  const SPREAD_ASPECT = 1.8
   let minX = Infinity
   let minY = Infinity
   let maxX = -Infinity
@@ -481,18 +485,13 @@ export function spread(
     if (p.x > maxX) maxX = p.x
     if (p.y > maxY) maxY = p.y
   }
-  // Frame: centre + enforce an elongated plane. Stretch-only, never shrink:
-  // expanding one axis only grows clearances, so the collision solver's work
-  // is never undone (S4 stays green). Shrinking would re-create overlaps.
-  // Target 1.8 data ~= 1.5 ink: ink tracks data at ~0.85x on real corpora
-  // (giant top/bottom hubs + labels inflate vertical). Matches layout hold.
-  const SPREAD_ASPECT = 1.8
   const cx = (minX + maxX) / 2
   const cy = (minY + maxY) / 2
   let kx = 1
   let ky = 1
   const fw = maxX - minX
   const fh = maxY - minY
+  // Guard: a degenerate frame has no ratio to correct.
   if (fw > 1e-9 && fh > 1e-9) {
     const ratio = fw / fh
     if (ratio < SPREAD_ASPECT) kx = SPREAD_ASPECT / ratio
