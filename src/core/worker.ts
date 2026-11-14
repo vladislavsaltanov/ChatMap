@@ -1,4 +1,4 @@
-import { armsFromIndex, buildArmsIndex, bundleEdges, edgeAlpha, footprintScale, nodeFitSize, phaseFor } from './geometry'
+import { armsFromIndex, buildArmsIndex, bundleEdges, edgeAlpha, footprintScale, footprintSize, nodeFitSize, phaseFor } from './geometry'
 import { getLruCache, layout, setLruCache, type LayoutNodeInput, type LayoutResult } from './graph'
 import type { Intern } from './intern'
 import { parse } from './parse'
@@ -91,7 +91,7 @@ function buildLayoutInput(
   const sizeScale = footprintScale([...nodeInfoMap.values()].map((info) => info.size))
   if (sizeScale < 1) {
     for (const info of nodeInfoMap.values()) {
-      info.size = Math.round(info.size * sizeScale * 10) / 10
+      info.size = Math.round(footprintSize(info.size, sizeScale) * 10) / 10
     }
   }
 

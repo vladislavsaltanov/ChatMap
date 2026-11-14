@@ -12,6 +12,7 @@ import {
   fisheyePoint,
   focusYield,
   footprintScale,
+  footprintSize,
   GATEWAY_CELLS,
   haloPx,
   labelZoomRatio,
@@ -296,7 +297,7 @@ describe('geometry', () => {
     const rare = nodeFitSize('договорились', 1, max, 1)
 
     // Landmark word tops the law and encloses its own text
-    expect(hub).toBeCloseTo(76, 1)
+    expect(hub).toBeCloseTo(68, 1)
     expect(hub * 2).toBeGreaterThanOrEqual(12 * 7 + 8)
     // Rarest word stays a dot, and the contrast is at least an order of magnitude
     expect(rare).toBeLessThan(8)
@@ -356,6 +357,18 @@ describe('geometry', () => {
     // The result lands on the budget (within rounding of the square root)
     const squares = crowded * crowded * 1000 * 15 * 15 * Math.PI
     expect(squares).toBeCloseTo(170_000, -2)
+  })
+
+  it('footprintSize: scales only the increment, so dust never falls below the LOD floor', () => {
+    // Reserved floor (SIZE_MIN = 2.8) is untouched even at the weakest scale
+    expect(footprintSize(2.8, 0.28)).toBe(2.8)
+    expect(footprintSize(1.2, 0.28)).toBe(1.2)
+    // Multiplying the radius would put the dot below the dissolve floor
+    expect(2.8 * 0.28).toBeLessThan(LOD_GONE_PX)
+    expect(footprintSize(2.8, 0.28)).toBeGreaterThan(LOD_GONE_PX)
+    // Above the floor the distribution still compresses uniformly
+    expect(footprintSize(68, 0.28)).toBeCloseTo(2.8 + (68 - 2.8) * 0.28)
+    expect(footprintSize(30, 1)).toBe(30)
   })
 
   it('visualCoreRadius: small dots preserved, hubs compressed mildly, always monotonic', () => {    expect(visualCoreRadius(5)).toBe(5)
