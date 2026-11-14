@@ -98,14 +98,17 @@ export function lodPresence(renderedPx: number): number {
 // Frequency law: a power curve over the relative frequency. The previous
 // log-normalised rank (three bands by log ratio) squashed a real chat's 1..3000
 // spread into one band, so 90% of words got the same 5-8px reservation and the
-// map read as uniform dust. 0.85 keeps the long tail genuinely small: the rarest
-// word is a ~3px dot, a word used 100x more is ~7px, the landmark hub is 76px.
-// A shallow curve (0.42-0.7) regressed from the other side: every body grew big
-// enough that the air between them had to be eaten to fit the plane, and the map
-// turned back into an evenly packed lattice.
+// map read as uniform dust. 0.62 spreads the tail instead of crushing it: the
+// rarest word is still a ~3px dot, but a word used 100x more is ~11px, not ~7px,
+// so small words read as a gradation rather than identical dust; the landmark
+// hub is capped at 68px so the top counts merge into one tier instead of one
+// word towering over the map. 0.62 sits inside the old 0.42-0.7 band that once
+// latticed the map — the difference is the footprint budget below, which absorbs
+// the extra area by scaling the whole distribution instead of packing neighbours
+// tighter. If census overlapShare regresses, retreat gamma first, not the cap.
 const SIZE_MIN = 2.8
-const SIZE_MAX = 76
-const SIZE_GAMMA = 0.85
+const SIZE_MAX = 68
+const SIZE_GAMMA = 0.62
 
 // Node radii are screen-referenced, so the same px law cannot serve a 30-word map
 // and a 1000-word one: 1000 bodies of 15px radius cover two thirds of the canvas,
@@ -129,8 +132,17 @@ export function footprintScale(sizes: number[], budget: number = MAP_FOOTPRINT_P
   return Math.max(FOOTPRINT_MIN_SCALE, Math.sqrt(budget / footprint))
 }
 
+// Applies the budget scale to one radius. Scaling the radius itself breaks the
+// LOD law at the floor: r * s at s = 0.28 turns the 2.8px dust dot into 0.78px,
+// below LOD_GONE_PX, so the word is gone instead of merely small. Scale only the
+// increment above SIZE_MIN: the floor holds and the hierarchy still compresses.
+export function footprintSize(r: number, scale: number): number {
+  if (r <= SIZE_MIN) return r
+  return SIZE_MIN + (r - SIZE_MIN) * scale
+}
+
 // Query: calculates the layout radius from word length and relative chat frequency.
-// Yields reserved space of r = 76 for the most used word and r = 4.4 for the rarest.
+// Yields reserved space of r = 68 for the most used word and r = 3.3 for the rarest.
 export function nodeFitSize(
   word: string,
   count: number,
