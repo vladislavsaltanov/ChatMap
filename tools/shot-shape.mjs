@@ -2,18 +2,25 @@
 // file input, drives the topN slider and captures screenshots + layout metrics.
 // Nothing leaves the machine; the export is generated in memory.
 // Run: node tools/shot-shape.mjs <tag> [vocab] [messages] [topN]
+//      node tools/shot-shape.mjs mega [vocab] [messages] [topN]
+// `mega` swaps the export for the one-word mega-hub generator in
+// tests/fixtures/megahub-chat.mjs (CHATMAP_HUB_SHARE overrides its p).
 import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { buildMegaHubChat } from '../tests/fixtures/megahub-chat.mjs'
 
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 const BASE = process.env.CHATMAP_BASE ?? 'http://127.0.0.1:5173'
 const PORT = Number(process.env.CHATMAP_CDP_PORT ?? 9355)
 const OUT_DIR = path.join(path.resolve('.'), 'tests', 'betterwright', 'shape')
 const TAG = process.argv[2] ?? 'shape'
+const MEGA = TAG === 'mega'
 const VOCAB = Number(process.argv[3] ?? 1400)
 const MESSAGES = Number(process.argv[4] ?? 6000)
-const TOP_N = Number(process.argv[5] ?? 600)
+// The UI slider caps topN at 1000; the mega stand asks for the densest view.
+const TOP_N = Number(process.argv[5] ?? (MEGA ? 1000 : 600))
+const HUB_SHARE = Number(process.env.CHATMAP_HUB_SHARE ?? 0.85)
 const SETTLE_MS = Number(process.env.CHATMAP_SETTLE_MS ?? 2500)
 
 mkdirSync(OUT_DIR, { recursive: true })
@@ -193,6 +200,20 @@ const shapeMetrics = `(() => {
   }
 })()`
 
+// Injects an export generated in Node (the mega-hub fixture) through the page's
+// real file input. Same code path as buildExportScript, only the payload source
+// differs: one generator shared with the tests instead of a second in-page copy.
+const injectExportScript = (payload) => `(() => {
+  const payload = ${JSON.stringify(payload)}
+  const file = new File([payload], 'result.json', { type: 'application/json' })
+  const dt = new DataTransfer()
+  dt.items.add(file)
+  const input = document.getElementById('file-input')
+  input.files = dt.files
+  input.dispatchEvent(new Event('change', { bubbles: true }))
+  return payload.length
+})()`
+
 // CDP payloads are JSON strings; a malformed one must surface as data, not as a crash.
 const asJson = (raw) => {
   try {
@@ -210,7 +231,15 @@ const main = async () => {
   await evalJs(cdp, 'document.readyState')
   await sleep(400)
 
-  const bytes = await evalJs(cdp, buildExportScript(VOCAB, MESSAGES))
+  const payload = MEGA
+    ? JSON.stringify(
+        buildMegaHubChat({ vocab: VOCAB, messages: MESSAGES, hubShare: HUB_SHARE }),
+      )
+    : null
+  const bytes = await evalJs(
+    cdp,
+    MEGA ? injectExportScript(payload) : buildExportScript(VOCAB, MESSAGES),
+  )
   // Worker pipeline + layout: poll for the map instead of guessing a duration.
   for (let i = 0; i < 240; i++) {
     await sleep(500)
@@ -243,6 +272,34 @@ const main = async () => {
 
   await shot(cdp, 'overview')
   const metrics = await evalJs(cdp, shapeMetrics)
+
+  // Mega-hub stand: the same hub contract the tests assert (reach >= 80%, degree
+  // >= 300), read from the RENDERED graph so the screenshot and the numbers come
+  // from one layout. `reach` = share of map words linked to the top-1 word.
+  const megaReport = MEGA
+    ? await evalJs(
+        cdp,
+        `(() => {
+          const mv = window.__mapview, g = mv.graph
+          const degree = new Map()
+          for (const e of g.edges()) {
+            const [a, b] = g.extremities(e)
+            degree.set(a, (degree.get(a) ?? 0) + 1)
+            degree.set(b, (degree.get(b) ?? 0) + 1)
+          }
+          const [hub, hubDegree] = [...degree.entries()].sort((a, b) => b[1] - a[1])[0] ?? ['', 0]
+          return JSON.stringify({
+            order: g.order,
+            edges: g.size,
+            hub,
+            hubLabel: g.getNodeAttribute(hub, 'label'),
+            hubDegree,
+            hubReach: +(hubDegree / Math.max(1, g.order - 1)).toFixed(3),
+            hubEdgeShare: +(hubDegree / Math.max(1, g.size)).toFixed(3),
+          })
+        })()`,
+      )
+    : null
 
   // Pin check: the selected word must own the last depth bucket for BOTH its
   // body and its caption, and no other node may join it there.
@@ -290,7 +347,7 @@ const main = async () => {
   )
 
   process.stdout.write(
-    `${JSON.stringify({ tag: TAG, bytes, vocab: VOCAB, messages: MESSAGES, topN: TOP_N, metrics, pin: asJson(pin), enter: asJson(enter), errors: cdp.errors }, null, 1)}\n`,
+    `${JSON.stringify({ tag: TAG, mega: MEGA ? asJson(megaReport) : undefined, hubShare: MEGA ? HUB_SHARE : undefined, bytes, vocab: VOCAB, messages: MESSAGES, topN: TOP_N, metrics, pin: asJson(pin), enter: asJson(enter), errors: cdp.errors }, null, 1)}\n`,
   )
 
   // Filter round-trip: one author, then back to everybody. The silhouette metrics
