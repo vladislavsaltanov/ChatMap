@@ -169,11 +169,12 @@ float somaTicks() {
   return ticks * smoothstep(19.0, 26.0, soma.coreR);
 }
 
-// Four-ray star with 2px arms instead of hairlines.
+// Four-ray star: slim arms instead of hairlines; the cross stays a glint,
+// not the body of the node.
 float somaStarRay(float len) {
-  float rayX = (1.0 - smoothstep(1.10, 2.60, abs(soma.p.y) / soma.pxu))
+  float rayX = (1.0 - smoothstep(0.80, 1.90, abs(soma.p.y) / soma.pxu))
              * (1.0 - smoothstep(len * 0.55, len, abs(soma.p.x) / soma.pxu));
-  float rayY = (1.0 - smoothstep(1.10, 2.60, abs(soma.p.x) / soma.pxu))
+  float rayY = (1.0 - smoothstep(0.80, 1.90, abs(soma.p.x) / soma.pxu))
              * (1.0 - smoothstep(len * 0.55, len, abs(soma.p.y) / soma.pxu));
   return max(rayX, rayY);
 }
@@ -206,11 +207,11 @@ vec4 skinConstellation() {
   float halo = exp(-pow((soma.r / soma.pxu) / (0.50 * soma.coreR + 4.0), 2.0)) * 0.28;
   acc = somaOver(acc, vec4(soma.col, halo));
 
-  // 4. Star: heavy cross + a large white core.
-  float ray = somaStarRay(min(soma.coreR * 0.85, 22.0) + 2.0 * soma.focus)
+  // 4. Star: slim cross + a small bright core.
+  float ray = somaStarRay(min(soma.coreR * 0.62, 15.0) + 1.5 * soma.focus)
             * (0.85 + 0.15 * soma.focus);
   acc = somaOver(acc, vec4(soma.point, ray));
-  acc = somaOver(acc, vec4(WARM, somaPoint(3.0 + 0.7 * soma.focus)));
+  acc = somaOver(acc, vec4(WARM, somaPoint(2.2 + 0.5 * soma.focus)));
 
   // 5. Ticks, leader, outer aura and focus reticle.
   acc = somaOver(acc, vec4(soma.ink, somaTicks() * 0.95));
