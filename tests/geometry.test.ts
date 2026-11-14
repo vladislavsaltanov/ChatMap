@@ -520,10 +520,10 @@ describe('weakEdgeCeiling (a link to a rare word stays weak)', () => {
   })
 
   it('holds links whose weak end is dust far below a corridor', () => {
-    // Re-derived in round 27 (neurone refs, explicit user directive): dust fibres
-    // must READ as fibres (cap 0.38), still far below a hub corridor (1.0).
-    expect(weakEdgeCeiling(3)).toBeLessThanOrEqual(0.4)
-    expect(weakEdgeCeiling(5)).toBeLessThan(weakEdgeCeiling(12))
+     // Overview cap is 0.16 (spec 2026-11-12-lod-dissolve-plan): dust fibres are
+     // hairlines, and the zoom-in lift is what returns them, not the global cap.
+     expect(weakEdgeCeiling(3)).toBeCloseTo(0.16, 5)
+     expect(weakEdgeCeiling(5)).toBeLessThan(weakEdgeCeiling(12))
   })
 
   it('never returns 0 or a value above 1: the ceiling only dims', () => {
@@ -561,14 +561,17 @@ describe('fanCoreFrac (the fan body grows inside its own quad)', () => {
     expect(fanCoreFrac(0.75, 1, 0)).toBeCloseTo(0.75, 6)
   })
 
-  it('restores the full-size body by dividing out the LOD shrink', () => {
-    // Quad is drawn at 75% on the overview, so the same body needs a bigger share.
-    expect(fanCoreFrac(0.6, 0.75, 1)).toBeCloseTo(0.8, 6)
+  it('restores the body toward full size, least for the smallest words', () => {
+    // Quad is drawn at 75% on the overview, so the same body needs a bigger share —
+    // but only in proportion to its own share, otherwise every small word lands
+    // on the same fill. 0.6 + (0.8 - 0.6) * 0.6 = 0.72, not 0.8.
+    expect(fanCoreFrac(0.6, 0.75, 1)).toBeCloseTo(0.72, 6)
   })
 
   it('never asks the shader to paint outside the quad', () => {
-    expect(fanCoreFrac(0.57, 0.5, 1)).toBeCloseTo(0.96, 6)
-    expect(fanCoreFrac(0.6, 0, 1)).toBe(0.96)
+    // 0.57 + (0.96 - 0.57) * 0.57 = 0.7923: the smallest word grows least.
+    expect(fanCoreFrac(0.57, 0.5, 1)).toBeCloseTo(0.7923, 4)
+    expect(fanCoreFrac(0.6, 0, 1)).toBeLessThanOrEqual(0.96)
   })
 
   it('leaves a body that is already at full share untouched', () => {
@@ -580,7 +583,7 @@ describe('fanCoreFrac (the fan body grows inside its own quad)', () => {
     expect(fanCoreFrac(0.6, 0.75, 0.5)).toBeGreaterThan(0.6)
     expect(fanCoreFrac(0.6, 0.75, 0.5)).toBeLessThan(fanCoreFrac(0.6, 0.75, 0.9))
     expect(fanCoreFrac(0.6, 0.75, -2)).toBeCloseTo(0.6, 6)
-    expect(fanCoreFrac(0.6, 0.75, 5)).toBeCloseTo(0.8, 6)
+    expect(fanCoreFrac(0.6, 0.75, 5)).toBeCloseTo(0.72, 6)
   })
 })
 

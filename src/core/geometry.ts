@@ -217,9 +217,10 @@ export function lengthFade(reach: number, strength: number): number {
 // has to read as weak instead of competing with a corridor between two hubs.
 // The cap is absolute alpha (1 = no cap), applied with Math.min, so a dim quiet
 // line is never dimmed twice into invisibility.
-// Raised for the neurone look: weak fibres must read as fibres (up to 0.38),
-// still capped well below hub corridors so the hierarchy survives.
-const WEAK_EDGE_CAP = 0.38
+// Overview cap kept low on purpose: a link to a rare word is a hairline, and a
+// global 0.38 turned it into a corridor. Zoom-in opens the ceiling per edge, so
+// the cap only governs the overview.
+const WEAK_EDGE_CAP = 0.16
 
 export function weakEdgeCeiling(weakEndpointCore: number): number {
   return 1 - (1 - WEAK_EDGE_CAP) * smallness(weakEndpointCore)
@@ -258,10 +259,15 @@ const FAN_CORE_MAX = 0.96
 // SAME quad, which leaves every connected word's text exactly where it was.
 // Dividing by the density shrink restores the body's full-size radius; the ceiling
 // keeps the shader inside its quad. grow = 0 is the resting body.
+// Growth is proportional to the member's OWN share: a fixed target for everyone
+// would pull every small word to the same fill and erase the size hierarchy in
+// the fan. Here the smallest word grows least and stays the smallest — the floor
+// comes from the words themselves, not from a fixed number.
 export function fanCoreFrac(base: number, lodScale: number, grow: number): number {
   const scale = Math.max(0.05, Math.min(1, lodScale))
   const target = Math.min(FAN_CORE_MAX, base / scale)
-  return base + (target - base) * Math.max(0, Math.min(1, grow))
+  const k = Math.max(0, Math.min(1, grow))
+  return base + (target - base) * k * base
 }
 
 // Opacity of a body that touches the selected word's disc: the crowd hands the
