@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { bundleEdges } from '../src/core/geometry'
 import {
   collisionIterationsForCount,
   dustTight,
@@ -195,5 +196,50 @@ describe('layout adapter', () => {
       { seed: 3, fullRun: true, onStage: (done) => stages.push(done) },
     )
     expect(stages).toEqual([92])
+  })
+})
+
+describe('reuse frame keeps edge routing (filter switch)', () => {
+  // Two topic clusters joined by weak bridges. Dropping 2 of 16 words keeps
+  // cachedShare 0.875 >= 0.65, so the filter path reuses the frame.
+  const cluster = (base: number): Array<{ a: number; b: number; weight: number }> => {
+    const edges: Array<{ a: number; b: number; weight: number }> = []
+    for (let i = 0; i < 7; i++) edges.push({ a: base + i, b: base + i + 1, weight: 10 - i })
+    edges.push({ a: base, b: base + 7, weight: 6 })
+    return edges
+  }
+  const edges = [...cluster(1), ...cluster(9), { a: 8, b: 9, weight: 1 }, { a: 4, b: 12, weight: 1 }]
+  const nodes = Array.from({ length: 16 }, (_, i) => ({ id: i + 1, size: 12 }))
+
+  // Full run first: the reference frame with complete routing tables.
+  const full = layout(nodes, edges, { seed: 7, fullRun: true })
+  expect(full.ports!.size).toBeGreaterThan(0)
+
+  // Filter switch: drop words 15-16, keep the rest on cached coordinates.
+  const kept = nodes.filter((n) => n.id <= 14)
+  const nodes2 = kept.map((n) => ({ ...n, prevXY: full.positions.get(n.id)! }))
+  const edges2 = edges.filter((e) => e.a <= 14 && e.b <= 14)
+  const reused = layout(nodes2, edges2, { seed: 7, fullRun: false })
+
+  it('returns routing tables for the reused frame', () => {
+    expect(reused.iterationsDone).toBe(0)
+    expect(reused.ports!.size).toBeGreaterThan(0)
+    expect(reused.groupOf!.size).toBe(nodes2.length)
+    for (const [, g] of reused.groupOf!) expect(reused.ports!.has(g)).toBe(true)
+    // Frame is reused verbatim: cached bodies do not move.
+    for (const n of nodes2) expect(reused.positions.get(n.id)).toEqual(n.prevXY)
+  })
+
+  it('routes no edge as a straight fallback', () => {
+    const posList = nodes2.map((n) => ({ id: n.id, ...reused.positions.get(n.id)! }))
+    const maxW = Math.max(...edges2.map((e) => e.weight))
+    const bundles = bundleEdges(posList, edges2, maxW, {
+      ports: reused.ports!,
+      groupOf: reused.groupOf!,
+    })
+    const straight = bundles.filter(
+      (b) => b.tract[0] === 1 / 3 && b.tract[1] === 0 && b.tract[2] === 2 / 3 && b.tract[3] === 0,
+    )
+    expect(straight.length).toBe(0)
   })
 })

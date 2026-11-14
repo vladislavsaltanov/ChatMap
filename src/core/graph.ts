@@ -1,5 +1,5 @@
 import { quadOf, visualCoreRadius } from './geometry'
-import { FRAME_ASPECT, hashAt, spread } from './spread'
+import { assignGroups, FRAME_ASPECT, hashAt, spread } from './spread'
 
 // World units per px of node radius that the collision solver may assume.
 const MAX_SCALE_FACTOR = 10
@@ -471,7 +471,50 @@ export function layout(
   const reuseFrame = !opts.fullRun && cachedShare >= 0.65
   if (reuseFrame) {
     seatNewNodes(nodes, edges, positions, opts.seed)
-    return { positions, iterationsDone: 0 }
+    // Routing identities for the edge layer: positions stay cached (the
+    // silhouette must not move on a filter switch), but edge curves need fresh
+    // topics — without them every edge collapsed to STRAIGHT_TRACT. Ports are
+    // group centroids of the REUSED coordinates, so they live in the same space
+    // as the nodes by construction and need no world/screen conversion.
+    const { groupOf, groups } = assignGroups(nodes, edges)
+    const ports = new Map<number, LayoutPort>()
+    let frameX = 0
+    let frameY = 0
+    for (const p of positions.values()) {
+      frameX += p.x
+      frameY += p.y
+    }
+    frameX /= Math.max(1, positions.size)
+    frameY /= Math.max(1, positions.size)
+    for (const g of groups) {
+      let cx = 0
+      let cy = 0
+      let n = 0
+      for (const id of g.members) {
+        const p = positions.get(id)
+        if (!p) continue
+        cx += p.x
+        cy += p.y
+        n++
+      }
+      // Guard: a group with no placed member still needs a port, or its edges
+      // fall back to straight lines — park it on the frame centroid.
+      if (n === 0) {
+        cx = frameX
+        cy = frameY
+        n = 1
+      }
+      ports.set(g.id, { x: cx / n, y: cy / n, mass: g.mass, members: g.members.length })
+    }
+    const corridors = new Map<string, number>()
+    for (const edge of edges) {
+      const ga = groupOf.get(edge.a)
+      const gb = groupOf.get(edge.b)
+      if (ga === undefined || gb === undefined || ga === gb) continue
+      const key = ga < gb ? `${ga}:${gb}` : `${gb}:${ga}`
+      corridors.set(key, (corridors.get(key) ?? 0) + 1)
+    }
+    return { positions, iterationsDone: 0, ports, groupOf, corridors }
   }
 
   // Frame width: the renderer fits the full extent, so the width IS the scale that

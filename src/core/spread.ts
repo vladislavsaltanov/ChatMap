@@ -263,6 +263,46 @@ function detectGroups(nodes: SpreadNode[], adj: Adjacency): Group[] {
   return out.sort((a, b) => b.mass - a.mass || a.id - b.id)
 }
 
+// Query: topic assignment without any placement. The filter-reuse path in
+// graph.ts keeps cached coordinates (the silhouette must not move) but still
+// needs fresh routing identities: without them every edge collapsed to
+// STRAIGHT_TRACT. Same grouping as spread(), no Dijkstra/stress — ports are
+// derived from the reused coordinates by the caller, so no world/screen
+// conversion is involved. Deterministic on ids, like the rest of the chain.
+export function assignGroups(
+  nodes: SpreadNode[],
+  edges: SpreadEdge[],
+): { groupOf: Map<number, number>; groups: Array<{ id: number; members: number[]; mass: number }> } {
+  const groupOf = new Map<number, number>()
+  if (nodes.length === 0) return { groupOf, groups: [] }
+  // Guard: mirror spread()'s small-map rule — one nucleus, no macrostructure.
+  if (nodes.length < 8) {
+    const gid = nodes[0].id
+    for (const n of nodes) groupOf.set(n.id, gid)
+    return { groupOf, groups: [{ id: gid, members: nodes.map((n) => n.id), mass: nodes.length }] }
+  }
+  const adj = buildAdjacency(nodes, edges)
+  const isolated = nodes.filter((n) => (adj.get(n.id) ?? []).length === 0).map((n) => n.id)
+  const linked = nodes.filter((n) => (adj.get(n.id) ?? []).length > 0)
+  // Guard: a map of pure isolates has no spokes to split along — one nucleus.
+  if (linked.length === 0) {
+    const gid = nodes[0].id
+    for (const n of nodes) groupOf.set(n.id, gid)
+    return { groupOf, groups: [{ id: gid, members: nodes.map((n) => n.id), mass: nodes.length }] }
+  }
+  const groups = mergeToTarget(
+    detectGroups(linked, adj),
+    adj,
+    // Same nucleus budget as spread(): sqrt(n)/3.2 clamped to 3..9.
+    Math.max(3, Math.min(9, Math.round(Math.sqrt(linked.length) / 3.2))),
+  )
+  for (const g of groups) for (const id of g.members) groupOf.set(id, g.id)
+  // Isolates cannot vote for a topic: join the smallest group, as in spread().
+  const smallest = [...groups].sort((a, b) => a.mass - b.mass || a.id - b.id)[0]!
+  for (const id of isolated) groupOf.set(id, smallest.id)
+  return { groupOf, groups }
+}
+
 // Greedy affinity chain: the trunk order is the order in which topics are
 // neighbours, not the order of their ids. Heaviest group starts, then each next
 // one maximises its total weight to what is already placed.
