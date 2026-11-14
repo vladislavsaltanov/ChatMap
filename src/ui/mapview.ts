@@ -670,6 +670,21 @@ export class MapView {
     r.refresh({ skipIndexation: true })
   }
 
+  // A failed open leaves no chat in the worker (it resets first), so the drawn
+  // map must not outlive it: the next filter would hit a worker that ignores
+  // it and the view would claim words the worker no longer has.
+  clear(): void {
+    this.resetInteractionState()
+    this.cancelIdleTimer()
+    this.graph.clear()
+    this.lastMsg = null
+    this.transitHidden = new Set<string>()
+    this.authorColors = new Map()
+    this.nodePanel.hide()
+    this.hideProgress()
+    this.renderer?.refresh()
+  }
+
   render(msg: MapMsg): void {
     // A re-render of the same map (filter update) must not replay the whole
     // entrance wave: only a fresh chat gets the staggered assembly.

@@ -98,6 +98,13 @@ worker.onmessage = async (e: MessageEvent<WorkerOut>) => {
   } else if (msg.type === 'warn') {
     addWarning(msg.message)
   } else if (msg.type === 'error') {
+    // Only an open can fail with the progress screen up, and the worker has
+    // already dropped its chat at that point. Drop the view with it, otherwise
+    // the next filter change lands in a worker that silently ignores it.
+    if (!screens.progress.hidden) {
+      mapView.clear()
+      controls.setAuthors([])
+    }
     showError(msg.message)
   }
 }
