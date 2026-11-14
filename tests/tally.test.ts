@@ -476,4 +476,27 @@ describe('PipelineCache', () => {
       expect(got.ia.idToCanon).toEqual(want.ia.idToCanon)
     }
   })
+
+  it('не вливает редкую форму в частотное самостоятельное слово корпуса', () => {
+    // The corpus is the dictionary: 30 standalone «меня» must not swallow the two
+    // rare verb forms that stem to the same four letters (see canon.ts).
+    const chat: ChatExport = {
+      name: 'stem',
+      chatType: 'personal_chat',
+      messages: [
+        ...Array.from({ length: 30 }, (_, i) => textMsg(i + 1, 1, 'меня тут')),
+        textMsg(31, 2, 'менять план'),
+        textMsg(32, 2, 'меняет вид'),
+      ],
+    }
+    const { ia } = new PipelineCache().resolve(chat, CFG)
+    const idOf = (form: string): number | undefined => {
+      for (const [id, forms] of ia.forms) if (forms.has(form)) return id
+      return undefined
+    }
+    const pronoun = idOf('меня')
+    expect(pronoun).toBeDefined()
+    expect(idOf('менять')).not.toBe(pronoun)
+    expect(idOf('меняет')).not.toBe(pronoun)
+  })
 })

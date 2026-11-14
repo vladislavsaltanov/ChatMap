@@ -55,13 +55,82 @@ export function renderedNodeSize(core: number, ratio: number): number {
 // nodeFitSize() returns the radius the LAYOUT reserves for collision spacing.
 // The drawn body is compressed so neighbouring bubbles keep a visible gap even
 // in dense clusters (screen-referenced radii otherwise overlap on any framing).
+// The compression stays mild: the size hierarchy between a landmark word and a
+// rare one is the whole point of the map, so it must survive to the screen.
+const CORE_KNEE = 9
+const CORE_COMPRESSION = 0.72
+
 export function visualCoreRadius(layoutRadius: number): number {
   const r = Math.max(0, layoutRadius)
-  return r <= 9 ? r : 9 + (r - 9) * 0.46
+  return r <= CORE_KNEE ? r : CORE_KNEE + (r - CORE_KNEE) * CORE_COMPRESSION
+}
+
+// Landmark cores (>= 18 px) are 0, dust is 1. One shared measure of "this word is
+// only texture": node shrink, node dissolve, label weight and the link ceiling all
+// answer to the same number, so a body and its links can never disagree.
+const SMALL_CORE_PX = 18
+const SMALL_RANGE_PX = 13
+
+export function smallness(core: number): number {
+  if (!(core < SMALL_CORE_PX)) return 0
+  return Math.max(0, Math.min(1, (SMALL_CORE_PX - core) / SMALL_RANGE_PX))
+}
+
+// Screen-space dissolve window for drawn bodies. Below GONE a body must not exist
+// at all (not "very dim"): a 1-2 px speck at 3% alpha still reads as dirt on the
+// paper and keeps its links pointing at nothing. Above PRESENT it is fully there.
+const LOD_GONE_PX = 1.6
+const LOD_PRESENT_PX = 4.5
+export { LOD_GONE_PX, LOD_PRESENT_PX }
+
+// Query: 0..1 share of a body that should be drawn at the given rendered radius.
+// Pass the radius BEFORE any density shrink: the shrink is its own visual stage,
+// and folding it in here would dissolve the default overview instead of the
+// zoom-out (measured: dust draws at 38% of its rendered size). NaN and negative
+// input are treated as gone rather than propagated.
+export function lodPresence(renderedPx: number): number {
+  if (!(renderedPx > LOD_GONE_PX)) return 0
+  if (renderedPx >= LOD_PRESENT_PX) return 1
+  const t = (renderedPx - LOD_GONE_PX) / (LOD_PRESENT_PX - LOD_GONE_PX)
+  return t * t * (3 - 2 * t)
+}
+
+// Frequency law: a power curve over the relative frequency. The previous
+// log-normalised rank (three bands by log ratio) squashed a real chat's 1..3000
+// spread into one band, so 90% of words got the same 5-8px reservation and the
+// map read as uniform dust. 0.85 keeps the long tail genuinely small: the rarest
+// word is a ~3px dot, a word used 100x more is ~7px, the landmark hub is 76px.
+// A shallow curve (0.42-0.7) regressed from the other side: every body grew big
+// enough that the air between them had to be eaten to fit the plane, and the map
+// turned back into an evenly packed lattice.
+const SIZE_MIN = 2.8
+const SIZE_MAX = 76
+const SIZE_GAMMA = 0.85
+
+// Node radii are screen-referenced, so the same px law cannot serve a 30-word map
+// and a 1000-word one: 1000 bodies of 15px radius cover two thirds of the canvas,
+// and no layout can show clusters, voids or hierarchy inside that. The budget is
+// the share of the canvas the bodies may cover; above it the WHOLE distribution
+// is scaled down uniformly, so the hierarchy survives and only its screen size
+// adapts to the map size. 1400x900 canvas -> ~14% coverage at the budget.
+export const MAP_FOOTPRINT_PX2 = 170_000
+// Never shrink below this share: dust must stay a visible dot, not a subpixel.
+const FOOTPRINT_MIN_SCALE = 0.28
+
+export function footprintScale(sizes: number[], budget: number = MAP_FOOTPRINT_PX2): number {
+  let squares = 0
+  for (const size of sizes) {
+    const r = Math.max(0, size)
+    squares += r * r
+  }
+  const footprint = Math.PI * squares
+  // Guard: empty input or a map that already fits keeps the designed radii.
+  if (footprint <= 0 || footprint <= budget) return 1
+  return Math.max(FOOTPRINT_MIN_SCALE, Math.sqrt(budget / footprint))
 }
 
 // Query: calculates the layout radius from word length and relative chat frequency.
-// Yields reserved space of r = 72+ for landmark hubs and r = 5..9 for rare words.
+// Yields reserved space of r = 76 for the most used word and r = 4.4 for the rarest.
 export function nodeFitSize(
   word: string,
   count: number,
@@ -73,40 +142,14 @@ export function nodeFitSize(
   const len = Math.max(2, word ? word.length : 2)
   const fullFitRadius = Math.round(Math.max(24, len * 7.5 + 10) / 2 + 4)
 
-  // Guard: missing counts or uniform distribution fallback to comfortable text fit
+  // Guard: missing counts or a uniform distribution leave no frequency axis to
+  // spend, so every word gets the comfortable text-fit reservation instead.
   if (maxCount <= 0 || count <= 0 || maxCount <= minCount) {
     return Math.max(26, fullFitRadius)
   }
 
-  // Relative log-ratio across visible words in the chat: t in [0, 1]
-  const logMin = Math.log(1 + Math.max(0, minCount))
-  const logMax = Math.log(1 + maxCount)
-  const logVal = Math.log(1 + count)
-
-  // Guard: invalid log range avoids division by zero
-  if (logMax <= logMin) {
-    return Math.max(26, fullFitRadius)
-  }
-
-  const t = Math.max(0, Math.min(1, (logVal - logMin) / (logMax - logMin)))
-
-  // Reserve layout space with high dynamic range (Obsidian-like contrast):
-  // Rare words (t < 0.3) -> small compact dots (r = 5..9) whose labels hide until zoom-in
-  // Medium words (0.3 <= t < 0.7) -> moderate circles (r = 9..24)
-  // Top landmark words (t >= 0.7) -> dominant hubs (r = 26..72+).
-  // The drawn radius is compressed by visualCoreRadius(); these are reservation radii.
-  if (t < 0.30) {
-    return Math.round(5 + 4 * (t / 0.30))
-  }
-  if (t < 0.70) {
-    const p = (t - 0.30) / 0.40
-    return Math.round(9 + 15 * p)
-  }
-  const p = (t - 0.70) / 0.30
-  const minHub = 26
-  // Top landmark hubs reach at least r = 72 to visually anchor the celestial graph
-  const target = Math.max(72, fullFitRadius)
-  return Math.round(minHub + (target - minHub) * Math.pow(p, 0.65))
+  const q = Math.max(0, Math.min(1, count / maxCount))
+  return Math.round((SIZE_MIN + (SIZE_MAX - SIZE_MIN) * Math.pow(q, SIZE_GAMMA)) * 10) / 10
 }
 
 export function edgeWidth(w: number, wmax: number): number {
@@ -157,6 +200,19 @@ export function lengthFade(reach: number, strength: number): number {
   return 1 - dissolve * (1 - 0.35 * s)
 }
 
+// A link to a rare word is weak by construction. Once that word is back on screen
+// the link may return with it, but never brighter than this cap: the connection
+// has to read as weak instead of competing with a corridor between two hubs.
+// The cap is absolute alpha (1 = no cap), applied with Math.min, so a dim quiet
+// line is never dimmed twice into invisibility.
+// Raised for the neurone look: weak fibres must read as fibres (up to 0.38),
+// still capped well below hub corridors so the hierarchy survives.
+const WEAK_EDGE_CAP = 0.38
+
+export function weakEdgeCeiling(weakEndpointCore: number): number {
+  return 1 - (1 - WEAK_EDGE_CAP) * smallness(weakEndpointCore)
+}
+
 // Soft aura around the drawn core. Quad = core + halo is what Sigma uses for
 // picking AND for the label start offset: a wide halo pushes text far off the dot
 // and makes adjacent quads overlap. Keep the aura tight.
@@ -172,6 +228,55 @@ export function coreFrac(core: number): number {
   return core / quadOf(core)
 }
 
+// Hover growth and pin lift of the focused word, as ONE multiplier of its quad.
+// Both stages are ramped by their own tween: hover ramps 0..1 (12%), pin ramps
+// 0..1 (30%). Multiplicative on purpose — the pinned body stays 1.12 x 1.30 of
+// the resting size, so animating the ramp does not resize the end state.
+export function egoNodeScale(grow: number, promote: number): number {
+  const hover = Math.max(0, Math.min(1, grow))
+  const pin = Math.max(0, Math.min(1, promote))
+  return (1 + 0.12 * hover) * (1 + 0.3 * pin)
+}
+
+// Shader ceiling for the drawn core share of a quad (see layerSoma: clamp(..., 0.05, 0.96)).
+const FAN_CORE_MAX = 0.96
+
+// Visible core share of a fan member. Sigma offsets a caption by half the node's
+// QUAD, so the fan must NOT grow its quad to look bigger — it fills more of the
+// SAME quad, which leaves every connected word's text exactly where it was.
+// Dividing by the density shrink restores the body's full-size radius; the ceiling
+// keeps the shader inside its quad. grow = 0 is the resting body.
+export function fanCoreFrac(base: number, lodScale: number, grow: number): number {
+  const scale = Math.max(0.05, Math.min(1, lodScale))
+  const target = Math.min(FAN_CORE_MAX, base / scale)
+  return base + (target - base) * Math.max(0, Math.min(1, grow))
+}
+
+// Opacity of a body that touches the selected word's disc: the crowd hands the
+// paper to the focus (down to a ghost), so the word is never crossed by it.
+// `dim` is the focus tween 0..1 — entry and exit stay symmetric — and the test is a
+// CONTINUOUS function of distance, so moving to another word slides the clearing
+// instead of flashing a new set of nodes.
+const YIELD_FLOOR = 0.2
+
+function smooth01(a: number, b: number, x: number): number {
+  const t = Math.max(0, Math.min(1, (x - a) / (b - a)))
+  return t * t * (3 - 2 * t)
+}
+
+export function focusYield(distance: number, reach: number, ownRadius: number, dim: number): number {
+  const k = Math.max(0, Math.min(1, dim))
+  if (k <= 0) return 1
+  const inner = Math.max(0, reach)
+  const outer = inner + Math.max(0, ownRadius)
+  const d = Math.max(0, distance)
+  // A body with no radius has no contact band: the clearing ends at the reach.
+  const touch = outer - inner < 1e-6 ? (d <= inner ? 1 : 0) : 1 - smooth01(inner, outer, d)
+  // Clamped: 1 - 0.8 * 1 lands on 0.19999999999999996 and the opacity styles read
+  // this number directly.
+  return Math.max(YIELD_FLOOR, 1 - (1 - YIELD_FLOOR) * k * touch)
+}
+
 // Edge bundling (FDEB-lite). Compatible edges share a corridor: their 1/3 and
 // 2/3 subdivision points are pulled toward the group centroid, so the middle of
 // every edge in the tract runs together and only the ends fan out to their nodes.
@@ -183,279 +288,309 @@ export type BundleEdgeInput = { a: number; b: number; weight?: number }
 export type Tract = [number, number, number, number]
 export type BundleInfo = { tract: Tract; bundle: number; rank: number; tractRank: number }
 
-const STRAIGHT_TRACT: Tract = [1 / 3, 0, 2 / 3, 0]
-const SECTORS = 8
-const TAU = Math.PI * 2
-const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v))
-
-type TractGeom = {
-  ax: number; ay: number; bx: number; by: number
-  fromX: number; fromY: number; toX: number; toY: number
-  dx: number; dy: number; len2: number; len: number; ux: number; uy: number; strength: number
-  hubAtA: boolean; key: string; passKey: string
-  p1x: number; p1y: number; p2x: number; p2y: number
+// Routing input straight from the layout: the funnels of the figure and which
+// topic a word belongs to. Edge geometry is derived from them, so every fibre of
+// one corridor runs through the same two control points.
+export type RouteInfo = {
+  ports: Map<number, { x: number; y: number }>
+  groupOf: Map<number, number>
+  // Fascicle id per node (stem contract §2.1). Absent = today's corridor routing.
+  stemOf?: Map<number, number>
 }
-type TractCell = { n: number; w: number; x1: number; y1: number; x2: number; y2: number }
 
+type Pt = { x: number; y: number }
+
+// A fascicle's trunk, derived once from the placed nodes. `hub` is the soma port of
+// the stem's owner, `dir`/`maxR` describe the arm it grows along. Every edge of one
+// fascicle shares the first control point, which is what turns a searchlight fan of
+// 200 different curves into one axon.
+type Spine = { hub: Pt; dx: number; dy: number; maxR: number }
+
+// Shared control sits 30% down the arm: the fibres are fused from the soma, i.e.
+// where the eye reads a trunk, and only start to part after that point.
+const SPINE_NEAR = 0.3
+// 86% of the reach before the curve commits to its own terminal: the split happens
+// at the tip, so the branch keeps the trunk for most of its length.
+const SPINE_TRUNK = 0.86
+// A fascicle packed inside 2 world units of its soma has no arm to bundle.
+const SPINE_MIN_R = 2
+// Terminals past the fascicle's own reach still split near the arm's end.
+const SPINE_PROJ_CAP = 1.15
+// Radius exponent of the direction mean: a far, heavy node outvotes a stray near
+// the soma, which is what keeps the arm pointing along the tissue, not at it.
+const SPINE_WEIGHT = 0.2
+
+// Query: the shared trunk controls of an edge whose ends ride one fascicle, or null
+// when the edge is not on a trunk (no spine, or the terminal never clears the neck).
+function trunkControls(
+  a: Pt,
+  b: Pt,
+  stemA: number | undefined,
+  stemB: number | undefined,
+  spines: Map<number, Spine>,
+): { c1: Pt; c2: Pt } | null {
+  if (stemA === undefined || stemB === undefined || stemA < 0 || stemB < 0) return null
+  const owner = Math.floor(stemA / 16)
+  const slotA = stemA % 16
+  const slotB = stemB % 16
+  // §2.1: same owner and either the same slot or one end is the soma (slot 0).
+  if (owner !== Math.floor(stemB / 16) || (slotA !== slotB && slotA !== 0 && slotB !== 0)) return null
+  const spine = spines.get(owner * 16 + Math.max(slotA, slotB))
+  if (!spine) return null
+  // The terminal is whichever end sits farther along the arm, never "b". Edge ids are
+  // canonicalised min-first upstream, so a hub edge is stored (leaf, hub) as often as
+  // (hub, leaf); keying on `b` alone silently un-bundled half of every hub's fibres.
+  const reachA = (a.x - spine.hub.x) * spine.dx + (a.y - spine.hub.y) * spine.dy
+  const reachB = (b.x - spine.hub.x) * spine.dx + (b.y - spine.hub.y) * spine.dy
+  const termIsB = reachB >= reachA
+  const reach = termIsB ? reachB : reachA
+  // Guard: a terminal that does not clear the shared neck has no trunk to ride —
+  // routing it through the neck would loop the fibre out past its own node and back.
+  if (reach < SPINE_NEAR * spine.maxR * 1.2) return null
+  const proj = Math.min(reach, spine.maxR * SPINE_PROJ_CAP)
+  const term = termIsB ? b : a
+  const neck: Pt = {
+    x: spine.hub.x + spine.dx * SPINE_NEAR * spine.maxR,
+    y: spine.hub.y + spine.dy * SPINE_NEAR * spine.maxR,
+  }
+  const split: Pt = {
+    x: SPINE_TRUNK * (spine.hub.x + spine.dx * proj) + (1 - SPINE_TRUNK) * term.x,
+    y: SPINE_TRUNK * (spine.hub.y + spine.dy * proj) + (1 - SPINE_TRUNK) * term.y,
+  }
+  // Controls stay ordered along the path a -> b, so the late split always sits next
+  // to the terminal whichever end that is.
+  return termIsB ? { c1: neck, c2: split } : { c1: split, c2: neck }
+}
+
+const STRAIGHT_TRACT: Tract = [1 / 3, 0, 2 / 3, 0]
+// Intra-nucleus fibres lean toward the soma: the near control sits 75% of the
+// way to the port and the far one 25% of the way there. Audit #7: with leaf
+// landmarks a port sits inside a loose zone, not in a dense soma — a full pull
+// overshoots into loops on short edges. Both at the port would double the line
+// back on itself (a hairpin); part-way controls give a dendrite that leaves
+// the soma and settles on its word.
+const INTRA_NEAR_PULL = 0.75
+const INTRA_FAR_PULL = 0.25
+// Lateral half-width of a corridor, in world units. Fibres of one corridor must
+// sit on top of each other to read as ONE nerve; 2 units stays sub-pixel at the
+// overview and only separates inside a zoom, which is where the liquid texture is
+// wanted. (6 units left visible parallel hairlines — the noise the map was called out for.)
+const CORRIDOR_FAN = 2
+// Coefficient guards. They must be wide: a soma port often sits far outside the
+// chord of a long link, and clamping it to the segment was what kept every fibre
+// straight (measured: the bundle never formed). A cubic stays inside the convex
+// hull of its controls, so a wide clamp cannot overshoot the figure.
+const MAX_U = 5
+const MIN_U = -4
+const MAX_V = 3
+// Gateways per figure width. Control points are snapped to a grid of this many
+// cells across the figure, so ports of neighbouring nuclei share ONE trunk instead
+// of drawing a ribbon of near-parallel arcs. 12 keeps each cell at roughly half a
+// nucleus, which merges neighbours without merging opposite ends of the map.
+export const GATEWAY_CELLS = 14
+
+// Query: grid centre a world point snaps to. Two ports inside one cell give the
+// same answer, which is what turns several corridors into one trunk.
+function gatewayOf(p: { x: number; y: number }, cell: number): { x: number; y: number } {
+  // Guard: a degenerate figure has no grid; the exact port is the answer.
+  if (!(cell > 0)) return p
+  return {
+    x: (Math.floor(p.x / cell) + 0.5) * cell,
+    y: (Math.floor(p.y / cell) + 0.5) * cell,
+  }
+}
+
+// Query: cubic control coefficients in the edge's own (delta, perp) basis.
+// Dimensionless, so Sigma's uniform coordinate normalisation and the camera
+// transform leave the curve intact — see pathTract in neural.ts.
+function tractFromControls(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  c1: { x: number; y: number },
+  c2: { x: number; y: number },
+  fan: number,
+): Tract {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const len2 = dx * dx + dy * dy
+  // Guard: a zero-length chord has no basis; the straight tract is the answer.
+  if (len2 < 1e-8) return [...STRAIGHT_TRACT] as Tract
+  const len = Math.sqrt(len2)
+  const u = (p: { x: number; y: number }) => ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2
+  const v = (p: { x: number; y: number }) => ((p.x - a.x) * -dy + (p.y - a.y) * dx) / len2
+  const clampU = (value: number) => Math.max(MIN_U, Math.min(MAX_U, value))
+  const clampV = (value: number) => Math.max(-MAX_V, Math.min(MAX_V, value))
+  // The fan offset is applied in world units and converted to the dimensionless
+  // normal coefficient, so a corridor is 2*CORRIDOR_FAN wide at any map scale.
+  const spread = fan / len
+  return [clampU(u(c1)), clampV(v(c1) + spread), clampU(u(c2)), clampV(v(c2) + spread)]
+}
+
+// Command: assigns one cubic "tract" per edge. Two words of the same topic pair
+// get the SAME control points, so their curves land on top of each other and
+// accumulate into one bundle; inside a topic the curve only leans toward its own
+// nucleus. This replaces the mean-shift over angular sectors: the corridor is now
+// known from the structure instead of guessed from geometry.
 export function bundleEdges(
   points: BundlePoint[],
   edges: BundleEdgeInput[],
-  maxWeight = 0,
+  // Kept in the signature for callers that still pass the selection's max weight;
+  // ranking is now derived from the weights themselves, so the bound is unused.
+  _maxWeight = 0,
+  routes?: RouteInfo,
 ): BundleInfo[] {
-  const out: BundleInfo[] = edges.map(() => ({
-    tract: [...STRAIGHT_TRACT] as Tract, bundle: 0, rank: 0, tractRank: 0,
-  }))
   const pos = new Map(points.map((p) => [p.id, p]))
+  const ports = routes?.ports
+  const groupOf = routes?.groupOf
+  const stemOf = routes?.stemOf
 
-  // A tract belongs to one hub and one outgoing sector: local by construction,
-  // so long cross-map links are never dragged into a neighbours' corridor.
-  const degree = new Map<number, number>()
-  for (const e of edges) {
-    degree.set(e.a, (degree.get(e.a) ?? 0) + 1)
-    degree.set(e.b, (degree.get(e.b) ?? 0) + 1)
+  // Fascicle trunks, derived once per call (never per edge). Accumulating the
+  // direction as a radius-weighted sum is what keeps the arm pointing along the
+  // tissue: the far, heavy nodes outvote anything bunched near the soma.
+  const spines = new Map<number, Spine>()
+  if (stemOf && ports) {
+    const acc = new Map<number, { sx: number; sy: number; maxR: number; hub: Pt }>()
+    for (const p of points) {
+      const stem = stemOf.get(p.id)
+      if (stem === undefined || stem < 0) continue
+      // Slot 0 is the soma itself: it carries no arm and would only drag the mean.
+      if (stem % 16 === 0) continue
+      const hub = ports.get(Math.floor(stem / 16))
+      if (!hub) continue
+      const dx = p.x - hub.x
+      const dy = p.y - hub.y
+      const r = Math.hypot(dx, dy)
+      if (!(r > 0)) continue
+      const entry = acc.get(stem) ?? { sx: 0, sy: 0, maxR: 0, hub }
+      const w = Math.pow(r, SPINE_WEIGHT)
+      entry.sx += dx * w
+      entry.sy += dy * w
+      if (r > entry.maxR) entry.maxR = r
+      acc.set(stem, entry)
+    }
+    for (const [stem, entry] of acc) {
+      // No arm to bundle: a fascicle huddled on its soma keeps today's routing.
+      if (entry.maxR < SPINE_MIN_R) continue
+      const len = Math.hypot(entry.sx, entry.sy)
+      // Degenerate mean (a ring around the hub): fall back to the +x arm instead of
+      // dropping the trunk, which would split one fascicle into two behaviours.
+      const dx = len > 1e-9 ? entry.sx / len : 1
+      const dy = len > 1e-9 ? entry.sy / len : 0
+      spines.set(stem, { hub: entry.hub, dx, dy, maxR: entry.maxR })
+    }
   }
 
-  const geom: Array<TractGeom | null> = edges.map((e) => {
-    const a = pos.get(e.a)
-    const b = pos.get(e.b)
-    if (!a || !b) return null
-    const da = degree.get(e.a) ?? 0
-    const db = degree.get(e.b) ?? 0
-    const hubAtA = da > db || (da === db && e.a <= e.b)
-    const from = hubAtA ? a : b
-    const to = hubAtA ? b : a
-    const fx = to.x - from.x
-    const fy = to.y - from.y
-    const len2 = fx * fx + fy * fy
-    if (len2 < 1e-8) return null
-    const theta = ((Math.atan2(fy, fx) % TAU) + TAU) % TAU
-    // Rounding (not flooring) wraps sector 0 around the 0/2PI seam.
-    const sector = Math.round(theta / (TAU / SECTORS)) % SECTORS
+  // Rank by weight (heaviest first): the renderer spends detail on rank 0.
+  const order = edges
+    .map((edge, index) => ({ edge, index }))
+    .sort(
+      (l, r) =>
+        (r.edge.weight ?? 0) - (l.edge.weight ?? 0) ||
+        l.edge.a - r.edge.a ||
+        l.edge.b - r.edge.b,
+    )
+  const rank = new Array<number>(edges.length).fill(0)
+  order.forEach((item, i) => {
+    rank[item.index] = i
+  })
+
+  // Corridors: one bucket per unordered topic pair (or per topic, for a link
+  // inside a nucleus). Counting first is what makes the fan deterministic.
+  const corridorOf = edges.map((edge) => {
+    const ga = groupOf?.get(edge.a)
+    const gb = groupOf?.get(edge.b)
+    if (ga === undefined || gb === undefined) return null
+    if (ga === gb) return `${ga}:${ga}`
+    return ga < gb ? `${ga}:${gb}` : `${gb}:${ga}`
+  })
+  const size = new Map<string, number>()
+  for (const key of corridorOf) if (key) size.set(key, (size.get(key) ?? 0) + 1)
+  const maxSize = Math.max(1, ...size.values())
+  const seen = new Map<string, number>()
+
+// Gateway grid, in world units, derived from the drawn extent so the same
+// constant works on a 270-word map and on a 1000-word one.
+// Leaf-tissue map (P1): 14 — on a 2D sheet 12 cells merge neighbouring
+// inter-zone tracts into one crude trunk along the diagonal.
+  let extent = 0
+  if (points.length > 0) {
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    for (const p of points) {
+      if (p.x < minX) minX = p.x
+      if (p.x > maxX) maxX = p.x
+      if (p.y < minY) minY = p.y
+      if (p.y > maxY) maxY = p.y
+    }
+    extent = Math.max(maxX - minX, maxY - minY)
+  }
+  const cell = extent > 0 ? extent / GATEWAY_CELLS : 0
+
+  return edges.map((edge, index) => {
+    const a = pos.get(edge.a)
+    const b = pos.get(edge.b)
+    const key = corridorOf[index]
+    const count = key ? size.get(key) ?? 1 : 1
+    const seenCount = key ? seen.get(key) ?? 0 : 0
+    if (key) seen.set(key, seenCount + 1)
+    const bundle = count > 1 ? count / maxSize : 0
+    const tractRank = count > 1 ? seenCount : 0
+    // Guard: a link whose ends are not both placed cannot be routed.
+    if (!a || !b) {
+      return { tract: [...STRAIGHT_TRACT] as Tract, bundle, rank: rank[index], tractRank }
+    }
+    // Symmetric fan: rank 0 of the corridor sits a few units off-centre, the last
+    // one mirrors it, so the bundle reads as a thick strand instead of one hairline.
+    const fan = count > 1 ? ((seenCount / (count - 1)) * 2 - 1) * CORRIDOR_FAN : 0
+    // Fascicle trunk first: every fibre of one stem leaves the soma along the SAME
+    // arm and only splits at its own terminal, so it needs no port/gateway at all.
+    const trunk = stemOf ? trunkControls(a, b, stemOf.get(edge.a), stemOf.get(edge.b), spines) : null
+    if (trunk) {
+      return {
+        tract: tractFromControls(a, b, trunk.c1, trunk.c2, fan),
+        bundle,
+        rank: rank[index],
+        tractRank,
+      }
+    }
+    const ga = groupOf?.get(edge.a)
+    const gb = groupOf?.get(edge.b)
+    const portA = ga === undefined ? undefined : ports?.get(ga)
+    const portB = gb === undefined ? undefined : ports?.get(gb)
+    // Same nucleus: a dendrite that leaves the soma and settles on its word.
+    if (ga !== undefined && ga === gb && portA) {
+      return {
+        tract: tractFromControls(
+          a,
+          b,
+          { x: a.x + (portA.x - a.x) * INTRA_NEAR_PULL, y: a.y + (portA.y - a.y) * INTRA_NEAR_PULL },
+          { x: b.x + (portA.x - b.x) * INTRA_FAR_PULL, y: b.y + (portA.y - b.y) * INTRA_FAR_PULL },
+          fan,
+        ),
+        bundle,
+        rank: rank[index],
+        tractRank,
+      }
+    }
+    if (!portA || !portB) {
+      return { tract: [...STRAIGHT_TRACT] as Tract, bundle, rank: rank[index], tractRank }
+    }
+    // The corridor IS the chord between the two gateways: both controls sit exactly
+    // there. Every fibre of this topic pair therefore runs the same path from just
+    // outside its word to just outside the partner word, so a hundred links read as
+    // ONE trunk. Gateways (not raw ports) are what merge NEIGHBOURING nuclei's
+    // corridors into the same trunk instead of a ribbon of near-parallel arcs.
     return {
-      ax: a.x, ay: a.y, bx: b.x, by: b.y,
-      fromX: from.x, fromY: from.y, toX: to.x, toY: to.y,
-      dx: b.x - a.x, dy: b.y - a.y, len2, len: Math.sqrt(len2),
-      ux: fx / Math.sqrt(len2), uy: fy / Math.sqrt(len2),
-      strength: maxWeight > 0 && e.weight ? Math.pow(clamp(e.weight / maxWeight, 0, 1), 0.6) : 0.5,
-      hubAtA,
-      key: `${hubAtA ? e.a : e.b}:${sector}`,
-      passKey: '',
-      p1x: from.x + fx / 3, p1y: from.y + fy / 3,
-      p2x: from.x + 2 * fx / 3, p2y: from.y + 2 * fy / 3,
+      tract: tractFromControls(a, b, gatewayOf(portA, cell), gatewayOf(portB, cell), fan),
+      bundle,
+      rank: rank[index],
+      tractRank,
     }
   })
-
-  // Two mean-shift passes: P1 and P2 of one tract converge to their own
-  // centroids, so the middle third of every fibre shares the same corridor.
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-  for (const p of points) {
-    if (p.x < minX) minX = p.x
-    if (p.x > maxX) maxX = p.x
-    if (p.y < minY) minY = p.y
-    if (p.y > maxY) maxY = p.y
-  }
-  const cell = Math.max(1e-6, Math.max(maxX - minX, maxY - minY, 1)) / 8
-
-  for (const pass of [0, 1, 2]) {
-    const groups = new Map<string, TractCell>()
-    const axis = new Map<string, { dx: number; dy: number }>()
-    // Pass 0 gathers the fibres of one hub; passes 1-2 dominate and merge
-    // parallel nearby edges of DIFFERENT hubs into one long corridor — this is
-    // the FDEB signature. A hub-only grouping produced a starburst, not a tract.
-    geom.forEach((g) => {
-      if (!g) return
-      let key = g.key
-      if (pass > 0) {
-        const mx = (g.p1x + g.p2x) / 2
-        const my = (g.p1y + g.p2y) / 2
-        const raw = Math.atan2(g.dy, g.dx)
-        const half = ((raw % Math.PI) + Math.PI) % Math.PI
-        const dir = Math.round(half / (Math.PI / 6)) % 6
-        key = `c${dir}:${Math.floor(mx / cell)}:${Math.floor(my / cell)}`
-      }
-      const c = groups.get(key) ?? { n: 0, w: 0, x1: 0, y1: 0, x2: 0, y2: 0 }
-      const w = 0.5 + 0.5 * g.strength
-      c.n++
-      c.w += w
-      c.x1 += g.p1x * w; c.y1 += g.p1y * w
-      c.x2 += g.p2x * w; c.y2 += g.p2y * w
-      groups.set(key, c)
-      if (pass === 0) {
-        const a = axis.get(key) ?? { dx: 0, dy: 0 }
-        a.dx += g.ux * w
-        a.dy += g.uy * w
-        axis.set(key, a)
-      }
-      g.passKey = key
-    })
-
-    geom.forEach((g, i) => {
-      if (!g) return
-      const c = groups.get(g.passKey)!
-      if (c.n < 2 || c.w <= 0) return
-      const density = Math.min(1, (c.n - 1) / 6)
-      // Strong links must converge too: they are the visible spine, and a
-      // straight spine between curved fibres reads as a scattered starburst.
-      const base = pass === 0 ? 0.78 : pass === 1 ? 0.92 : 0.82
-      const pull = base * density * (0.8 + 0.2 * g.strength)
-      let m1x = c.x1 / c.w
-      let m1y = c.y1 / c.w
-      let m2x = c.x2 / c.w
-      let m2y = c.y2 / c.w
-      if (pass === 0) {
-        // Hub tract: every fibre leaves along ONE shared axis and only peels
-        // off toward its own node near the end. Scaling by each edge's own
-        // length avoids the shortening cusps a plain centroid would create.
-        const a = axis.get(g.passKey)!
-        const al = Math.hypot(a.dx, a.dy) || 1
-        const ux = a.dx / al
-        const uy = a.dy / al
-        m1x = g.fromX + ux * g.len / 3
-        m1y = g.fromY + uy * g.len / 3
-        m2x = g.fromX + ux * 2 * g.len / 3
-        m2y = g.fromY + uy * 2 * g.len / 3
-      }
-      // Lanes keep individual fibres visible inside the merged tract.
-      const ax = m2x - m1x
-      const ay = m2y - m1y
-      const alen = Math.hypot(ax, ay) || 1
-      const lane = (Math.imul(i + 1, 0x9e3779b1) >>> 0) / 4294967296 - 0.5
-      const off = lane * cell * 0.005
-      const ox = (-ay / alen) * off
-      const oy = (ax / alen) * off
-      g.p1x += pull * (m1x + ox - g.p1x)
-      g.p1y += pull * (m1y + oy - g.p1y)
-      g.p2x += pull * (m2x + ox - g.p2x)
-      g.p2y += pull * (m2y + oy - g.p2y)
-      out[i].bundle = Math.max(out[i].bundle, density)
-    })
-  }
-
-  // Final snap: nearby passing lines are glued at EVERY LOD. Geometry is
-  // computed once in the worker, so this cannot be a style/zoom trick.
-  // Control points are expressed in the edge's own normalized chord basis,
-  // which makes edges of different lengths comparable without cusps.
-  type SnapCell = { n: number; w: number; a1: number; b1: number; a2: number; b2: number }
-  type SnapGeom = { i: number; ux: number; uy: number; vx: number; vy: number; len: number; fx: number; fy: number }
-  const snapCell = cell * 2
-  const snapGroups = new Map<string, SnapCell>()
-  const snapItems = new Map<string, SnapGeom[]>()
-  geom.forEach((g, i) => {
-    if (!g) return
-    const ux = g.ux, uy = g.uy
-    const vx = -uy, vy = ux
-    const len = g.len
-    const d1x = g.p1x - g.fromX, d1y = g.p1y - g.fromY
-    const d2x = g.p2x - g.fromX, d2y = g.p2y - g.fromY
-    const a1 = (d1x * ux + d1y * uy) / len
-    const b1 = (d1x * vx + d1y * vy) / len
-    const a2 = (d2x * ux + d2y * uy) / len
-    const b2 = (d2x * vx + d2y * vy) / len
-    const half = ((Math.atan2(uy, ux) % Math.PI) + Math.PI) % Math.PI
-    const dir = Math.round(half / (Math.PI / 6)) % 6
-    const mx = (g.fromX + g.toX) / 2
-    const my = (g.fromY + g.toY) / 2
-    const key = `s${dir}:${Math.floor(mx / snapCell)}:${Math.floor(my / snapCell)}`
-    const w = 0.5 + 0.5 * g.strength
-    const c = snapGroups.get(key) ?? { n: 0, w: 0, a1: 0, b1: 0, a2: 0, b2: 0 }
-    c.n++; c.w += w
-    c.a1 += a1 * w; c.b1 += b1 * w
-    c.a2 += a2 * w; c.b2 += b2 * w
-    snapGroups.set(key, c)
-    const items = snapItems.get(key) ?? []
-    items.push({ i, ux, uy, vx, vy, len, fx: g.fromX, fy: g.fromY })
-    snapItems.set(key, items)
-  })
-  for (const [key, c] of snapGroups) {
-    if (c.n < 2 || c.w <= 0) continue
-    const ma1 = c.a1 / c.w, mb1 = c.b1 / c.w
-    const ma2 = c.a2 / c.w, mb2 = c.b2 / c.w
-    const density = Math.min(1, (c.n - 1) / 6)
-    for (const it of snapItems.get(key)!) {
-      const g = geom[it.i]!
-      const s1x = it.fx + (ma1 * it.ux + mb1 * it.vx) * it.len
-      const s1y = it.fy + (ma1 * it.uy + mb1 * it.vy) * it.len
-      const s2x = it.fx + (ma2 * it.ux + mb2 * it.vx) * it.len
-      const s2y = it.fy + (ma2 * it.uy + mb2 * it.vy) * it.len
-      g.p1x += 0.94 * (s1x - g.p1x)
-      g.p1y += 0.94 * (s1y - g.p1y)
-      g.p2x += 0.94 * (s2x - g.p2x)
-      g.p2y += 0.94 * (s2y - g.p2y)
-      out[it.i].bundle = Math.max(out[it.i].bundle, density)
-    }
-  }
-
-  geom.forEach((g, i) => {
-    // Edges outside any tract keep the exact straight chord.
-    if (!g || out[i].bundle === 0) return
-    // Cubic Bezier through P1 at t=1/3 and P2 at t=2/3, oriented hub -> target.
-    let k1x = 3 * g.p1x - 1.5 * g.p2x - (5 / 6) * g.fromX + (1 / 3) * g.toX
-    let k1y = 3 * g.p1y - 1.5 * g.p2y - (5 / 6) * g.fromY + (1 / 3) * g.toY
-    let k2x = 3 * g.p2x - 1.5 * g.p1x - (5 / 6) * g.toX + (1 / 3) * g.fromX
-    let k2y = 3 * g.p2y - 1.5 * g.p1y - (5 / 6) * g.toY + (1 / 3) * g.fromY
-    // Bound control points by a fraction of the chord length. Clamping raw
-    // coefficients independently produced cusps ("kinks") on the tract spines.
-    const maxOff = 0.26 * Math.sqrt(g.len2)
-    const ax = g.toX - g.fromX
-    const ay = g.toY - g.fromY
-    const s1x = g.fromX + ax / 3, s1y = g.fromY + ay / 3
-    const s2x = g.fromX + 2 * ax / 3, s2y = g.fromY + 2 * ay / 3
-    const limit = (px: number, py: number, sx: number, sy: number): [number, number] => {
-      const vx = px - sx
-      const vy = py - sy
-      const d = Math.hypot(vx, vy)
-      if (d <= maxOff) return [px, py]
-      const k = maxOff / d
-      return [sx + vx * k, sy + vy * k]
-    }
-    ;[k1x, k1y] = limit(k1x, k1y, s1x, s1y)
-    ;[k2x, k2y] = limit(k2x, k2y, s2x, s2y)
-    // Sigma's source is `a`; swap control points when the hub was `b`.
-    const c1x = g.hubAtA ? k1x : k2x
-    const c1y = g.hubAtA ? k1y : k2y
-    const c2x = g.hubAtA ? k2x : k1x
-    const c2y = g.hubAtA ? k2y : k1y
-    const px = -g.dy
-    const py = g.dx
-    out[i].tract = [
-      clamp(((c1x - g.ax) * g.dx + (c1y - g.ay) * g.dy) / g.len2, -0.1, 1.1),
-      clamp(((c1x - g.ax) * px + (c1y - g.ay) * py) / g.len2, -0.3, 0.3),
-      clamp(((c2x - g.ax) * g.dx + (c2y - g.ay) * g.dy) / g.len2, -0.1, 1.1),
-      clamp(((c2x - g.ax) * px + (c2y - g.ay) * py) / g.len2, -0.3, 0.3),
-    ]
-  })
-
-  // On the overview only the spine of a tract is readable: rank 0 is its
-  // heaviest link, higher ranks are redundant fibres on the same corridor.
-  const byTract = new Map<string, number[]>()
-  geom.forEach((g, i) => {
-    if (!g) return
-    const list = byTract.get(g.key) ?? []
-    list.push(i)
-    byTract.set(g.key, list)
-  })
-  for (const list of byTract.values()) {
-    list.sort((x, y) => (geom[y] as TractGeom).strength - (geom[x] as TractGeom).strength || x - y)
-    list.forEach((i, rank) => { out[i].rank = rank })
-  }
-
-  // The overview is a skeleton of the few heaviest TRACTS, not one stray fibre
-  // from every tract. Rank whole corridors by their total connection weight.
-  const weights = new Map<string, number>()
-  geom.forEach((g) => {
-    if (!g) return
-    weights.set(g.key, (weights.get(g.key) ?? 0) + g.strength + 0.05)
-  })
-  const ordered = [...weights.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
-  const tractOrder = new Map(ordered.map(([key], i) => [key, i]))
-  geom.forEach((g, i) => {
-    if (g) out[i].tractRank = tractOrder.get(g.key) ?? 0
-  })
-
-  return out
 }
 
-// Neuron dendrites: angles (in turns 0..1) to top 5 heaviest neighbors. -1 means no arm.
 export type ArmsIndex = {
   pos: Map<number, { x: number; y: number }>
   adj: Map<number, Array<{ nid: number; weight: number }>>

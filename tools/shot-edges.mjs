@@ -174,7 +174,8 @@ const legibilityMeasure = `(() => {
   const q = (a, t) => a.length ? +a.slice().sort((x, y) => x - y)[Math.min(a.length - 1, Math.floor(a.length * t))].toFixed(3) : 0
   const edges = g.edges().map(k => r.getEdgeDisplayData(k)?.opacity ?? 0)
   const bundles = g.edges().map(k => g.getEdgeAttributes(k).bundle ?? 0)
-  // Expected shader filament half-width in px (layer_axon, round 12).
+  // Expected shader filament half-width in px (layer_axon base law, before the
+  // taper/breath/meniscus multipliers).
   const filaments = g.edges().map(k => { const s = g.getEdgeAttributes(k).strength ?? 0; return 0.08 + 1.55 * Math.pow(s, 1.5) + 0.50 * (1 - 0.42 * s) })
   // Caption alpha by the ACTUAL visibility of the node body (forced labels excluded).
   const alphas = { dust: [], mid: [], hub: [] }

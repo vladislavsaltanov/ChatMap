@@ -1,13 +1,55 @@
-import Graph from 'graphology'
-import forceAtlas2 from 'graphology-layout-forceatlas2'
+import { quadOf, visualCoreRadius } from './geometry'
+import { hashAt, spread } from './spread'
 
-// World units reserved per px of node radius during collision relaxation.
+// World units per px of node radius that the collision solver may assume.
 const MAX_SCALE_FACTOR = 10
 
-// Map keeps insertion order, so delete+set moves a key to the most-recent end.
+// Reference viewport span in screen px. Node radii are screen-referenced
+// (`itemSizesReference: 'screen'`), so the layout must express its collision
+// clearance in the same px -> world factor it uses for the positions.
+// Exported because the renderer-frame invariant is asserted by tests.
+export const LAYOUT_SCREEN_SPAN = 1300
+// Air between two drawn bodies, in screen px. The reservation is body + air: the
+// dashed orbit sits at the core radius and the aura reaches `haloPx` past it, so
+// reserving only the core made neighbouring rings interlock on small maps.
+const NODE_GAP_PX = 2.5
+const NODE_GAP_RATIO = 0.6
+
+// Solver budget for a fresh figure. The spread already seats words on strands so
+// the solver only has to separate accidental overlaps; the old pipeline needed
+// 140-360 passes because its own steps kept re-packing the frame.
+const SOLVER_PASSES = 28
+
+// Query: air a node of this drawn radius reserves around itself, in screen px.
+// Proportional to the body, so the visual gap/diameter ratio stays constant at
+// every map size — the bodies themselves shrink with the footprint budget, and a
+// fixed px gap would look tight on small maps and eat the clusters on big ones.
+function airFor(size: number): number {
+  return Math.max(NODE_GAP_PX, size * NODE_GAP_RATIO)
+}
+
+// Query: air multiplier by reservation size. Neural texture lives in UNEVEN air:
+// dust huddles into tight knots around hubs while hubs keep their distance, so
+// the gaps stay open. Uniform air gives every pair the same gap/diameter rhythm
+// and the eye reads an even field at any zoom — the "petals" complaint.
+export function dustTight(size: number): number {
+  return size < 12 ? 0.45 : 1.15
+}
+
+// Query: radius the layout must reserve for one body, in screen px. `size` is the
+// text-fit reservation (room for a caption), but the renderer draws
+// `visualCoreRadius(size)` plus a halo, and for a small word that aura is wider
+// than `size`. Reserving only `size` is why neighbouring rings interlocked while
+// the pure body clearance looked satisfied.
+export function reservePx(size: number): number {
+  return Math.max(size, quadOf(visualCoreRadius(size)))
+}
+
+// Fixed-capacity LRU kept for the incremental path: the worker stores the canon
+// form of a word -> its coordinates, and a filtered re-run reads them back.
 export function getLruCache<K, V>(map: Map<K, V>, key: K): V | undefined {
-  if (!map.has(key)) return undefined
-  const value = map.get(key) as V
+  const value = map.get(key)
+  if (value === undefined) return undefined
   map.delete(key)
   map.set(key, value)
   return value
@@ -38,230 +80,92 @@ export type LayoutOpts = {
   onStage?: (done: number, stage: string) => void
 }
 
+export type LayoutPort = { x: number; y: number; mass: number; members: number }
+
 export type LayoutResult = {
   positions: Map<number, { x: number; y: number }>
   iterationsDone: number
+  // Routing data for the edge layer: the funnels of the figure and which topic a
+  // word belongs to. Edge geometry uses them so fibres of one corridor coincide.
+  ports?: Map<number, LayoutPort>
+  groupOf?: Map<number, number>
+  corridors?: Map<string, number>
+  // Soft-zone sharpness per node (audit B3): the solver keeps sulci between
+  // clean representatives and leaves bridges stitched.
+  dominance?: Map<number, number>
+  // Fascicle identity per node (impl-plan §2.1): geometry routes edges along a
+  // shared trunk, so it must survive the layout result, not just the solver.
+  stemOf?: Map<number, number>
 }
 
-function createRng(seed: number) {
-  let s = seed >>> 0
-  return function () {
-    s = (s * 1664525 + 1013904223) >>> 0
-    return s / 4294967296
-  }
-}
-
-// Multi-octave angular noise for organic fringe contours and void pockets.
-export function shapeNoise(angle: number, phases: number[]): number {
-  const oct = [1, 2, 3, 5, 8]
-  const wts = [0.45, 0.25, 0.15, 0.1, 0.05]
-  let n = 0
-  for (let i = 0; i < oct.length; i++) {
-    n += wts[i] * Math.sin(oct[i] * angle + (phases[i] ?? 0))
-  }
-  return n
-}
-
-// Fractal fBm over angle + radius with a domain-warp pass: higher octaves break
-// the contour into irregular segments instead of smooth waves. Bounded ~[-1, 1].
-export function fractalNoise(angle: number, radius: number, phases: number[]): number {
-  const oct = [1, 2, 4, 8, 16, 32]
-  const wts = [0.46, 0.26, 0.14, 0.075, 0.04, 0.025]
-  const warp =
-    0.55 * Math.sin(3 * angle + (phases[0] ?? 0)) +
-    0.25 * Math.sin(7 * angle + (phases[1] ?? 0))
-  const a = angle + warp
-  let n = 0
-  for (let i = 0; i < oct.length; i++) {
-    n += wts[i] * Math.sin(oct[i] * a + (phases[i] ?? 0) + radius * (0.6 + 0.35 * i))
-  }
-  return n
-}
-
-// Integer lattice hash. All randomness in the layout stays deterministic from
-// the seed: cached positions must be byte-identical between runs.
-function hash2(ix: number, iy: number, seed: number): number {
-  let h = Math.imul(ix, 0x1f123bb5) ^ Math.imul(iy, 0x5f356495) ^ Math.imul(seed, 0x27d4eb2d)
-  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b)
-  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35)
-  h ^= h >>> 16
-  return (h >>> 0) / 2147483648 - 1
-}
-
-function valueNoise(x: number, y: number, seed: number): number {
-  const ix = Math.floor(x)
-  const iy = Math.floor(y)
-  const fx = x - ix
-  const fy = y - iy
-  const sx = fx * fx * (3 - 2 * fx)
-  const sy = fy * fy * (3 - 2 * fy)
-  const a = hash2(ix, iy, seed)
-  const b = hash2(ix + 1, iy, seed)
-  const c = hash2(ix, iy + 1, seed)
-  const d = hash2(ix + 1, iy + 1, seed)
-  return (a + (b - a) * sx) * (1 - sy) + (c + (d - c) * sx) * sy
-}
-
-// Two-dimensional domain-warped fBm over the plane. Unlike `fractalNoise`
-// (which shapes the angular contour only), this field has real local maxima and
-// minima, so it can drive density instead of just the silhouette. ~[-1, 1].
-export function fractalDensity(x: number, y: number, phases: number[] = [], seed = 0): number {
-  const p = (i: number): number => phases.length ? phases[i % phases.length] ?? 0 : 0
-  const warpX = 0.62 * valueNoise(x * 1.13 + p(0), y * 1.13 + p(1), seed + 17)
-  const warpY = 0.62 * valueNoise(x * 1.13 + p(2), y * 1.13 + p(3), seed + 29)
-  const wx = x + warpX
-  const wy = y + warpY
-  let sum = 0
-  let amp = 0.5
-  let freq = 1
-  let norm = 0
-  for (let i = 0; i < 6; i++) {
-    sum += amp * valueNoise(wx * freq + p(i), wy * freq + p(i + 2), seed + i * 131)
-    norm += amp
-    freq *= 2.07
-    amp *= 0.54
-  }
-  return sum / norm
-}
-
-// Coarse basins first, then medium and fine sub-clusters: the same field is
-// sampled at three wavelengths, which is what makes the result fractal.
-const CLUSTER_SCALES: Array<[number, number]> = [
-  [1.75, 0.050],
-  [4.10, 0.028],
-  [9.30, 0.014],
-]
-
-// Pulls nodes up the fractal density gradient so voids empty out and words
-// gather into irregular clumps. `onPass` is repulsion between passes: without
-// it a basin collapses into one point, and a single final relaxation would
-// just spread everything back into the uniform lattice.
-export function fractalClusterPlane(
-  points: Array<{ x: number; y: number }>,
-  phases: number[],
-  seed: number,
-  strength: number,
-  iterations = 48,
-  onPass?: () => void
-): void {
-  const count = points.length
-  if (count < 3 || strength <= 0 || iterations <= 0) return
-
-  let cx = 0
-  let cy = 0
-  for (const p of points) {
-    cx += p.x
-    cy += p.y
-  }
-  cx /= count
-  cy /= count
-
-  let maxR = 0
-  for (const p of points) maxR = Math.max(maxR, Math.hypot(p.x - cx, p.y - cy))
-  if (maxR <= 0) return
-
-  const h = 0.045
-  for (let iter = 0; iter < iterations; iter++) {
-    const t = iter / iterations
-    const [freq, step] = t < 0.46 ? CLUSTER_SCALES[0] : t < 0.79 ? CLUSTER_SCALES[1] : CLUSTER_SCALES[2]
-    const decay = 1 - 0.55 * t
-    for (const p of points) {
-      const fx = ((p.x - cx) / maxR) * freq
-      const fy = ((p.y - cy) / maxR) * freq
-      const d = fractalDensity(fx, fy, phases, seed)
-      const gx = fractalDensity(fx + h, fy, phases, seed) - fractalDensity(fx - h, fy, phases, seed)
-      const gy = fractalDensity(fx, fy + h, phases, seed) - fractalDensity(fx, fy - h, phases, seed)
-      const gl = Math.hypot(gx, gy)
-      if (gl < 1e-7) continue
-      // Low-density nodes migrate fast; nodes already inside a basin settle.
-      const urgency = Math.max(0, Math.min(1, 0.58 - 1.35 * d))
-      const shift = step * strength * decay * urgency * maxR / gl
-      p.x += gx * shift
-      p.y += gy * shift
-    }
-    onPass?.()
-  }
-}
-
-// Widescreen anisotropy: the monitor is horizontal, so stretch X and squeeze Y.
-const PLANE_STRETCH_X = 1.55
-const PLANE_STRETCH_Y = 0.88
-
-// Deforms the plane into an uneven silhouette: angular pockets pull some sectors
-// toward the centre and push others out, fractal noise and discrete faults break
-// the contour, and a curl bends the outer arms. All randomness comes from `phases`.
-export function warpPlane(
-  points: Array<{ x: number; y: number }>,
-  phases: number[]
-): void {
-  const count = points.length
-  if (count < 3) return
-
-  let cx = 0
-  let cy = 0
-  for (const p of points) {
-    cx += p.x
-    cy += p.y
-  }
-  cx /= count
-  cy /= count
-
-  let maxR = 0
-  for (const p of points) maxR = Math.max(maxR, Math.hypot(p.x - cx, p.y - cy))
-  if (maxR <= 0) return
-
-  const pocket = phases.slice(0, 5)
-  const wavePhase = phases[5] ?? 0
-  const curlPhase = phases[6] ?? 0
-  const curlPhase2 = phases[7] ?? 0
-  const wavePhase2 = phases[8] ?? 0
-  const lobes = 3 + Math.floor(Math.abs(Math.sin(phases[9] ?? 0)) * 3)
-  const lobePhase = phases[3] ?? 0
-  const fractal = phases.slice(10, 16)
-  const faultSeed = Math.floor((phases[13] ?? 0) * 100000)
-  const FAULTS = 11
-
-  for (const p of points) {
-    const dx = p.x - cx
-    const dy = p.y - cy
-    const r = Math.hypot(dx, dy)
-    const u = Math.min(1, r / maxR)
-    const a = Math.atan2(dy, dx)
-
-    // A few deterministic arms stick far out, leaving voids between them;
-    // sector pockets and waves add finer density contrast near the centre.
-    const arm = Math.pow(Math.max(0, Math.cos(lobes * (a - lobePhase))), 1.4)
-    const pocketOut = 0.5 + 0.5 * shapeNoise(a, pocket)
-    const wave = 0.10 * Math.sin(3 * a + wavePhase) + 0.05 * Math.sin(5 * a + wavePhase2)
-
-    // Fractal detail + sharp per-sector offsets: a "fractured" contour.
-    const jag = fractalNoise(a, u, fractal)
-    const sector = Math.floor(((a + Math.PI) / (2 * Math.PI)) * FAULTS)
-    const faultHash = Math.imul(sector + 1, 2654435761) ^ faultSeed
-    const fault = ((((faultHash >>> 8) % 100) / 100) - 0.5) * 0.16 * u
-
-    const u2 = Math.min(1.35, Math.pow(u, 1.06) *
-      (0.80 + 0.30 * pocketOut + 0.45 * arm * u + wave + 0.20 * jag + fault))
-
-    // Spiral shear plus a second fractal sample for local tangential breaks.
-    const jag2 = fractalNoise(a + 1.7, u, fractal.slice(2))
-    const curl =
-      0.38 * Math.pow(u, 1.25) +
-      0.22 * Math.pow(u, 1.5) * Math.sin(2 * a + curlPhase) +
-      0.16 * u * shapeNoise(2 * a + u, [curlPhase2, ...pocket]) +
-      0.18 * u * jag2
-    const a2 = a + curl
-    const r2 = u2 * maxR
-
-    p.x = cx + Math.cos(a2) * r2 * PLANE_STRETCH_X
-    p.y = cy + Math.sin(a2) * r2 * PLANE_STRETCH_Y
-  }
-}
-
-// Shortcut: 30 passes above 400 nodes may leave overlaps; upgrade if large graphs look packed
 export function collisionIterationsForCount(nodeCount: number): number {
   return nodeCount <= 400 ? 80 : 30
 }
+
+// Uniformly fits the cloud into a square frame of `targetSpan`, centred. The
+// transform is the same one the renderer applies when it fits the content, so
+// running it here is what makes every collision lane below honest on screen.
+// Shape is preserved: it is a scale, never a deformation.
+export function fitToSpan(points: Array<{ x: number; y: number }>, targetSpan: number): void {
+  if (points.length === 0 || !(targetSpan > 0)) return
+  let minX = Infinity
+  let maxX = -Infinity
+  let minY = Infinity
+  let maxY = -Infinity
+  for (const p of points) {
+    if (p.x < minX) minX = p.x
+    if (p.x > maxX) maxX = p.x
+    if (p.y < minY) minY = p.y
+    if (p.y > maxY) maxY = p.y
+  }
+  const w = maxX - minX
+  const h = maxY - minY
+  const span = Math.max(w, h)
+  // Guard: a single point (or a degenerate cloud) has nothing to scale.
+  if (!(span > 0) || !Number.isFinite(span)) return
+  const s = targetSpan / span
+  const cx = (minX + maxX) / 2
+  const cy = (minY + maxY) / 2
+  for (const p of points) {
+    p.x = (p.x - cx) * s
+    p.y = (p.y - cy) * s
+  }
+}
+
+function measuredSpan(points: Array<{ x: number; y: number }>): number {
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const p of points) {
+    if (p.x < minX) minX = p.x
+    if (p.x > maxX) maxX = p.x
+    if (p.y < minY) minY = p.y
+    if (p.y > maxY) maxY = p.y
+  }
+  if (!Number.isFinite(minX) || !Number.isFinite(minY)) return 0
+  return Math.max(maxX - minX, maxY - minY)
+}
+
+export type SolverOpts = {
+  // Snapshot to pull toward after every pass: hubs stand still, dust walks.
+  anchors?: Map<number, { x: number; y: number }>
+  // Zone tags for sulci: cross-zone pairs of clean representatives keep extra air.
+  groupOf?: Map<number, number>
+  dominance?: Map<number, number>
+  // Extra clearance between clean zones (audit B3): bridges get none.
+  sulcusPad?: number
+  // Fascicle id per node (stem contract §2.1). Absent = today's uniform clearance.
+  stemOf?: Map<number, number>
+  // World-unit gap between two clean nodes of DIFFERENT fascicles: 0 = off.
+  cleftPad?: number
+}
+
+// Bodies of one fascicle may interlock: 88% of their reserved radii still keeps
+// every drawn core apart, and the shared 12% is what makes a strand read as ONE
+// nerve instead of a row of beads. Safe for S4, which compares raw `size` while
+// the solver reserves `reservePx(size) >= size` plus air.
+const SAME_STEM_PACK = 0.88
 
 export function resolveCollisions(
   nodes: Array<{ id: number; x: number; y: number; size?: number }>,
@@ -269,14 +173,17 @@ export function resolveCollisions(
   maxIterations: number = 80,
   scaleFactor: number = 1,
   // padScale: density distribution. null = uniform padding (default, tests).
-  padScale: ((size: number) => number) | null = null
+  // Gets the node index so callers can vary the clearance per node: an exact
+  // minimum distance for every pair packs a cluster into bead chains.
+  padScale: ((size: number, index: number) => number) | null = null,
+  opts: SolverOpts = {},
 ): void {
   const count = nodes.length
   if (count <= 1) return
   const scale = Math.min(scaleFactor, MAX_SCALE_FACTOR)
-  const padFor = (size: number | undefined): number => {
+  const padFor = (size: number | undefined, index: number): number => {
     const s = size || 20
-    return padScale ? padScale(s) : padding
+    return padScale ? padScale(s, index) : padding
   }
 
   // Radii depend on sizes only, so they are stable across passes and iterations;
@@ -284,13 +191,43 @@ export function resolveCollisions(
   const radii = new Float64Array(count)
   for (let i = 0; i < count; i++) {
     const n = nodes[i]
-    radii[i] = (n.size || 20) * scale + padFor(n.size) * 0.5
+    radii[i] = (n.size || 20) * scale + padFor(n.size, i) * 0.5
   }
-  // Production clearances (84-200 world units) make a uniform-grid broadphase
-  // slower than this scan: its neighbourhood radius spans several cells, so it
-  // costs ~24 us per node against ~11 ns per pair. Measured 7-17x slower in the
-  // 271-600 node range that topN allows; a grid only pays off near ~4500 nodes.
-  // Keep the O(N^2) scan unless maps get an order of magnitude bigger.
+  const sulcus = opts.sulcusPad ?? 0
+  const cleftPad = opts.cleftPad ?? 0
+  const hasZones = sulcus > 0 && opts.groupOf !== undefined && opts.dominance !== undefined
+  // Cleft padding keys on stem presence alone: a fascicle only exists for a word
+  // that has a clear owner, and max-phi is not a usable proxy for that (see
+  // softInit) — using it here would leave the clefts permanently switched off.
+  const hasCleft = cleftPad > 0 && opts.stemOf !== undefined
+  // Hot-loop tables: zones and anchors as flat arrays, so the O(N^2) scan does
+  // zero Map lookups per pair (measured S9 saver on 1000 nodes).
+  const gids = new Int32Array(count).fill(-1)
+  const doms = new Float64Array(count)
+  const anchorX = new Float64Array(count)
+  const anchorY = new Float64Array(count)
+  const hasAnchor = new Uint8Array(count)
+  // -1 = no fascicle (isolate): never merged and never padded (stem contract).
+  const stems = new Int32Array(count).fill(-1)
+  for (let i = 0; i < count; i++) {
+    const nd = nodes[i]
+    if (hasZones) gids[i] = opts.groupOf!.get(nd.id) ?? -1
+    // doms drive the sulcus rule only: the cleft keys on stem presence, and a stem
+    // already means "has a clear owner" (see softInit).
+    if (hasZones) doms[i] = opts.dominance!.get(nd.id) ?? 0
+    if (hasCleft) stems[i] = opts.stemOf?.get(nd.id) ?? -1
+    if (opts.anchors !== undefined) {
+      const a = opts.anchors.get(nd.id)
+      if (a !== undefined) {
+        anchorX[i] = a.x
+        anchorY[i] = a.y
+        hasAnchor[i] = 1
+      }
+    }
+  }
+  // Production clearances make a uniform-grid broadphase slower than this scan:
+  // its neighbourhood radius spans several cells. Keep the O(N^2) scan unless maps
+  // get an order of magnitude bigger.
   // ponytail: quadratic in node count, fine up to ~1000 nodes (topN cap).
   for (let iter = 0; iter < maxIterations; iter++) {
     let hasCollision = false
@@ -302,7 +239,31 @@ export function resolveCollisions(
 
       for (let j = i + 1; j < count; j++) {
         const b = nodes[j]
-        const minDist = ra + radii[j]
+        let minDist = ra + radii[j]
+        if (hasCleft) {
+          const si = stems[i]
+          const sj = stems[j]
+          const sa = si % 16
+          const sb = sj % 16
+          // Same fascicle per §2.1 — the SAME predicate geometry routes by: one owner
+          // and either the same slot or one end is the soma (slot 0). Without the
+          // slot-0 union the cleft also fired between a hub and its own leaves and
+          // pushed every soma out of its own arm.
+          if (si >= 0 && sj >= 0 && (si >> 4) === (sj >> 4) && (sa === sb || sa === 0 || sb === 0)) {
+            // Pack to 88%, but never closer than the larger radius: at extreme size
+            // ratios 0.88*(ra+rb) would let the big body swallow the small one.
+            minDist = Math.max((ra + radii[j]) * SAME_STEM_PACK, Math.max(ra, radii[j]))
+          }
+          // Different fascicles: the pad IS the canyon between two nerves.
+          // Two real stems only, so isolates (-1) stay unmerged and unpadded.
+          else if (si >= 0 && sj >= 0) minDist += cleftPad
+        }
+        // Sulcus: cross-zone pairs of clean representatives keep extra air;
+        // bridge nodes (dom 0.45..0.60) get none and stay stitched.
+        if (hasZones) {
+          const ga = gids[i]
+          if (ga >= 0 && ga !== gids[j] && doms[i] > 0.68 && doms[j] > 0.68) minDist += sulcus
+        }
 
         let dx = b.x - a.x
         let dy = b.y - a.y
@@ -321,9 +282,7 @@ export function resolveCollisions(
         }
 
         const overlap = minDist - dist
-        if (overlap > maxShift) {
-          maxShift = overlap
-        }
+        if (overlap > maxShift) maxShift = overlap
 
         const nx = dx / dist
         const ny = dy / dist
@@ -336,285 +295,239 @@ export function resolveCollisions(
       }
     }
 
-    if (!hasCollision || maxShift < 0.2) {
-      break
+    // Anchor: hubs stand still, dust walks. Resists the displacement so the
+    // solver separates overlaps but never relayouts (audit B3 / spec P1.2).
+    if (opts.anchors !== undefined) {
+      for (let i = 0; i < count; i++) {
+        if (!hasAnchor[i]) continue
+        const p = nodes[i]
+        const s = p.size || 20
+        const k = s > 20 ? 0.12 : s > 12 ? 0.06 : 0.02
+        p.x += (anchorX[i]! - p.x) * k
+        p.y += (anchorY[i]! - p.y) * k
+      }
     }
+
+    if (!hasCollision || maxShift < 0.2) break
+  }
+}
+
+// (FRAME_START ring retired in P1: fresh nodes seat by neighbours, not gold.)
+
+// Command: seats words that have no cached coordinates next to their already
+// placed neighbours. Cached bodies are never moved — a filter switch must not
+// reshape the silhouette — so this path runs no solver and no rescale.
+// P1: fresh nodes start at the weight-averaged seat of their placed neighbours
+// (not a golden ring, which stamped ring artefacts on every filter switch),
+// then relax locally with settled bodies pinned.
+function seatNewNodes(
+  nodes: LayoutNodeInput[],
+  edges: LayoutEdgeInput[],
+  positions: Map<number, { x: number; y: number }>,
+  seed: number,
+): void {
+  const settled: Array<{ x: number; y: number; size: number }> = []
+  let cx = 0
+  let cy = 0
+  for (const node of nodes) {
+    if (!node.prevXY) continue
+    positions.set(node.id, node.prevXY)
+    settled.push({ ...node.prevXY, size: reservePx(node.size ?? 20) })
+    cx += node.prevXY.x
+    cy += node.prevXY.y
+  }
+  if (settled.length > 0) {
+    cx /= settled.length
+    cy /= settled.length
+  }
+  // Mean spacing of the cached frame: a new word must land at the same scale as
+  // the bodies around it, or it either buries itself or flies off the map.
+  const span = measuredSpan(settled)
+  const pitch = span > 0 ? span / Math.sqrt(settled.length) : 200
+
+  const neighbours = new Map<number, Array<{ id: number; w: number }>>()
+  for (const edge of edges) {
+    const w = Math.max(1e-6, edge.weight)
+    const a = neighbours.get(edge.a)
+    if (a) a.push({ id: edge.b, w })
+    else neighbours.set(edge.a, [{ id: edge.b, w }])
+    const b = neighbours.get(edge.b)
+    if (b) b.push({ id: edge.a, w })
+    else neighbours.set(edge.b, [{ id: edge.a, w }])
+  }
+
+  const fresh = nodes.filter((n) => !n.prevXY).sort((a, b) => a.id - b.id)
+  for (const node of fresh) {
+    let ax = cx
+    let ay = cy
+    let sw = 0
+    for (const nb of neighbours.get(node.id) ?? []) {
+      const p = positions.get(nb.id)
+      if (!p) continue
+      ax += p.x * nb.w
+      ay += p.y * nb.w
+      sw += nb.w
+    }
+    // Guard: a word with no placed neighbour falls back to the cached centroid.
+    if (sw > 0) {
+      ax /= sw
+      ay /= sw
+    }
+    // Jitter breaks exact overlap; deterministic on the id (never Math.random).
+    const point = {
+      x: ax + (hashAt(node.id, 17, seed) - 0.5) * 8,
+      y: ay + (hashAt(node.id, 19, seed) - 0.5) * 8,
+    }
+    // Local stress, settled pinned: the fresh word slides toward its own edges'
+    // rest lengths without moving a single cached body (S8 stays exact).
+    const own = reservePx(node.size ?? 20)
+    for (let iter = 0; iter < 10; iter++) {
+      for (const nb of neighbours.get(node.id) ?? []) {
+        const q = positions.get(nb.id)
+        if (!q) continue
+        const rest = own + reservePx(nodes.find((m) => m.id === nb.id)?.size ?? 20)
+        const dx = point.x - q.x
+        const dy = point.y - q.y
+        const d = Math.hypot(dx, dy) || 1
+        const f = ((d - rest) / d) * 0.1
+        point.x -= dx * f
+        point.y -= dy * f
+      }
+    }
+    for (let pass = 0; pass < 2; pass++) {
+      for (const other of settled) {
+        const dx = point.x - other.x
+        const dy = point.y - other.y
+        const minDist = own + other.size + pitch * 0.12
+        const dist = Math.hypot(dx, dy)
+        if (dist >= minDist) continue
+        const push = (minDist - dist) / (dist || 1)
+        point.x += dx * push
+        point.y += dy * push
+      }
+    }
+    positions.set(node.id, point)
+    settled.push({ ...point, size: own })
   }
 }
 
 export function layout(
   nodes: LayoutNodeInput[],
   edges: LayoutEdgeInput[],
-  opts: LayoutOpts
+  opts: LayoutOpts,
 ): LayoutResult {
-  const graph = new Graph()
-  const rng = createRng(opts.seed)
-  const spread = Math.max(600, Math.sqrt(nodes.length) * 180)
-  // Phases for harmonic noise before consuming rng on node positions
-  const shapePhases = Array.from({ length: 16 }, () => rng() * Math.PI * 2)
+  const positions = new Map<number, { x: number; y: number }>()
+  if (nodes.length === 0) return { positions, iterationsDone: 0 }
 
-  // Radial degree-aware start: hubs start in the core, rare nodes at fringe.
-  const degree = new Map<string, number>()
-  for (const edge of edges) {
-    const a = String(edge.a)
-    const b = String(edge.b)
-    degree.set(a, (degree.get(a) ?? 0) + 1)
-    degree.set(b, (degree.get(b) ?? 0) + 1)
+  const iterations = opts.iterations !== undefined ? opts.iterations : opts.fullRun ? 1200 : 20
+  // Zero-iteration probe (tests, tools): report the cache verbatim.
+  if (iterations === 0) {
+    for (const node of nodes) positions.set(node.id, node.prevXY ?? { x: 0, y: 0 })
+    return { positions, iterationsDone: 0 }
   }
-  let maxDegree = 0
-  for (const d of degree.values()) if (d > maxDegree) maxDegree = d
-  const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5))
 
-  for (const [index, node] of nodes.entries()) {
-    let x: number
-    let y: number
-    if (!opts.fullRun && node.prevXY) {
-      x = node.prevXY.x
-      y = node.prevXY.y
-    } else {
-      const deg = degree.get(String(node.id)) ?? 0
-      const t = maxDegree > 0 ? deg / maxDegree : 0
-      const angle = index * GOLDEN_ANGLE + (rng() - 0.5) * 0.6
-      const radius =
-        (spread / 2) *
-        (1 - 0.85 * Math.pow(t, 0.7)) *
-        (1 + 0.35 * shapeNoise(angle, shapePhases)) *
-        (0.9 + 0.2 * rng())
-      x = Math.cos(angle) * radius
-      y = Math.sin(angle) * radius
+  const cachedShare = nodes.filter((n) => n.prevXY).length / nodes.length
+  // Audit #10: below 0.65 the frame is mostly new — a full re-spread beats
+  // seating strangers into stale barycentres (long webs across the map).
+  const reuseFrame = !opts.fullRun && cachedShare >= 0.65
+  if (reuseFrame) {
+    seatNewNodes(nodes, edges, positions, opts.seed)
+    return { positions, iterationsDone: 0 }
+  }
+
+  // Frame width: the renderer fits the full extent, so the width IS the scale that
+  // every clearance below is expressed in.
+  const spanTarget = Math.max(6000, Math.min(10000, Math.sqrt(nodes.length) * 320))
+  const pxToWorld = spanTarget / LAYOUT_SCREEN_SPAN
+  // The spread works in screen-px units, where a node `size` and a clearance are
+  // directly comparable; only the finished figure is converted to world units.
+  const figure = spread(nodes, edges, { seed: opts.seed, span: LAYOUT_SCREEN_SPAN })
+  opts.onStage?.(92, 'Разведение пересечений...')
+
+  const points = nodes.map((node) => {
+    const p = figure.positions.get(node.id) ?? { x: 0, y: 0 }
+    return { id: node.id, x: p.x * pxToWorld, y: p.y * pxToWorld, size: reservePx(node.size ?? 20) }
+  })
+  // Air varies 60..140% per node (deterministic on the index): with one exact
+  // minimum distance every pair settles into an even field instead of bead chains.
+  const padScale = (size: number, index: number): number =>
+    2 * airFor(size) * dustTight(size) * (1.4 + 0.8 * hashAt(index, 7919, 1)) * pxToWorld
+  // P1.2: two phases, same 28-pass budget. Phase 1 separates without an anchor:
+  // in a dense pile the per-node net force cancels out and an anchor would pin
+  // every node to its packed init forever (S4 stuck at d=20, worst -0.87).
+  // Phase 2 re-anchors to the expanded layout and refines sulci (hubs stand).
+  // One stem packs tight (0.88) and two stems keep an extra cleft, so the canyons
+  // carved by the assignment survive both solver phases instead of being filled by
+  // the isotropic expansion of phase 1.
+  const zoneOpts = {
+    groupOf: figure.groupOf,
+    dominance: figure.dominance,
+    stemOf: figure.stemOf,
+    cleftPad: 8 * pxToWorld,
+    sulcusPad: 10 * pxToWorld,
+  }
+  resolveCollisions(points, 0, 8, Math.min(MAX_SCALE_FACTOR, pxToWorld), padScale, zoneOpts)
+  const anchors = new Map(points.map((p) => [p.id, { x: p.x, y: p.y }] as const))
+  resolveCollisions(points, 0, SOLVER_PASSES - 8, Math.min(MAX_SCALE_FACTOR, pxToWorld), padScale, {
+    anchors,
+    ...zoneOpts,
+  })
+  // Aspect hold: the collision pass expands along the crowded axis and blurs
+  // the plane back toward round. Re-enforce by stretch-only: growing one axis
+  // can only grow clearances, so S4 stays green. Target 1.8: ink tracks data at
+  // ~0.85x on real corpora (giant top/bottom hubs + labels inflate vertical),
+  // so data 1.8 reads as ~1.5. Measured: synthetic ink 1.54 at data 1.5.
+  // Returns the affine map; ports ride it at conversion time so corridors stay
+  // glued to their zones (figure.ports stay in screen px until converted).
+  const holdAspect = (target: number): { cx: number; cy: number; kx: number; ky: number } => {
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    for (const p of points) {
+      if (p.x < minX) minX = p.x
+      if (p.y < minY) minY = p.y
+      if (p.x > maxX) maxX = p.x
+      if (p.y > maxY) maxY = p.y
     }
-    graph.addNode(String(node.id), { x, y, size: node.size || 20 })
-  }
-
-  const existingNodes = new Set(nodes.map((n) => String(n.id)))
-  for (const edge of edges) {
-    const a = String(edge.a)
-    const b = String(edge.b)
-    if (existingNodes.has(a) && existingNodes.has(b) && a !== b) {
-      if (!graph.hasEdge(a, b)) {
-        graph.addEdge(a, b, { weight: edge.weight })
-      }
-    }
-  }
-
-  const iterations = opts.iterations !== undefined
-    ? opts.iterations
-    : opts.fullRun ? 1200 : 20
-
-  if (iterations > 0 && graph.order > 1) {
-    forceAtlas2.assign(graph, {
-      iterations,
-      settings: {
-        // linLog separates communities into ganglia with bridges, but on tiny
-        // graphs it breaks the "strong link closer" invariant — gate like warp.
-        linLogMode: graph.order >= 12,
-        adjustSizes: true,
-        outboundAttractionDistribution: true,
-        barnesHutOptimize: true,
-        barnesHutTheta: 0.5,
-        // High scaling ratio and light gravity produce an expansive, starry Obsidian-like dispersion
-        scalingRatio: 16000,
-        gravity: 0.0003,
-        edgeWeightInfluence: 1.8,
-        strongGravityMode: false,
-        slowDown: 1,
-      },
-    })
-  }
-
-  // Harmonic contour shaping and lobe dissipation
-  if (iterations > 0 && graph.order > 2) {
-    const rank = [...graph.mapNodes((n) => n)]
-      .map((n) => [n, graph.degree(n)] as const)
-      .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
-      .map(([n]) => n)
-    const rankOf = new Map(rank.map((n, i) => [n, i]))
-    let cx = 0
-    let cy = 0
-    graph.forEachNode((n) => {
-      const a = graph.getNodeAttributes(n)
-      cx += a.x
-      cy += a.y
-    })
-    cx /= graph.order
-    cy /= graph.order
-
-    let maxR = 0
-    graph.forEachNode((n) => {
-      if (graph.degree(n) === 0) return
-      const a = graph.getNodeAttributes(n)
-      maxR = Math.max(maxR, Math.hypot(a.x - cx, a.y - cy))
-    })
-    maxR = Math.max(maxR, 1)
-
-    // 1) Axis elongation
-    const stretchAngle = rng() * Math.PI
-    const k = 1.2
-    const ux = Math.cos(stretchAngle)
-    const uy = Math.sin(stretchAngle)
-    graph.forEachNode((n) => {
-      const a = graph.getNodeAttributes(n)
-      let dx = a.x - cx
-      let dy = a.y - cy
-      const d0 = Math.hypot(dx, dy) || 1
-      if (graph.degree(n) === 0) {
-        dx = (dx / d0) * maxR * 1.02
-        dy = (dy / d0) * maxR * 1.02
-      }
-      const a1 = dx * ux + dy * uy
-      const a2 = -dx * uy + dy * ux
-      const sx = a1 * k * ux + a2 * (1 / k) * -uy
-      const sy = a1 * k * uy + a2 * (1 / k) * ux
-      // 2) Angular noise protrusions
-      const d1 = Math.hypot(sx, sy) || 1
-      const t = (rankOf.get(n) ?? 0) / Math.max(1, graph.order - 1)
-      const amp = (0.35 + 0.75 * t) * Math.min(1, graph.order / 20)
-      const r2 = d1 * (1 + amp * shapeNoise(Math.atan2(sy, sx), shapePhases))
-      graph.setNodeAttribute(n, 'x', cx + (sx / d1) * r2)
-      graph.setNodeAttribute(n, 'y', cy + (sy / d1) * r2)
-    })
-
-    // 3) Hub lobe pushing for large graphs
-    if (graph.order >= 40) {
-      let ncx = 0
-      let ncy = 0
-      graph.forEachNode((n) => {
-        const a = graph.getNodeAttributes(n)
-        ncx += a.x
-        ncy += a.y
-      })
-      ncx /= graph.order
-      ncy /= graph.order
-      let maxR2 = 0
-      graph.forEachNode((n) => {
-        if (graph.degree(n) === 0) return
-        const a = graph.getNodeAttributes(n)
-        maxR2 = Math.max(maxR2, Math.hypot(a.x - ncx, a.y - ncy))
-      })
-      const shifts = new Map<string, { dx: number; dy: number; m: number }>()
-      const addShift = (key: string, ux: number, uy: number, push: number, w: number) => {
-        const s = shifts.get(key) ?? { dx: 0, dy: 0, m: 0 }
-        s.dx += ux * push * w
-        s.dy += uy * push * w
-        s.m = Math.max(s.m, push * w)
-        shifts.set(key, s)
-      }
-      rank.slice(0, 12).forEach((n, i) => {
-        const a = graph.getNodeAttributes(n)
-        const dx = a.x - ncx
-        const dy = a.y - ncy
-        const d = Math.hypot(dx, dy) || 1
-        const target = maxR2 * (0.62 - i * 0.012)
-        if (d >= target) return
-        const ux = dx / d
-        const uy = dy / d
-        const push = target - d
-        addShift(n, ux, uy, push, 1)
-        for (const nb of graph.neighbors(n)) addShift(nb, ux, uy, push, 0.6)
-        for (const nb of graph.neighbors(n)) {
-          for (const n2 of graph.neighbors(nb)) {
-            if (n2 !== n) addShift(n2, ux, uy, push, 0.25)
-          }
-        }
-      })
-      for (const [n, s] of shifts) {
-        const a = graph.getNodeAttributes(n)
-        const len = Math.hypot(s.dx, s.dy) || 1
-        const k = Math.min(1, s.m / len)
-        graph.setNodeAttribute(n, 'x', a.x + s.dx * k)
-        graph.setNodeAttribute(n, 'y', a.y + s.dy * k)
-      }
-    }
-  }
-
-  const positionedNodes: Array<{ id: number; x: number; y: number; size?: number }> = []
-
-  for (const node of nodes) {
-    const attrs = graph.getNodeAttributes(String(node.id))
-    positionedNodes.push({
-      id: node.id,
-      x: attrs.x,
-      y: attrs.y,
-      size: node.size,
-    })
-  }
-
-  if (iterations > 0) {
-    // 1) First normalize & scale to target world frame so subsequent dispersion operates
-    // directly on final coordinate scale, avoiding post-layout squashing.
-    const xs = positionedNodes.map((p) => p.x).sort((a, b) => a - b)
-    const ys = positionedNodes.map((p) => p.y).sort((a, b) => a - b)
-    const qOr = (arr: number[], t: number) => arr[Math.max(0, Math.min(arr.length - 1, Math.floor(arr.length * t)))]
-    const minX = qOr(xs, 0.05)
-    const maxX = qOr(xs, 0.95)
-    const minY = qOr(ys, 0.05)
-    const maxY = qOr(ys, 0.95)
-    const bw = Math.max(maxX - minX, 1)
-    const bh = Math.max(maxY - minY, 1)
-    // Scale target world span generously with node count
-    const targetSpan = Math.max(6000, Math.min(10000, Math.sqrt(positionedNodes.length) * 320))
-    const s = targetSpan / Math.max(bw, bh)
+    const w = maxX - minX
+    const h = maxY - minY
     const cx = (minX + maxX) / 2
     const cy = (minY + maxY) / 2
-    for (const p of positionedNodes) {
-      p.x = (p.x - cx) * s
-      p.y = (p.y - cy) * s
+    let kx = 1
+    let ky = 1
+    if (w > 1e-9 && h > 1e-9) {
+      const ratio = w / h
+      if (ratio < target) kx = target / ratio
+      else ky = ratio / target
+      for (const p of points) {
+        p.x = cx + (p.x - cx) * kx
+        p.y = cy + (p.y - cy) * ky
+      }
     }
+    return { cx, cy, kx, ky }
+  }
+  const aspectMap = holdAspect(1.8)
+  for (const p of points) positions.set(p.id, { x: p.x, y: p.y })
 
-    // 2) Warp the normalised plane into a non-uniform, bent silhouette.
-    // Skipped for tiny graphs (warping 2-3 nodes is meaningless and breaks
-    // the "strongly connected nodes stay closer" invariant on small fixtures).
-    // Cached positions from a full run are already warped; warping them again on
-    // every filter update would compound the stretch and drift the silhouette.
-    if (graph.order >= 8 && opts.fullRun) warpPlane(positionedNodes, shapePhases)
-
-    // World units reserved per px of node radius, plus a perimeter clearance.
-    // The clearance is deliberately WIDER than before: density contrast must
-    // come from emptied regions, not from packing bodies cheek by jowl.
-    // Pushing it much past ~84 is self-defeating — autoRescale fits the grown
-    // extent back to the viewport, so screen gaps shrink again.
-    const scaleFactor = MAX_SCALE_FACTOR
-    const padScale = (size: number): number => {
-      const sz = size || 20
-      return Math.max(84, sz * 1.95 + 28)
-    }
-
-    // 3) Strong 2D fractal density. A single warp would be undone by collision
-    // relaxation, so attraction and repulsion are interleaved: basins fill up
-    // to the guaranteed clearance, voids stay empty, and the last relaxation
-    // pass only fixes what is left. Cached/filter runs keep the full-run map.
-    if (graph.order >= 12 && opts.fullRun) {
-      const strength = Math.min(1, Math.max(0, (positionedNodes.length - 12) / 80))
-      fractalClusterPlane(
-        positionedNodes,
-        shapePhases,
-        (Math.imul(opts.seed, 7919) | 0),
-        strength,
-        48,
-        () => resolveCollisions(positionedNodes, 10, 1, scaleFactor, padScale)
-      )
-    }
-
-    // 4) Disperse overlaps directly in the final coordinate system.
-    // Node sizes and hub clearings directly correspond to rendered world units.
-    // Filter updates reuse cached full-run positions, so a light touch-up is
-    // enough there; the full relaxation budget pays off only on fresh layouts.
-    opts.onStage?.(92, 'Разведение пересечений...')
-    // Large maps cost O(N^2) per pass: above 400 nodes reuse the helper's own
-    // small budget (x2 for the final frame) instead of the 140/180 floor meant
-    // for small maps. The 600-node test covers the large-map branch.
-    let fullPasses = Math.max(collisionIterationsForCount(positionedNodes.length), positionedNodes.length > 300 ? 180 : 140)
-    if (positionedNodes.length > 400) {
-      fullPasses = collisionIterationsForCount(positionedNodes.length) * 2
-    }
-    const passes = opts.fullRun ? fullPasses : 25
-    resolveCollisions(positionedNodes, 10, passes, scaleFactor, padScale)
+  const ports = new Map<number, LayoutPort>()
+  for (const [id, port] of figure.ports) {
+    const wx = port.x * pxToWorld
+    const wy = port.y * pxToWorld
+    ports.set(id, {
+      ...port,
+      x: aspectMap.cx + (wx - aspectMap.cx) * aspectMap.kx,
+      y: aspectMap.cy + (wy - aspectMap.cy) * aspectMap.ky,
+    })
   }
 
-  const positions = new Map<number, { x: number; y: number }>()
-  for (const p of positionedNodes) {
-    positions.set(p.id, { x: p.x, y: p.y })
+  return {
+    positions,
+    iterationsDone: SOLVER_PASSES,
+    ports,
+    groupOf: figure.groupOf,
+    corridors: figure.corridors,
+    dominance: figure.dominance,
+    stemOf: figure.stemOf,
   }
-
-  return { positions, iterationsDone: iterations }
 }

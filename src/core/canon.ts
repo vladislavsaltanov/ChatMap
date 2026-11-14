@@ -33,13 +33,29 @@ const RU_ENDINGS_BY_LAST = (() => {
 
 const LATIN_ENDINGS = ['ing', 'ed', 'es', 's']
 
-function stemRu(word: string): string {
+// A stem that is itself a corpus-wide standalone word, far more frequent than the
+// word it would absorb, is almost always a DIFFERENT lexeme, not its inflection:
+// «меня» (2085) must not swallow «менять» (15). Real paradigms stay within a few
+// times in frequency (measured <10x), while the false merge above is 139x.
+const STEM_DOMINANCE = 25
+
+// Query: does `remainder` dominate `word` in the corpus? Without counts (tests,
+// single-token callers) the answer is always no, i.e. the old stemming applies.
+function dominates(remainder: string, word: string, counts?: Map<string, number>): boolean {
+  if (!counts) return false
+  const stemFreq = counts.get(remainder)
+  if (!stemFreq) return false
+  return stemFreq >= STEM_DOMINANCE * Math.max(1, counts.get(word) ?? 0)
+}
+
+function stemRu(word: string, counts?: Map<string, number>): string {
   const candidates = RU_ENDINGS_BY_LAST.get(word.at(-1) ?? '') ?? []
   for (const ending of candidates) {
     if (word.endsWith(ending)) {
       const remainder = word.slice(0, -ending.length)
       if (remainder.length >= 4 || remainder === 'дом') {
-        return remainder
+        // Vetoed: keep the whole word so it never joins the dominant lexeme.
+        return dominates(remainder, word, counts) ? word : remainder
       }
     }
   }
@@ -61,14 +77,14 @@ function stemLatin(word: string): string {
   return word
 }
 
-export function canon(word: string, cls: TokClass): string {
+export function canon(word: string, cls: TokClass, counts?: Map<string, number>): string {
   if (cls !== 'plain') {
     return word
   }
 
   const clean = word.toLowerCase().replace(/ё/g, 'е')
   if (/[а-я]/u.test(clean)) {
-    return stemRu(clean)
+    return stemRu(clean, counts)
   }
   if (/[a-z]/.test(clean)) {
     return stemLatin(clean)

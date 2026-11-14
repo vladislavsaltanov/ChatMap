@@ -1,12 +1,12 @@
 import Graph from 'graphology'
 import Sigma from 'sigma'
 import { drawOnCanvas } from '@sigma/export-image'
-import { coreFrac, edgeColor, edgeWidth, fisheyePoint, labelZoomRatio, phaseFor, renderedNodeSize, visualCoreRadius, type FisheyeConfig } from '../core/geometry'
+import { coreFrac, edgeColor, edgeWidth, fisheyePoint, labelZoomRatio, phaseFor, quadOf, renderedNodeSize, visualCoreRadius, type FisheyeConfig } from '../core/geometry'
 import { resolveLabelBackdrops, resolveLabelBoxes, type LabelBox, type LabelCircle } from '../core/labels'
 import { LEGEND_TEXT } from '../core/legend'
 import type { AuthorId, MapMsg } from '../core/types'
 import { buildNodeDetails, getLabelOverrides, NodePanel } from './nodepanel'
-import { MAP_SIGMA_SETTINGS, MAP_SIGMA_STYLES } from './mapStyles'
+import { ENTER_TOTAL_MS, labelFontPxFor, labelIsLegible, MAP_SIGMA_SETTINGS, MAP_SIGMA_STYLES } from './mapStyles'
 import { DEFAULT_NODE_COLOR, NEURAL_PRIMITIVES, PLATE_COLOR, setNeuralTime } from './neural'
 import { drawLegend } from './legend'
 import { SubgraphAnimator } from './subgraphAnim'
@@ -15,6 +15,25 @@ import type { CustomEdgeState, CustomGraphState, CustomNodeState } from './mapSt
 
 type ViewState = { x: number; y: number; ratio: number; angle: number }
 const FLAT_VIEW: ViewState = { x: 0.5, y: 0.5, ratio: 1, angle: 0 }
+// Growth ramp of the focused body. Fast enough to feel like a response to the
+// pointer, slow enough that the 12% boost arrives as motion instead of a jump.
+const GROW_MS = 110
+
+// p90 of the drawn cores: the caption bar for THIS map, i.e. only the top decile by
+// body earns a name at the overview. A fixed px threshold cannot serve a 30-word and
+// a 1000-word map — measured: at 12px captions a 600-word map rendered 221 captions,
+// a name on almost every dot.
+function labelCoreBar(graph: Graph): number {
+  const cores: number[] = []
+  graph.forEachNode((_key, attrs) => {
+    if (!attrs.label) return
+    cores.push(visualCoreRadius((attrs.size as number) ?? 0))
+  })
+  // Guard: an empty map (or one without labels) keeps the default bar.
+  if (cores.length === 0) return 6
+  cores.sort((a, b) => a - b)
+  return Math.max(5, cores[Math.min(cores.length - 1, Math.floor(cores.length * 0.9))])
+}
 
 export class MapView {
   private container: HTMLElement
@@ -23,6 +42,8 @@ export class MapView {
   private legendCanvas: HTMLCanvasElement
   private legendVisible = true
   private graph: Graph
+  // Published to the styles as `labelCoreMin`; see labelCoreBar().
+  private labelCoreMin = 6
   private renderer: Sigma<any, any, any, CustomNodeState, CustomEdgeState, CustomGraphState> | null = null
   private pinnedId: number | null = null
   private highlight: SubgraphHighlight
@@ -35,7 +56,16 @@ export class MapView {
   private layoutRaf: number | null = null
   private idleTimer: number | null = null
   private animator = new SubgraphAnimator((v) => {
-    this.renderer?.setGraphState({ dimAlpha: v.dim, focusAlpha: v.focus, releaseAlpha: v.release, enterAlpha: v.enter })
+    // Every tweened field must be forwarded: a field nobody writes stays at its
+    // start value in the graph state and its style function never moves.
+    this.renderer?.setGraphState({
+      dimAlpha: v.dim,
+      focusAlpha: v.focus,
+      releaseAlpha: v.release,
+      growAlpha: v.grow,
+      enterAlpha: v.enter,
+      promote: v.promote,
+    })
     this.renderer?.refresh({ skipIndexation: true })
   })
 
@@ -80,6 +110,9 @@ export class MapView {
   private fadeToIdle(): void {
     this.cancelIdleTimer()
     this.subgraphKey = null
+    // The boosted body hands its growth back on the same beat as the dim: leaving
+    // a word must never snap it down to its resting size.
+    this.animator.to('grow', 0, 120)
     this.animator.to('focus', 0, 100)
     this.animator.to('dim', 0, 120, () => {
       if (this.subgraphKey === null) {
@@ -98,6 +131,8 @@ export class MapView {
     this.animator.jump('dim', 0)
     this.animator.jump('focus', 0)
     this.animator.jump('release', 0)
+    this.animator.jump('grow', 0)
+    this.animator.jump('promote', 0)
     this.pinnedId = null
     this.subgraphKey = null
     this.renderer?.setGraphState({
@@ -105,30 +140,97 @@ export class MapView {
       dimAlpha: 0,
       focusAlpha: 0,
       releaseAlpha: 0,
+      growAlpha: 0,
       pinActive: false,
     })
   }
 
-  // Focus ego-subgraph: snaps instantly (1 frame) when moving between nodes, avoids animation queue latency
-  private focusSubgraph(key: string, topN: number): void {
+  // Focus ego-subgraph: the fan itself snaps (1 frame) when moving between nodes,
+  // avoids animation queue latency.
+  // `labelBudget` bounds only the neighbours whose captions are forced; every link
+  // of the word is lit and tiered by weight (see SubgraphHighlight.swap).
+  private focusSubgraph(key: string, labelBudget: number): void {
     this.cancelIdleTimer()
     const alreadyActive = this.animator.value('dim') > 0.4
+    // The crowd around the word is cleared GEOMETRICALLY, by distance to this node:
+    // publish where it is and how wide its disc is, in px (the unit node sizes use).
+    this.publishFocusPoint(key)
+    // Re-pinning the word that is already focused must not restart its growth:
+    // jumping the ramp back to zero would shrink that body for a single frame.
+    const retarget = this.highlight.centerKey() !== key
+    // Growth the outgoing word had already reached: its release fade starts there,
+    // so a fast sweep across words never lifts a body before shrinking it.
+    const handed = retarget ? this.animator.value('grow') : 0
     this.highlight.flushReleased(this.renderer)
-    this.highlight.swap(this.renderer, key, topN)
+    this.highlight.swap(this.renderer, key, labelBudget, this.inFrameTest())
+
+    if (retarget) {
+      this.animator.jump('grow', 0)
+      // The growth must be SEEN, not merely scheduled. The first painted frame of
+      // a focus change is the expensive one (lit fan, forced captions, label
+      // atlas) — measured at ~170ms on a software rasterizer — and a ramp started
+      // inside it is over before a single step is drawn. Start on the frame after.
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          if (this.highlight.centerKey() === key) this.animator.to('grow', 1, GROW_MS)
+        }),
+      )
+    } else if (this.animator.value('grow') < 1) {
+      // The same word is lit again while its idle tween is still shrinking it:
+      // resume the growth instead of letting that tween shade a focused body.
+      this.animator.to('grow', 1, GROW_MS)
+    }
 
     if (alreadyActive) {
       // Rapid hover across nodes: snap active subgraph in 1 frame without animation queue lag
       this.animator.jump('dim', 1)
       this.animator.jump('focus', 1)
-      this.animator.jump('release', 0)
+      this.animator.jump('release', handed)
+      this.animator.to('release', 0, GROW_MS, () => this.highlight.flushReleased(this.renderer))
     } else {
       // Initial entry from idle: snappy 90ms entry
-      this.animator.jump('release', 1)
-      this.animator.to('release', 0, 90, () => this.highlight.flushReleased(this.renderer))
+      this.animator.jump('release', 0)
       this.animator.to('focus', 1, 90)
       this.animator.to('dim', 1, 100)
     }
     this.scheduleLayout()
+  }
+
+  // Query: is this node inside the current frame (plus a margin)? Hovering a word
+  // at a close-up must rank its visible neighbours first — the globally heaviest
+  // links all point off the canvas there, so the ego network looked empty until
+  // the user nudged the wheel to zoom out.
+  // Command: publish the selected word's position and disc radius so the styles can
+  // clear the bodies touching it. One graph-state write per focus change; the
+  // camera factor is read here because styles never see the camera.
+  private publishFocusPoint(key: string): void {
+    const r = this.renderer
+    if (!r || !this.graph.hasNode(key)) return
+    const a = this.graph.getNodeAttributes(key)
+    const p0 = r.graphToViewport({ x: 0, y: 0 })
+    const p1 = r.graphToViewport({ x: 1, y: 0 })
+    r.setGraphState({
+      focusX: (a.x as number) ?? 0,
+      focusY: (a.y as number) ?? 0,
+      // Contact band: the drawn disc plus a breath of its aura.
+      focusReach: visualCoreRadius((a.size as number) ?? 0) * 1.15,
+      focusPxPerUnit: Math.max(1e-6, Math.hypot(p1.x - p0.x, p1.y - p0.y)),
+    })
+  }
+  private inFrameTest(): (nodeKey: string) => boolean {
+    const r = this.renderer
+    if (!r) return () => true
+    const cam = r.getCamera().getState()
+    const dims = r.getDimensions()
+    const margin = Math.min(dims.width, dims.height) * 0.15
+    const fisheye = r.getGraphState() as FisheyeConfig
+    return (nodeKey: string): boolean => {
+      // Guard: a key from a stale diff must not throw mid-hover.
+      if (!this.graph.hasNode(nodeKey)) return false
+      const attrs = this.graph.getNodeAttributes(nodeKey)
+      const p = r.graphToViewport(fisheyePoint(attrs.x, attrs.y, fisheye), { cameraState: cam })
+      return p.x >= -margin && p.y >= -margin && p.x <= dims.width + margin && p.y <= dims.height + margin
+    }
   }
 
   constructor(root: HTMLElement) {
@@ -180,6 +282,8 @@ export class MapView {
 
     exportBtn.addEventListener('click', () => {
       if (!this.renderer) return
+      // SAFETY: drawOnCanvas types the renderer by its own sigma version; ours is
+      // the same runtime object, only the generic parameters differ.
       void drawOnCanvas(this.renderer as unknown as Parameters<typeof drawOnCanvas>[0], {
         backgroundColor: 'rgba(0, 0, 0, 0)',
       }).then((graph) => {
@@ -262,11 +366,17 @@ export class MapView {
         dimAlpha: 0,
         focusAlpha: 0,
         releaseAlpha: 0,
+        growAlpha: 0,
+        focusX: 0,
+        focusY: 0,
+        focusReach: 0,
+        focusPxPerUnit: 0,
         enterAlpha: 1,
         lodRatio: 1,
         cameraRatio: 1,
         mapDensity: 0,
         pinActive: false,
+        promote: 0,
         photoMode: false,
         labelBlocked: new Set<string>(),
         labelBackdrop: new Set<string>(),
@@ -283,11 +393,17 @@ export class MapView {
       dimAlpha: 0,
       focusAlpha: 0,
       releaseAlpha: 0,
+      growAlpha: 0,
+      focusX: 0,
+      focusY: 0,
+      focusReach: 0,
+      focusPxPerUnit: 0,
       enterAlpha: 1,
       lodRatio: 1,
       cameraRatio: 1,
       mapDensity: 0,
       pinActive: false,
+      promote: 0,
       photoMode: false,
       labelBlocked: new Set<string>(),
       labelBackdrop: new Set<string>(),
@@ -309,6 +425,7 @@ export class MapView {
       }
     })
     if (import.meta.env.DEV) {
+      // SAFETY: dev-only hook, the property is read by the local test harness.
       const devWindow = window as unknown as { __mapview?: MapView }
       devWindow.__mapview = this
     }
@@ -360,9 +477,11 @@ export class MapView {
 
   // Dense maps are treated as slightly zoomed out, so small-node dust fades earlier.
   // Only affects LOD opacity/labels; Sigma scales real sizes by the true camera ratio.
+  // Capped at 1.3: the old (order/300)^0.8 reached 2.63 on a 1000-word map and hid a
+  // quarter of the nodes at the default view, which is why the figure disappeared.
   private lodBoost(): number {
     const order = this.graph.order
-    return order > 300 ? Math.pow(order / 300, 0.8) : 1
+    return order > 300 ? Math.min(1.3, Math.sqrt(order / 300)) : 1
   }
 
   // Approximate label boxes and marker discs in screen px, mirroring Sigma's
@@ -380,20 +499,39 @@ export class MapView {
     const margin = (r.getPrimitives()?.nodes?.label?.margin as number | undefined) ?? 5
     const boxes: LabelBox[] = []
     const circles: LabelCircle[] = []
+    // LOD gate replicated from the node style. Reading `getNodeDisplayData` here
+    // closed a feedback loop — layout -> display data -> layout — and captions
+    // flickered across zoom steps: the same camera could yield two different
+    // blocked sets one frame apart.
+    const effective = cam.ratio * this.lodBoost()
+    const graphState = r.getGraphState()
+    const dimming = (graphState.dimAlpha ?? 0) > 0
+    // Captions visible on the previous frame are sticky: they keep their slot
+    // under a tighter clearance, so a couple of pixels of camera drift cannot
+    // evict them and bring them back on the next zoom step.
+    const prevBlocked = graphState.labelBlocked
 
     for (const key of this.graph.nodes()) {
       const a = this.graph.getNodeAttributes(key)
-      const d = r.getNodeDisplayData(key)
-      if (!a.label || d?.visibility === 'hidden') continue
+      if (!a.label) continue
+      // A caption that is already fading out must not take a slot in the resolver:
+      // it would pop in for a couple of zoom steps and vanish again.
+      if (!labelIsLegible(a, cam.ratio, this.labelCoreMin)) continue
       const core = visualCoreRadius((a.size as number) ?? 0)
       if (renderedNodeSize(core, cam.ratio) < 2) continue
+      // baseNodeVisibility(): nothing is hidden while an ego-network is focused.
+      if (!dimming && renderedNodeSize(core, effective) < 2) continue
 
       // Obel Mono has a fixed 0.600 em advance in every weight, so this is an
-      // exact width estimate rather than the old 0.62 heuristic.
-      const fs = ((d?.labelSize as number) ?? 18.5) * zk
+      // exact width estimate rather than the old 0.62 heuristic. The kegel keeps
+      // the caption at its designed size on screen at every zoom level, and the
+      // per-node base comes from the SAME function the style uses (a small dot
+      // carries a small word).
+      const fs = labelFontPxFor(a)
       const w = Math.max(8, String(a.label).length * fs * 0.6)
       const h = fs * 1.25
-      const rad = r.scaleSize((d?.size as number) ?? 0)
+      // Sigma offsets the caption by the drawn quad radius (core + aura).
+      const rad = renderedNodeSize(quadOf(core), cam.ratio)
       // Captions must use the SAME displaced position as the marker, otherwise
       // the collision grid drifts away from the words actually on screen.
       const pos = r.graphToViewport(fisheyePoint(a.x, a.y, fisheye), { cameraState: cam })
@@ -409,6 +547,7 @@ export class MapView {
         w,
         h,
         priority: core + forced,
+        sticky: !prevBlocked?.has(key),
       })
     }
     // A wider breathing gap keeps the earlier-appearing captions readable
@@ -501,8 +640,10 @@ export class MapView {
     const layout = this.computeLabelLayout(cam, fisheye)
     const effective = ratio * this.lodBoost()
     // A 30-node map has no visual noise; a 600-node one does. LOD suppression
-    // scales with map density so small chats stay fully detailed.
-    const mapDensity = Math.max(0, Math.min(1, (this.graph.order - 50) / 350))
+    // scales with map density so small chats stay fully detailed. The ramp
+    // saturates at 600 nodes instead of 400: at 400-600 the map still has room
+    // for structure, and hiding its dust there was pure loss.
+    const mapDensity = Math.max(0, Math.min(1, (this.graph.order - 50) / 550))
     const state = r.getGraphState()
     const applied = state.lodRatio ?? 1
     const sameLod = Math.abs(effective - applied) / Math.max(effective, applied) < 0.01
@@ -519,6 +660,7 @@ export class MapView {
     r.setGraphState({
       lodRatio: effective,
       cameraRatio: ratio,
+      labelCoreMin: this.labelCoreMin,
       mapDensity,
       labelBlocked: layout.blocked,
       labelBackdrop: layout.backdrop,
@@ -529,6 +671,9 @@ export class MapView {
   }
 
   render(msg: MapMsg): void {
+    // A re-render of the same map (filter update) must not replay the whole
+    // entrance wave: only a fresh chat gets the staggered assembly.
+    const hadMap = this.graph.order > 0
     this.resetInteractionState()
     this.cancelIdleTimer()
     this.lastMsg = msg
@@ -614,6 +759,8 @@ export class MapView {
       }
     }
 
+    // Caption bar for this map: computed once per render, published by applyView.
+    this.labelCoreMin = labelCoreBar(this.graph)
     if (!this.renderer) {
       this.initRenderer()
     } else {
@@ -626,9 +773,14 @@ export class MapView {
     this.applyView(this.renderer?.getCamera().getState() ?? FLAT_VIEW)
     // Fonts are loaded by the time a map arrives; repaint with the real face.
     this.paintLegend()
-    // Fresh map fades in instead of popping: restart the enter tween.
-    this.animator.jump('enter', 0)
-    this.animator.to('enter', 1, 600)
+    // Fresh map fades in instead of popping: restart the staggered enter tween
+    // (per-node offsets and scale live in mapStyles).
+    if (hadMap) {
+      this.animator.jump('enter', 1)
+    } else {
+      this.animator.jump('enter', 0)
+      this.animator.to('enter', 1, ENTER_TOTAL_MS)
+    }
   }
 
   renderAuthors(colors: Map<AuthorId, string>): void {
@@ -649,8 +801,12 @@ export class MapView {
     if (!this.renderer) return
 
     const active = id !== null && this.graph.hasNode(String(id))
-    // A pin (unlike a hover) forces labels across the whole ego-network.
+    // A pin owes to no hover animation: it must own the top layer before the
+    // first frame of its lift.
     this.renderer.setGraphState({ pinActive: active })
+    // The lift itself: 0 is the resting size, 1 the promoted one. Re-pinning
+    // another word while the lift is up is a no-op, not a snap back to zero.
+    this.animator.to('promote', active ? 1 : 0, active ? 220 : 160)
 
     if (active) {
       const key = String(id)
@@ -692,12 +848,14 @@ export class MapView {
     const cam = r.getCamera().getState()
     const dims = r.getDimensions()
     const live = r.getGraphState()
+    // SAFETY: same renderer instance, only the sigma generic parameters differ.
     const canvas = await drawOnCanvas(r as unknown as Parameters<typeof drawOnCanvas>[0], {
       width: dims.width,
       height: dims.height,
       backgroundColor: 'rgba(0, 0, 0, 0)',
       cameraState: { ...cam },
       withTempRenderer: async (tmp) => {
+        // SAFETY: the temp renderer is created by drawOnCanvas with our graph/state types.
         const t = tmp as unknown as Sigma<any, any, any, CustomNodeState, CustomEdgeState, CustomGraphState>
         t.setGraphState({
           ...live,
@@ -708,6 +866,9 @@ export class MapView {
           // photo exactly like on screen, not dropped.
           focusAlpha: 1,
           releaseAlpha: 0,
+          // The photo is a still of the finished state: the body is fully grown,
+          // never caught mid-ramp because the user clicked during the animation.
+          growAlpha: 1,
           cameraRatio: cam.ratio,
           lodRatio: live.lodRatio ?? cam.ratio,
           labelBlocked: new Set<string>(),

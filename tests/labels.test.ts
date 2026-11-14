@@ -15,6 +15,22 @@ describe('resolveLabelBoxes', () => {
     expect([...blocked]).toEqual(['small'])
   })
 
+  it('sticky labels keep their slot under the tightened clearance', () => {
+    // 6px edge-to-edge: inside the full 8px gap, outside the sticky 2.8px one.
+    const hub = box('hub', 0, 0, 60, 14, 40)
+    const dot = box('dot', 66, 0, 60, 14, 5)
+    expect([...resolveLabelBoxes([hub, dot], 8)]).toEqual(['dot'])
+    expect(resolveLabelBoxes([hub, { ...dot, sticky: true }], 8).size).toBe(0)
+  })
+
+  it('a sticky label outranks an equal-size newcomer instead of swapping', () => {
+    // Equal priorities: the sticky bonus decides, so a visible caption is not
+    // evicted by an identical newcomer on sub-pixel camera drift.
+    const old = { ...box('old', 100, 100, 40, 14, 10), sticky: true }
+    const fresh = box('new', 104, 100, 40, 14, 10)
+    expect([...resolveLabelBoxes([old, fresh], 8)]).toEqual(['new'])
+  })
+
   it('keeps all labels that do not overlap', () => {
     const blocked = resolveLabelBoxes([
       box('a', 0, 0, 40, 14, 10),

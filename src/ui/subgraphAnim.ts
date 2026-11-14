@@ -1,17 +1,29 @@
-// rAF-твины граф-состояний sigma: стили-функции читают dim/focus/release на
-// каждом refresh, поэтому интерполяция значений даёт покадровое сглаживание
+// rAF-твины граф-состояний sigma: стили-функции читают dim/focus/release/grow
+// на каждом refresh, поэтому интерполяция значений даёт покадровое сглаживание
 // подсветки узлов. Все твины живут в одном rAF-цикле и применяются одной
 // порцией за кадр — два одновременных твина иначе дёргали refresh дважды за
-// кадр (пропуски кадров). release — затухание размеров «уходящих» узлов при
-// смене цели подсветки: без него старый узел снапается в базовый размер.
-export type TweenField = 'dim' | 'focus' | 'release' | 'enter'
+// кадр (пропуски кадров). grow — рост тела подсвеченной ноды (0 = базовый
+// размер, 1 = ховер-буст); release — затухание того же буста у ноды, которая
+// только что потеряла подсветку: без него старый узел снапается в базовый размер.
+export type TweenField = 'dim' | 'focus' | 'release' | 'grow' | 'enter' | 'promote'
 
 type Tween = { from: number; to: number; t0: number; dur: number; onDone?: () => void }
 
 export class SubgraphAnimator {
-  private vals: Record<TweenField, number> = { dim: 0, focus: 0, release: 0, enter: 1 }
+  private vals: Record<TweenField, number> = { dim: 0, focus: 0, release: 0, grow: 0, enter: 1, promote: 0 }
   private tweens: Partial<Record<TweenField, Tween>> = {}
   private raf: number | null = null
+  // Quantisation step per field. Continuous values create new colour/size keys
+  // every frame (600 nodes x 60fps), so tweens step; the entrance runs slowly
+  // enough that a 1/40 grid would be visible, so it gets a finer grid.
+  private static readonly STEP: Record<TweenField, number> = {
+    dim: 40,
+    focus: 40,
+    release: 40,
+    grow: 40,
+    enter: 240,
+    promote: 40,
+  }
 
   constructor(private readonly apply: (v: Record<TweenField, number>) => void) {}
 
@@ -51,10 +63,10 @@ export class SubgraphAnimator {
       if (!tw) continue
       const p = Math.min(1, (now - tw.t0) / tw.dur)
       const eased = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2
-      // Квантование до 1/40: непрерывные значения иначе рожали новые ключи
-      // цветов/размеров КАЖДЫЙ кадр (600 узлов × 60 fps) — анимация пина
-      // проседала и дёергала на середине.
-      this.vals[field] = Math.round((tw.from + (tw.to - tw.from) * eased) * 40) / 40
+      // Квантование: шаг поля держит ключи цветов/размеров стабильными между
+      // кадрами; у входа шаг мельче, иначе медленное появление шло бы рывками.
+      const step = SubgraphAnimator.STEP[field]
+      this.vals[field] = Math.round((tw.from + (tw.to - tw.from) * eased) * step) / step
       if (p >= 1) {
         this.vals[field] = tw.to
         delete this.tweens[field]
