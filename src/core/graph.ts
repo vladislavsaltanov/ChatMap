@@ -1,5 +1,5 @@
 import { quadOf, visualCoreRadius } from './geometry'
-import { hashAt, spread } from './spread'
+import { FRAME_ASPECT, hashAt, spread } from './spread'
 
 // World units per px of node radius that the collision solver may assume.
 const MAX_SCALE_FACTOR = 10
@@ -539,10 +539,22 @@ export function layout(
       if (p.x > maxX) maxX = p.x
       if (p.y > maxY) maxY = p.y
     }
-    const w = maxX - minX
-    const h = maxY - minY
     const cx = (minX + maxX) / 2
     const cy = (minY + maxY) / 2
+    // Quantile mass span per axis: the bbox is owned by stray leaves, the P10..P90
+    // mass is the tissue the eye reads. Same quantile helper as the S1 gate.
+    const qspan = (values: number[]): number => {
+      const s = [...values].sort((a, b) => a - b)
+      const at = (q: number): number => {
+        const pos = q * (s.length - 1)
+        const lo = Math.floor(pos)
+        const hi = Math.min(s.length - 1, lo + 1)
+        return s[lo]! + (s[hi]! - s[lo]!) * (pos - lo)
+      }
+      return at(0.9) - at(0.1)
+    }
+    const w = qspan(points.map((p) => p.x))
+    const h = qspan(points.map((p) => p.y))
     let kx = 1
     let ky = 1
     // Guard: a degenerate frame has no ratio to correct.
@@ -557,9 +569,49 @@ export function layout(
     }
     return { cx, cy, kx, ky }
   }
-  // Target 2.0 (was 1.8): the user asked for a clearly flattened plane. This number
-  // must match SPREAD_ASPECT in spread.ts and stay under the S1 upper bound.
-  const aspectMap = holdAspect(2.0)
+  // FRAME_ASPECT (spread.ts): the flattened plane target; S1 caps the top.
+  const aspectMap = holdAspect(FRAME_ASPECT)
+  // Principal-axis probe (log only): area-weighted covariance on the held frame.
+  // Local on purpose — leaf.ts owns alignPrincipalAxis but imports reservePx from
+  // here, so importing it would close a cycle. Rotation stays OFF unless the axis
+  // sits stably >15deg off horizontal on synthetic (guards: L1/L2>1.2, dx>=0).
+  {
+    let sw = 0
+    let mx = 0
+    let my = 0
+    for (const p of points) {
+      const w = p.size * p.size
+      sw += w
+      mx += p.x * w
+      my += p.y * w
+    }
+    if (sw > 1e-9) {
+      mx /= sw
+      my /= sw
+      let sxx = 0
+      let syy = 0
+      let sxy = 0
+      for (const p of points) {
+        const w = p.size * p.size
+        const dx = p.x - mx
+        const dy = p.y - my
+        sxx += w * dx * dx
+        syy += w * dy * dy
+        sxy += w * dx * dy
+      }
+      const half = 0.5 * (sxx + syy)
+      const disc = Math.sqrt(Math.max(0, half * half - (sxx * syy - sxy * sxy)))
+      const l1 = half + disc
+      const l2 = half - disc
+      let dev = (0.5 * Math.atan2(2 * sxy, sxx - syy) * 180) / Math.PI
+      if (Math.cos((dev * Math.PI) / 180) < 0) dev += 180
+      if (dev > 90) dev -= 180
+      dev = Math.abs(dev)
+      console.log(
+        `layout principal axis: dev=${dev.toFixed(1)}deg l1/l2=${l2 > 1e-9 ? (l1 / l2).toFixed(2) : 'inf'} n=${points.length}`,
+      )
+    }
+  }
   for (const p of points) positions.set(p.id, { x: p.x, y: p.y })
 
   const ports = new Map<number, LayoutPort>()

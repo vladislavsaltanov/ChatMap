@@ -58,6 +58,10 @@ export type SpreadResult = {
 // Final width / height of the figure. Chosen so the silhouette stays a band on a
 // widescreen plate (gate S1 allows 1.55..3.2).
 export const FIGURE_ASPECT = 1.9
+// Single frame target shared by spread() and layout(): one spelling for the
+// elongated plane (2.0 reads as a band; 1.8 read too round). FIGURE_ASPECT above
+// is the small-ring width only, not the frame.
+export const FRAME_ASPECT = 2.0
 // Hard cap on one group's share of the map. A real chat puts ~85% of the words on
 // one mega-hub; without the cap that hub becomes the whole figure.
 const MAX_GROUP_SHARE = 0.3
@@ -474,8 +478,6 @@ export function spread(
   // being owned by one stray leaf while the tissue stays round.
   // Stretch-only, never shrink: expanding one axis only grows clearances, so the
   // solver's work is never undone (S4 stays green).
-  // Must match the hold target in graph.ts: 2.0 = a flattened plane, 1.8 read too round.
-  const SPREAD_ASPECT = 2.0
   let minX = Infinity
   let minY = Infinity
   let maxX = -Infinity
@@ -495,8 +497,8 @@ export function spread(
   // Guard: a degenerate frame has no ratio to correct.
   if (fw > 1e-9 && fh > 1e-9) {
     const ratio = fw / fh
-    if (ratio < SPREAD_ASPECT) kx = SPREAD_ASPECT / ratio
-    else ky = ratio / SPREAD_ASPECT
+    if (ratio < FRAME_ASPECT) kx = FRAME_ASPECT / ratio
+    else ky = ratio / FRAME_ASPECT
   }
   const place = (p: { x: number; y: number }) => ({ x: cx + (p.x - cx) * kx, y: cy + (p.y - cy) * ky })
   for (const [id, p] of positions) positions.set(id, place(p))
