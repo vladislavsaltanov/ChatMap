@@ -76,6 +76,22 @@ describe('collision clearance law', () => {
     }
   })
 
+  it('mass-weighted response: the hub barely moves, dust does the walking', () => {
+    // A hub overlapped by dust must not random-walk to the rim: phase 1 runs
+    // without anchors, so equal-split resolution expels big bodies and the
+    // anchor snapshot then freezes them at the rim. Mass ~ area pins the hub.
+    const hub = { id: 1, x: 0, y: 0, size: 60 }
+    const dust = { id: 2, x: 50, y: 0, size: 5 }
+    resolveCollisions([hub, dust], 0, 10, 1)
+    const hubMoved = Math.hypot(hub.x, hub.y)
+    const dustMoved = Math.hypot(dust.x - 50, dust.y)
+    // Separation is preserved (65 - 15 overlap cleared), but almost all of it
+    // is the dust's travel: 3600 vs 25 mass units.
+    expect(Math.hypot(hub.x - dust.x, hub.y - dust.y)).toBeGreaterThanOrEqual(65 - 0.2)
+    expect(hubMoved).toBeLessThan(1)
+    expect(dustMoved).toBeGreaterThan(10)
+  })
+
   it('clamps the scale factor at 10 so a huge px->world ratio cannot explode clearances', () => {
     const a = [{ id: 1, x: 0, y: 0, size: 10 }, { id: 2, x: 1, y: 0, size: 10 }]
     const b = [{ id: 1, x: 0, y: 0, size: 10 }, { id: 2, x: 1, y: 0, size: 10 }]
@@ -321,13 +337,14 @@ describe('layout applies blob warp', () => {
   it('warps the finished figure: warp is wired into the layout output', () => {
     // Golden hash of a 24-node ring (seed 7): proves the warp code path runs.
     // Deleting the warp (or reordering spread/solve/warp/hold) flips the hash.
-    // Measured 2026-11-15, EDGE_AMP 0.55 / CARVE_AMP 0.22 / ridged edge;
+    // Measured 2026-11-15, EDGE_AMP 0.55 / CARVE_AMP 0.22 / ridged edge +
+    // mass-weighted solver + radial size-damping; regenerate deliberately.
     // containTail + anchored relax; regenerate deliberately.
     const { nodes, edges } = ring24()
     const inputs = nodes.map((n) => ({ id: n.id, size: n.size }))
     const res = layout(inputs, edges, { seed: 7, fullRun: true })
     const pts = nodes.map((n) => res.positions.get(n.id)!)
-    expect(layoutHash(pts)).toBe('36510628')
+    expect(layoutHash(pts)).toBe('d5805aa7')
     // Aspect gate holds with the warp on (S1 shape, relaxed bounds for tiny maps).
     expect(aspectOf(pts)).toBeGreaterThanOrEqual(1.0)
   })

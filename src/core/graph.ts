@@ -1,4 +1,4 @@
-import { blobOffset } from './blob'
+import { blobOffset, warpDamp } from './blob'
 import { quadOf, visualCoreRadius } from './geometry'
 import { assignGroups, FRAME_ASPECT, hashAt, spread } from './spread'
 
@@ -331,12 +331,20 @@ export function resolveCollisions(
 
         const nx = dx / dist
         const ny = dy / dist
-        const shift = overlap * 0.5
+        // Mass-weighted response: a hub overlapped by dust must not random-walk
+        // to the rim in the unanchored phase (the anchor snapshot would then
+        // freeze it there). Mass ~ disc area, so a 60px hub yields ~0.7% of the
+        // shift against 5px dust; equal sizes split evenly, exactly as before.
+        // Total separation is preserved, so clearance gates are unaffected.
+        const rb = radii[j]
+        const massSum = ra * ra + rb * rb
+        const shiftA = (overlap * rb * rb) / massSum
+        const shiftB = (overlap * ra * ra) / massSum
 
-        a.x -= nx * shift
-        a.y -= ny * shift
-        b.x += nx * shift
-        b.y += ny * shift
+        a.x -= nx * shiftA
+        a.y -= ny * shiftA
+        b.x += nx * shiftB
+        b.y += ny * shiftB
       }
     }
 
@@ -580,7 +588,7 @@ export function layout(
   const warpCy = points.reduce((sum, p) => sum + p.y, 0) / points.length
   const warpHalf = measuredSpan(points) / 2
   for (const p of points) {
-    const o = blobOffset(p.x, p.y, warpCx, warpCy, warpHalf, opts.seed)
+    const o = blobOffset(p.x, p.y, warpCx, warpCy, warpHalf, opts.seed, warpDamp(p.size ?? 20))
     p.x += o.dx
     p.y += o.dy
   }

@@ -19,6 +19,15 @@ export const R_FULL = 1.0
 export const CARVE_AMP = 0.22
 export const CARVE_FREQ = 1.3
 export const CARVE_EPS = 0.02
+// Size damping for the radial term: big bodies must not be flung to the rim by
+// the same spikes that decorate the dust. A 50px hub keeps ~15% of the radial
+// push, mid 30px bodies ~40%, dust rides nearly full — protrusions still hold
+// anything, but hubs stay where the solver put them. Pure and deterministic.
+export const WARP_DAMP_REF = 25
+export function warpDamp(reserveSize: number): number {
+  const t = Math.max(0, reserveSize) / WARP_DAMP_REF
+  return 1 / (1 + t * t)
+}
 // Edge detail octaves: finer than the carve field so spikes read sharp while
 // voids stay broad. Ridged transform below turns smooth bumps into crests.
 export const EDGE_OCTAVES = 5
@@ -77,7 +86,9 @@ export function fbmNoise(
   return norm > 0 ? sum / norm : 0
 }
 
-// Raw displacement before the centroid is pinned.
+// Raw displacement before the centroid is pinned. radialDamp scales only the
+// rim-spike term (domain and carve stay size-blind); callers pass per-node
+// damping so big bodies are not flung outward by their own protrusions.
 const rawOffset = (
   x: number,
   y: number,
@@ -85,6 +96,7 @@ const rawOffset = (
   cy: number,
   halfSpan: number,
   seed: number,
+  radialDamp = 1,
 ): { dx: number; dy: number } => {
   const px = x - cx
   const py = y - cy
@@ -104,7 +116,7 @@ const rawOffset = (
     GAIN,
   )
   const ridged = 1 - Math.abs(2 * circle - 1)
-  const radial = edge * (ridged - 0.5) * 2 * EDGE_AMP * halfSpan
+  const radial = radialDamp * edge * (ridged - 0.5) * 2 * EDGE_AMP * halfSpan
 
   // Weak domain warp of the whole plane; the second sample decorrelates axes.
   const nx = (px / halfSpan) * FREQ
@@ -146,13 +158,15 @@ export function blobOffset(
   cy: number,
   halfSpan: number,
   seed: number,
+  radialDamp = 1,
 ): { dx: number; dy: number } {
   // Guard: non-finite inputs stay non-finite through smoothstep/hypot — clamp
   // at the door so a corrupt coordinate can never poison the whole frame.
   if (!Number.isFinite(x + y + cx + cy + halfSpan)) return { dx: 0, dy: 0 }
   if (!(halfSpan > 0)) return { dx: 0, dy: 0 }
-  const raw = rawOffset(x, y, cx, cy, halfSpan, seed)
-  const pin = rawOffset(cx, cy, cx, cy, halfSpan, seed)
+  const k = Number.isFinite(radialDamp) ? Math.min(1, Math.max(0, radialDamp)) : 1
+  const raw = rawOffset(x, y, cx, cy, halfSpan, seed, k)
+  const pin = rawOffset(cx, cy, cx, cy, halfSpan, seed, k)
   // Hard bound: radial + domain + carve excursions never exceed this per axis.
   const bound = (EDGE_AMP + DOMAIN_AMP + CARVE_AMP) * halfSpan
   return {
