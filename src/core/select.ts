@@ -133,11 +133,22 @@ export function select(
   candidateEdges.sort((e1, e2) => e2.weight - e1.weight || e1.a - e2.a || e1.b - e2.b)
   const visibleEdges = candidateEdges.slice(0, MAX_EDGES)
 
+  // A word with no visible link has no position on the map: at topN 1000 a
+  // raised minWeight strands hundreds of rare words, and their isolate pocket
+  // explodes into a separate dead sheet. Drop them here (not in the worker),
+  // so backbone, layout, labels and picking never see them.
+  const linked = new Set<number>()
+  for (const e of visibleEdges) {
+    linked.add(e.a)
+    linked.add(e.b)
+  }
+  const shownNodes = selectedNodes.filter((n) => linked.has(n.id))
+
   const maxCount = selectedNodes.length > 0 ? selectedNodes[0].count : 0
   const maxWeight = visibleEdges.length > 0 ? visibleEdges[0].weight : 0
 
   return {
-    nodes: selectedNodes,
+    nodes: shownNodes,
     edges: visibleEdges,
     maxCount,
     maxWeight,
