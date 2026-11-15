@@ -6,14 +6,19 @@
 // shifting the figure. Pure and deterministic: integer lattice hash only, no
 // Math.random; the same seed gives byte-identical coordinates.
 
-export const EDGE_AMP = 0.38
+export const EDGE_AMP = 0.5
 export const DOMAIN_AMP = 0.06
 export const FREQ = 3.0
+// Interior burn: low-frequency field whose downhill flow evacuates fBm maxima
+// into voids. Fewer, bigger voids than the edge detail (no speckle).
 export const OCTAVES = 4
 export const LACUNARITY = 2.0
 export const GAIN = 0.45
 export const R_INNER = 0.35
 export const R_FULL = 1.0
+export const CARVE_AMP = 0.15
+export const CARVE_FREQ = 1.6
+export const CARVE_EPS = 0.02
 
 const smoothstep = (t: number): number => {
   const x = Math.min(1, Math.max(0, t))
@@ -104,9 +109,27 @@ const rawOffset = (
     halfSpan *
     (fbmNoise(nx + 101, ny + 57, seed + 337, OCTAVES, LACUNARITY, GAIN) - 0.5)
 
+  // Interior burn: downhill flow of a low-frequency field evacuates fBm maxima
+  // into voids and piles minima into filaments. Weight is the complement of
+  // the edge mask, so the rim keeps radial spikes while the middle gets carved.
+  // Central differences on the normalized field; the clamp below caps outliers.
+  const qx = (px / halfSpan) * CARVE_FREQ
+  const qy = (py / halfSpan) * CARVE_FREQ
+  const e = CARVE_EPS
+  const gx =
+    (fbmNoise(qx + e, qy, seed + 511, OCTAVES, LACUNARITY, GAIN) -
+      fbmNoise(qx - e, qy, seed + 511, OCTAVES, LACUNARITY, GAIN)) /
+    (2 * e)
+  const gy =
+    (fbmNoise(qx, qy + e, seed + 511, OCTAVES, LACUNARITY, GAIN) -
+      fbmNoise(qx, qy - e, seed + 511, OCTAVES, LACUNARITY, GAIN)) /
+    (2 * e)
+  const carveX = (1 - edge) * -gx * CARVE_AMP * halfSpan
+  const carveY = (1 - edge) * -gy * CARVE_AMP * halfSpan
+
   return {
-    dx: radial * Math.cos(theta) + domainX,
-    dy: radial * Math.sin(theta) + domainY,
+    dx: radial * Math.cos(theta) + domainX + carveX,
+    dy: radial * Math.sin(theta) + domainY + carveY,
   }
 }
 
@@ -124,8 +147,8 @@ export function blobOffset(
   if (!(halfSpan > 0)) return { dx: 0, dy: 0 }
   const raw = rawOffset(x, y, cx, cy, halfSpan, seed)
   const pin = rawOffset(cx, cy, cx, cy, halfSpan, seed)
-  // Hard bound: radial + domain excursions never exceed this per axis.
-  const bound = (EDGE_AMP + DOMAIN_AMP) * halfSpan
+  // Hard bound: radial + domain + carve excursions never exceed this per axis.
+  const bound = (EDGE_AMP + DOMAIN_AMP + CARVE_AMP) * halfSpan
   return {
     dx: Math.max(-bound, Math.min(bound, raw.dx - pin.dx)),
     dy: Math.max(-bound, Math.min(bound, raw.dy - pin.dy)),
