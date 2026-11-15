@@ -21,6 +21,11 @@ const NODE_GAP_RATIO = 0.6
 // 140-360 passes because its own steps kept re-packing the frame.
 const SOLVER_PASSES = 28
 
+// Post-warp relax budget: the warp moves finished bodies, so only fresh,
+// localized overlaps need separating — the anchored pass usually breaks early
+// on maxShift. Kept small so S9 (400 ms at 1000 nodes) keeps its margin.
+const WARP_RELAX_PASSES = 12
+
 // Query: air a node of this drawn radius reserves around itself, in screen px.
 // Proportional to the body, so the visual gap/diameter ratio stays constant at
 // every map size — the bodies themselves shrink with the footprint budget, and a
@@ -583,6 +588,16 @@ export function layout(
   // there), so tails are contained again with the same helper: radial order is
   // preserved, angles untouched, only the outliers come back inside the frame.
   containTail(points)
+  // Post-warp relax: the warp (edge spikes + downhill carve) moves bodies after
+  // the solver ran, so fresh overlaps exist — most visibly where the carve flow
+  // converges. A short pass anchored to the warped positions separates them
+  // while the anchors hold the silhouette (same pattern as phase 2 above);
+  // the maxShift<0.2 early break keeps it cheap when there is nothing to do.
+  const warpAnchors = new Map(points.map((p) => [p.id, { x: p.x, y: p.y }] as const))
+  resolveCollisions(points, 0, WARP_RELAX_PASSES, Math.min(MAX_SCALE_FACTOR, pxToWorld), padScale, {
+    anchors: warpAnchors,
+    ...zoneOpts,
+  })
   // Aspect hold by bounding box: the renderer normalises the map by its box, so the
   // box is what the eye sees. holdAspect must run AFTER containTail, otherwise a
   // single stray leaf satisfies the ratio while the tissue stays a fat oval
