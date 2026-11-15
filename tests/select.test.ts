@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { pruneSortedBackbone, select, type SelectionEdge } from '../src/core/select'
+import { dropEdgelessNodes, pruneSortedBackbone, select, type SelectionEdge } from '../src/core/select'
 import { edgeKey, type TallyResult } from '../src/core/tally'
 
 // pruneSortedBackbone requires weight-desc input, the order select() emits.
@@ -89,6 +89,18 @@ describe('select', () => {
       { id: 2, count: 20 },
       { id: 1, count: 10 },
     ])
+  })
+
+  it('(d0) dropEdgelessNodes keeps only linked nodes, empty edges give empty nodes', () => {
+    const nodes = [
+      { id: 1, count: 10 },
+      { id: 2, count: 5 },
+      { id: 3, count: 1 },
+    ]
+    expect(dropEdgelessNodes(nodes, [])).toEqual([])
+    expect(
+      dropEdgelessNodes(nodes, [{ a: 1, b: 2, weight: 4 }]).map((n) => n.id),
+    ).toEqual([1, 2])
   })
 
   it('(d) caps visible edges at 10 000 max', () => {
