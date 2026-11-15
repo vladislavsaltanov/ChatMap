@@ -305,7 +305,10 @@ describe('megahub stand', () => {
       console.log(`layout ms: 1000=${run1000.ms.toFixed(0)} 2000=${run2000.ms.toFixed(0)}`)
       expect(run1000.result.iterationsDone).toBeGreaterThan(0)
       expect(run2000.result.iterationsDone).toBeGreaterThan(0)
-      expect(run2000.result.positions.size).toBe(2000)
+      // select() drops words left linkless (515 true isolates in this synth):
+      // the layout covers exactly the connected selection, no pocket sheet.
+      expect(graph2000.selection.nodes.length).toBeLessThan(2000)
+      expect(run2000.result.positions.size).toBe(graph2000.selection.nodes.length)
       expect(Number.isFinite(run2000.ms)).toBe(true)
     })
   })
