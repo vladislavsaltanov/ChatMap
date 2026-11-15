@@ -243,3 +243,129 @@ describe('reuse frame keeps edge routing (filter switch)', () => {
     expect(straight.length).toBe(0)
   })
 })
+
+describe('layout applies blob warp', () => {
+  // Chat-like topology: 12 heavy stars joined by weak bridges (mirrors spread.test.ts synth).
+  const synth = (
+    n: number,
+  ): {
+    nodes: Array<{ id: number; size: number }>
+    edges: Array<{ a: number; b: number; weight: number }>
+  } => {
+    const nodes = Array.from({ length: n }, (_, i) => {
+      const t = i / n
+      const size = t < 0.7 ? 5 + (i % 5) : t < 0.92 ? 10 + ((i * 3) % 14) : 28 + ((i * 7) % 44)
+      return { id: i + 1, size }
+    })
+    const edges: Array<{ a: number; b: number; weight: number }> = []
+    const hubs = 12
+    const per = Math.floor((n - hubs) / hubs)
+    for (let h = 1; h <= hubs; h++) {
+      for (let k = 0; k < per; k++) {
+        const b = hubs + (h - 1) * per + k + 1
+        if (b <= n) edges.push({ a: h, b, weight: 3 + (k % 4) })
+      }
+    }
+    for (let h = 2; h <= hubs; h++) edges.push({ a: 1, b: h, weight: 2 })
+    return { nodes, edges }
+  }
+  // P10..P90 mass span per axis: same quantile helper as the S1 gate.
+  const qspan = (values: number[]): number => {
+    const s = [...values].sort((a, b) => a - b)
+    const at = (q: number): number => {
+      const pos = q * (s.length - 1)
+      const lo = Math.floor(pos)
+      const hi = Math.min(s.length - 1, lo + 1)
+      return s[lo]! + (s[hi]! - s[lo]!) * (pos - lo)
+    }
+    return at(0.9) - at(0.1)
+  }
+  // Spread of the silhouette edge: variance of radii past the median radius.
+  // (Seed-sensitivity guard only: passes with or without the warp, since the
+  // upstream pipeline is already seed-chaotic.)
+  const edgeDispersion = (pts: Array<{ x: number; y: number }>): number => {
+    const cx = pts.reduce((sum, p) => sum + p.x, 0) / pts.length
+    const cy = pts.reduce((sum, p) => sum + p.y, 0) / pts.length
+    const radii = pts.map((p) => Math.hypot(p.x - cx, p.y - cy)).sort((a, b) => a - b)
+    const med = radii[Math.floor(radii.length / 2)]!
+    const edge = radii.filter((r) => r >= med)
+    const mean = edge.reduce((sum, r) => sum + r, 0) / edge.length
+    return edge.reduce((sum, r) => sum + (r - mean) * (r - mean), 0) / edge.length
+  }
+  const aspectOf = (pts: Array<{ x: number; y: number }>): number =>
+    qspan(pts.map((p) => p.x)) / Math.max(1e-9, qspan(pts.map((p) => p.y)))
+  // FNV-1a over rounded coordinates: the wiring proof. Any change to the
+  // spread/solve/warp/hold chain (including deleting the warp) flips it.
+  // Regenerate deliberately, never by copying a red run blindly.
+  const layoutHash = (pts: Array<{ x: number; y: number }>): string => {
+    let h = 0x811c9dc5
+    const s = pts.map((p) => `${p.x.toFixed(6)},${p.y.toFixed(6)}`).join(';')
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i)
+      h = Math.imul(h, 0x01000193)
+    }
+    return (h >>> 0).toString(16).padStart(8, '0')
+  }
+  const ring24 = (): {
+    nodes: Array<{ id: number; size: number }>
+    edges: Array<{ a: number; b: number; weight: number }>
+  } => ({
+    nodes: Array.from({ length: 24 }, (_, i) => ({ id: i + 1, size: 10 })),
+    edges: Array.from({ length: 24 }, (_, i) => ({
+      a: i + 1,
+      b: ((i + 1) % 24) + 1,
+      weight: 1,
+    })),
+  })
+
+  it('warps the finished figure: warp is wired into the layout output', () => {
+    // Golden hash of a 24-node ring (seed 7): proves the warp code path runs.
+    // Deleting the warp (or reordering spread/solve/warp/hold) flips the hash.
+    // Measured 2026-11-15, EDGE_AMP 0.38 / FREQ 3.0; regenerate deliberately.
+    const { nodes, edges } = ring24()
+    const inputs = nodes.map((n) => ({ id: n.id, size: n.size }))
+    const res = layout(inputs, edges, { seed: 7, fullRun: true })
+    const pts = nodes.map((n) => res.positions.get(n.id)!)
+    expect(layoutHash(pts)).toBe('efc5ad66')
+    // Aspect gate holds with the warp on (S1 shape, relaxed bounds for tiny maps).
+    expect(aspectOf(pts)).toBeGreaterThanOrEqual(1.0)
+  })
+
+  it('warps the finished figure: two seeds give different silhouettes at the same aspect', () => {
+    const { nodes, edges } = synth(271)
+    const inputs = nodes.map((n) => ({ id: n.id, size: n.size }))
+    const layouts = [7, 8, 42].map((seed) => layout(inputs, edges, { seed, fullRun: true }))
+    const clouds = layouts.map((l) => nodes.map((n) => l.positions.get(n.id)!).filter(Boolean))
+    // Seed-sensitivity guard (passes with or without the warp: upstream is
+    // already seed-chaotic, so this alone proves nothing about the wiring —
+    // the golden hash above is the warp-specific assertion).
+    expect(Math.abs(edgeDispersion(clouds[0]!) - edgeDispersion(clouds[1]!))).toBeGreaterThan(1e-6)
+    for (const pts of clouds) {
+      expect(aspectOf(pts)).toBeGreaterThanOrEqual(1.6)
+      expect(aspectOf(pts)).toBeLessThanOrEqual(2.1)
+    }
+    // S7 lives: the same seed gives byte-identical coordinates.
+    const again = layout(inputs, edges, { seed: 7, fullRun: true })
+    const pa = clouds[0]!
+    for (let i = 0; i < nodes.length; i++) {
+      expect(again.positions.get(nodes[i]!.id)).toEqual(pa[i])
+    }
+  })
+
+  it('reuses the warped frame verbatim on a filter switch', () => {
+    const { nodes, edges } = synth(271)
+    const full = layout(
+      nodes.map((n) => ({ id: n.id, size: n.size })),
+      edges,
+      { seed: 7, fullRun: true },
+    )
+    // Drop ~10%: cachedShare 0.9 >= 0.65, so the filter path reuses the frame.
+    const kept = nodes.filter((n) => n.id <= 244)
+    const ids = new Set(kept.map((n) => n.id))
+    const nodes2 = kept.map((n) => ({ id: n.id, size: n.size, prevXY: full.positions.get(n.id)! }))
+    const edges2 = edges.filter((e) => ids.has(e.a) && ids.has(e.b))
+    const reused = layout(nodes2, edges2, { seed: 7, fullRun: false })
+    expect(reused.iterationsDone).toBe(0)
+    for (const n of nodes2) expect(reused.positions.get(n.id)).toEqual(n.prevXY)
+  })
+})

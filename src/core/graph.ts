@@ -1,3 +1,4 @@
+import { blobOffset } from './blob'
 import { quadOf, visualCoreRadius } from './geometry'
 import { assignGroups, FRAME_ASPECT, hashAt, spread } from './spread'
 
@@ -563,6 +564,25 @@ export function layout(
     anchors,
     ...zoneOpts,
   })
+  // Blob figure: warp the finished layout into an fBm silhouette. Centroid of
+  // the solved points, halfSpan off the existing helper; the field is pinned
+  // at the centroid so the figure deforms without drifting. Ports ride the
+  // same field in world units (converted once below), then the same aspect
+  // map as the points, so corridors stay glued to their zones. The reuse path
+  // never recomputes this: cached positions are already warped, and the field
+  // is a pure function of coordinates, hence stable across filter switches.
+  const warpCx = points.reduce((sum, p) => sum + p.x, 0) / points.length
+  const warpCy = points.reduce((sum, p) => sum + p.y, 0) / points.length
+  const warpHalf = measuredSpan(points) / 2
+  for (const p of points) {
+    const o = blobOffset(p.x, p.y, warpCx, warpCy, warpHalf, opts.seed)
+    p.x += o.dx
+    p.y += o.dy
+  }
+  // The warp can shove rim nodes into fresh tails (raggedness lives exactly
+  // there), so tails are contained again with the same helper: radial order is
+  // preserved, angles untouched, only the outliers come back inside the frame.
+  containTail(points)
   // Aspect hold by bounding box: the renderer normalises the map by its box, so the
   // box is what the eye sees. holdAspect must run AFTER containTail, otherwise a
   // single stray leaf satisfies the ratio while the tissue stays a fat oval
@@ -659,8 +679,11 @@ export function layout(
 
   const ports = new Map<number, LayoutPort>()
   for (const [id, port] of figure.ports) {
-    const wx = port.x * pxToWorld
-    const wy = port.y * pxToWorld
+    const px = port.x * pxToWorld
+    const py = port.y * pxToWorld
+    const w = blobOffset(px, py, warpCx, warpCy, warpHalf, opts.seed)
+    const wx = px + w.dx
+    const wy = py + w.dy
     ports.set(id, {
       ...port,
       x: aspectMap.cx + (wx - aspectMap.cx) * aspectMap.kx,
