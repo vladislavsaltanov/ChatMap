@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:5865b6add45719a6cfca38fec04d8ae947a5fce5600f755ca4c483cbe11116a6",
+  "pageVersion": "sha256:9cdcbb66c2e74a2778f26201d2029101c4a56193693cfb4619e933033f2dde5b",
   "claims": [
     {
       "id": "claim_0e1d7320f62a42c6b267011332950825",
@@ -12,7 +12,7 @@
         },
         {
           "resource": "repo://package.json",
-          "version": "repo-file-v1:sha256:9349e9d505625f19793b05c5426557a1f15728319cd976cacf46fa30e6fc0ea9"
+          "version": "repo-file-v1:sha256:df0a800fd213c5332132b07663738659c333faf1fb9f7b5ce065cbcb2bdddb60"
         }
       ]
     },
@@ -39,10 +39,28 @@
           "version": "repo-file-v1:sha256:8ba4eb7ada4cf2f61642d03fc51351aad5fffcac19da59884413c6980ab56d59"
         }
       ]
+    },
+    {
+      "id": "claim_466caaafb0b647a7997733d146755a76",
+      "statement": "Ядро покрыто тестами select (срезка сирот), graph (golden, mass-weighted), spread (S-гейты, S9 медианой из 3), style-math, blob, megahub; стенд shot-shape.mjs гоняет синтетику через реальный ввод с фиксируемым ?seed=",
+      "evidence": [
+        {
+          "resource": "repo://tests/blob.test.ts",
+          "version": "repo-file-v1:sha256:8e6fe68b1213100f667bf50cc66f93f603745256ea1eef75e6528725ee04e8c0"
+        },
+        {
+          "resource": "repo://tests/graph.test.ts#L79-L100",
+          "version": "repo-lines-v1:sha256:15cdfe29bc8772501734cad1a6a96db6702e6737b53ea908b3907fc6c33ddfa4:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZhODBhNTI5YWEyZGYxZDFkMmM0NmE1ZDdjYzU4NDQxYWYyOWIyNzQwNjRlYzM4ZDJlYmY3NWEzYzJhYTAwZTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFjNDM0ZjlkNDI4MDAzMjllNTY1NTk1OGFhNDM5MTI2ODRlNjIyYzEwZmE0MDZiYWQ2MzE3ZWViZTFkNGY2NWMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI1MGE3ZmNkYmU4NmVkMGIwODBkOTJmZWNlYzhlZjM5ZDQ5ODA1YzRjZjQwYjEwODk0M2QwZTRmZmZkZWU4YTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg3NTlhMTYxMWE0MjU0YmViODExYTJjYTY4MDQ4MmE3YjBlYmYzZDBjMWNlYjVkZTU5M2I1MTg2MjhlOGM5ODYifQ"
+        },
+        {
+          "resource": "repo://tests/spread.test.ts#L601-L615",
+          "version": "repo-lines-v1:sha256:310d675792838189f03cedff7e7886bffd31136296643228db3dab4d78872808:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYyOTJlMzAxY2MxNmExNWYxNDU3Yjg3ZjdmOTUxM2YzZTA0NmRmZjUzNTMwYWVmMGVjYWUwODAzMDlhYWJjZTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcyYTJjY2Y2ZGU4ZjJmM2RlMzQyYTIzYWM3NTlkMTRkM2I3ZmRkMjFjMjZmMDVlNmQ2ZDBlZWNmZjBmNWFhN2UiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjYyZTk0NzBjYWEwNjk0MzJjMjM2ZWVhMzZhMmU0NjViNTk1MzAxMTViODlmZDBmYzU2ZDMwZTViZmNkMDBlZjQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM0ZjdjZWJjMDE0ZTZlZDU5OTlmNmI5MTA4MGVkNWEyNjc2Njk4NmM4ZmE4YTdjNWU4YWY1ZGY1NmMyNjhiMGYifQ"
+        }
+      ]
     }
   ],
   "verification": {
     "by": "openwiki/0.9.0",
-    "at": "2026-11-09T15:02:00.342Z"
+    "at": "2026-11-15T11:24:14.683Z"
   }
 }

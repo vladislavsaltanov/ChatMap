@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:9498c3f318132ebdab383e4457b58d7dfda211e05f0860c5fc744d20f5464118",
+  "pageVersion": "sha256:3de4f3a8398ba24dda0e967e66606d0ec3fc97d3438975e8dd1e6f04daa0cf46",
   "claims": [
     {
       "id": "claim_fee7d56bae9342389cdf804221ddbe3a",
@@ -8,11 +8,11 @@
       "evidence": [
         {
           "resource": "repo://src/main.ts",
-          "version": "repo-file-v1:sha256:41f4f56c7ef7282614e20886c003c42105993d04f85b1d6d32a253cc5c381aa9"
+          "version": "repo-file-v1:sha256:3b4105c575db6f8ebc1ab6757d9582b6ed227995e44e17885c3e1b3b1c28a8c1"
         },
         {
           "resource": "repo://src/ui/landing.ts",
-          "version": "repo-file-v1:sha256:d6242fcab060afd1b99c93178d3ee282ba039d7214bab31fc915de898f87872e"
+          "version": "repo-file-v1:sha256:62414c810ce8d03bd5ee0fcb154f083d16e51fdb3426a22b08a02aa9d3e106ef"
         }
       ]
     },
@@ -22,7 +22,7 @@
       "evidence": [
         {
           "resource": "repo://src/core/parse.ts",
-          "version": "repo-file-v1:sha256:b866e5a9eeb2a5e11ecc1db49d7595a49b572bfa13442c85c6a8f8ef4ee5d984"
+          "version": "repo-file-v1:sha256:5426d0c712750b9719d4f4110143e970094bb65923789271bf993d44c84b9806"
         }
       ]
     },
@@ -32,11 +32,11 @@
       "evidence": [
         {
           "resource": "repo://src/main.ts",
-          "version": "repo-file-v1:sha256:41f4f56c7ef7282614e20886c003c42105993d04f85b1d6d32a253cc5c381aa9"
+          "version": "repo-file-v1:sha256:3b4105c575db6f8ebc1ab6757d9582b6ed227995e44e17885c3e1b3b1c28a8c1"
         },
         {
           "resource": "repo://src/ui/landing.ts",
-          "version": "repo-file-v1:sha256:d6242fcab060afd1b99c93178d3ee282ba039d7214bab31fc915de898f87872e"
+          "version": "repo-file-v1:sha256:62414c810ce8d03bd5ee0fcb154f083d16e51fdb3426a22b08a02aa9d3e106ef"
         }
       ]
     },
@@ -46,13 +46,13 @@
       "evidence": [
         {
           "resource": "repo://src/ui/controls.ts",
-          "version": "repo-file-v1:sha256:afd4275b006988868a7f8be195b0e9e7282f1d4f841afeb0c71c8f3e10639087"
+          "version": "repo-file-v1:sha256:08aa09323fdf647e494ba35c0eaf3b2a675cbc4d59eb361b5fc1ebd84be11ea3"
         }
       ]
     }
   ],
   "verification": {
     "by": "openwiki/0.9.0",
-    "at": "2026-11-09T15:02:00.342Z"
+    "at": "2026-11-15T11:24:14.683Z"
   }
 }
