@@ -321,12 +321,13 @@ describe('layout applies blob warp', () => {
   it('warps the finished figure: warp is wired into the layout output', () => {
     // Golden hash of a 24-node ring (seed 7): proves the warp code path runs.
     // Deleting the warp (or reordering spread/solve/warp/hold) flips the hash.
-    // Measured 2026-11-15, EDGE_AMP 0.50 / CARVE_AMP 0.15 / FREQ 3.0 (pre-relax);
+    // Measured 2026-11-15, EDGE_AMP 0.50 / CARVE_AMP 0.15 / FREQ 3.0 + post-warp
+    // containTail + anchored relax; regenerate deliberately.
     const { nodes, edges } = ring24()
     const inputs = nodes.map((n) => ({ id: n.id, size: n.size }))
     const res = layout(inputs, edges, { seed: 7, fullRun: true })
     const pts = nodes.map((n) => res.positions.get(n.id)!)
-    expect(layoutHash(pts)).toBe('8b46cac7')
+    expect(layoutHash(pts)).toBe('6f131282')
     // Aspect gate holds with the warp on (S1 shape, relaxed bounds for tiny maps).
     expect(aspectOf(pts)).toBeGreaterThanOrEqual(1.0)
   })
