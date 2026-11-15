@@ -277,7 +277,9 @@ self.onmessage = (e: MessageEvent<WorkerIn>) => {
   try {
     if (msg.type === 'open') {
       resetWorkerState()
-      layoutSeed = (Math.random() * 0x7fffffff) | 0
+      // Pinned ?seed= wins (stand, reproducible maps); otherwise roll per open
+      // so every generation gets its own figure.
+      layoutSeed = Number.isInteger(msg.seed) ? (msg.seed as number) >>> 0 : (Math.random() * 0x7fffffff) | 0
       send({ type: 'progress', done: 5, total: 100, stage: 'Чтение JSON...' })
       const nextChat = parse(new TextDecoder().decode(msg.buf))
       if (nextChat.warn) send({ type: 'warn', message: nextChat.warn })
