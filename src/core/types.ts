@@ -50,9 +50,10 @@ export type WorkerEdge = {
 
 // 'open' carries the raw file bytes: the main thread transfers the buffer
 // (zero-copy), the worker decodes it. Never a string: that would duplicate
-// a 200 MB file in memory on postMessage structured-clone.
+// a 200 MB file in memory on postMessage structured-clone. seed pins the
+// layout (reproducible maps, stand calibration); omitted = rolled per open.
 export type WorkerIn =
-  | { type: 'open'; buf: ArrayBuffer }
+  | { type: 'open'; buf: ArrayBuffer; seed?: number }
   | { type: 'update'; cfg: FilterCfg & ViewCfg }
 
 export type WorkerOut =
