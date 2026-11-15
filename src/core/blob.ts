@@ -6,7 +6,7 @@
 // shifting the figure. Pure and deterministic: integer lattice hash only, no
 // Math.random; the same seed gives byte-identical coordinates.
 
-export const EDGE_AMP = 0.5
+export const EDGE_AMP = 0.55
 export const DOMAIN_AMP = 0.06
 export const FREQ = 3.0
 // Interior burn: low-frequency field whose downhill flow evacuates fBm maxima
@@ -16,9 +16,13 @@ export const LACUNARITY = 2.0
 export const GAIN = 0.45
 export const R_INNER = 0.35
 export const R_FULL = 1.0
-export const CARVE_AMP = 0.15
-export const CARVE_FREQ = 1.6
+export const CARVE_AMP = 0.22
+export const CARVE_FREQ = 1.3
 export const CARVE_EPS = 0.02
+// Edge detail octaves: finer than the carve field so spikes read sharp while
+// voids stay broad. Ridged transform below turns smooth bumps into crests.
+export const EDGE_OCTAVES = 5
+export const CARVE_OCTAVES = 3
 
 const smoothstep = (t: number): number => {
   const x = Math.min(1, Math.max(0, t))
@@ -89,16 +93,18 @@ const rawOffset = (
   const theta = Math.atan2(py, px)
 
   // Seamless silhouette: the noise is sampled on the circle, so the edge stays
-  // continuous all the way around.
+  // continuous all the way around. Ridged transform: sharp crests outward,
+  // broad shallow bays inward — a coastline, not dunes.
   const circle = fbmNoise(
     Math.cos(theta) * FREQ,
     Math.sin(theta) * FREQ,
     seed + 101,
-    OCTAVES,
+    EDGE_OCTAVES,
     LACUNARITY,
     GAIN,
   )
-  const radial = edge * (circle - 0.5) * 2 * EDGE_AMP * halfSpan
+  const ridged = 1 - Math.abs(2 * circle - 1)
+  const radial = edge * (ridged - 0.5) * 2 * EDGE_AMP * halfSpan
 
   // Weak domain warp of the whole plane; the second sample decorrelates axes.
   const nx = (px / halfSpan) * FREQ
@@ -117,12 +123,12 @@ const rawOffset = (
   const qy = (py / halfSpan) * CARVE_FREQ
   const e = CARVE_EPS
   const gx =
-    (fbmNoise(qx + e, qy, seed + 511, OCTAVES, LACUNARITY, GAIN) -
-      fbmNoise(qx - e, qy, seed + 511, OCTAVES, LACUNARITY, GAIN)) /
+    (fbmNoise(qx + e, qy, seed + 511, CARVE_OCTAVES, LACUNARITY, GAIN) -
+      fbmNoise(qx - e, qy, seed + 511, CARVE_OCTAVES, LACUNARITY, GAIN)) /
     (2 * e)
   const gy =
-    (fbmNoise(qx, qy + e, seed + 511, OCTAVES, LACUNARITY, GAIN) -
-      fbmNoise(qx, qy - e, seed + 511, OCTAVES, LACUNARITY, GAIN)) /
+    (fbmNoise(qx, qy + e, seed + 511, CARVE_OCTAVES, LACUNARITY, GAIN) -
+      fbmNoise(qx, qy - e, seed + 511, CARVE_OCTAVES, LACUNARITY, GAIN)) /
     (2 * e)
   const carveX = (1 - edge) * -gx * CARVE_AMP * halfSpan
   const carveY = (1 - edge) * -gy * CARVE_AMP * halfSpan
