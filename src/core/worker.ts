@@ -2,7 +2,7 @@ import { armsFromIndex, buildArmsIndex, bundleEdges, edgeAlpha, footprintScale, 
 import { getLruCache, layout, setLruCache, type LayoutNodeInput, type LayoutResult } from './graph'
 import type { Intern } from './intern'
 import { parse } from './parse'
-import { pruneSortedBackbone, select, type Selection, type SelectionEdge, type ViewCfg } from './select'
+import { dropEdgelessNodes, pruneSortedBackbone, select, type Selection, type SelectionEdge, type SelectionNode, type ViewCfg } from './select'
 import { PipelineCache, type PipelineCallbacks, type TallyResult } from './tally'
 import type {
   AuthorId,
@@ -59,16 +59,26 @@ function buildLayoutInput(
   selection: Selection,
   ia: Intern,
   positionsCache: Map<string, { x: number; y: number }>,
-): { layoutNodes: LayoutNodeInput[]; backboneEdges: SelectionEdge[]; nodeInfoMap: Map<number, NodeInfo> } {
+): { layoutNodes: LayoutNodeInput[]; backboneEdges: SelectionEdge[]; nodeInfoMap: Map<number, NodeInfo>; nodes: SelectionNode[] } {
+  // Size bounds stay on the FULL selection: dropping linkless words must not
+  // resize the survivors when the minWeight slider moves.
   let minCount = Infinity
   for (const n of selection.nodes) {
     if (n.count < minCount) minCount = n.count
   }
   if (minCount === Infinity) minCount = 1
 
+  // Serrano disparity backbone; every node keeps its 2 strongest edges.
+  // Selection edges arrive sorted weight-desc, so the backbone skips its own
+  // resort. Its budget cap can strand dust on dense chats (same as minWeight
+  // orphans in select()): drop them here so layout, labels and picking agree
+  // on one connected node set.
+  const backboneEdges = pruneSortedBackbone(selection.edges, selection.nodes.length)
+  const nodes = dropEdgelessNodes(selection.nodes, backboneEdges)
+
   // Pre-calculate best word form and cell sizes so layout spaces them properly
   const nodeInfoMap = new Map<number, NodeInfo>()
-  for (const n of selection.nodes) {
+  for (const n of nodes) {
     const formMap = ia.forms.get(n.id)
     let bestForm = ia.getCanon(n.id) || String(n.id)
     let bestCount = 0
@@ -98,7 +108,7 @@ function buildLayoutInput(
     }
   }
 
-  const layoutNodes = selection.nodes.map((n) => {
+  const layoutNodes = nodes.map((n) => {
     const canonStr = ia.getCanon(n.id) || String(n.id)
     const info = nodeInfoMap.get(n.id)
     return {
@@ -108,11 +118,7 @@ function buildLayoutInput(
     }
   })
 
-  // Serrano disparity backbone; every node keeps its 2 strongest edges
-  // Selection edges arrive sorted weight-desc, so the backbone skips its own resort.
-  const backboneEdges = pruneSortedBackbone(selection.edges, selection.nodes.length)
-
-  return { layoutNodes, backboneEdges, nodeInfoMap }
+  return { layoutNodes, backboneEdges, nodeInfoMap, nodes }
 }
 
 function buildMapMessage(
@@ -236,7 +242,7 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
   send({ type: 'progress', done: 75, total: 100, stage: 'Выборка узлов и рёбер...' })
   const selection = select(tallyResult, currentViewCfg, merged)
 
-  const { layoutNodes, backboneEdges, nodeInfoMap } = buildLayoutInput(selection, ia, positionsCache)
+  const { layoutNodes, backboneEdges, nodeInfoMap, nodes } = buildLayoutInput(selection, ia, positionsCache)
 
   send({ type: 'progress', done: 85, total: 100, stage: 'Раскладка карты...' })
   const layoutResult = layout(layoutNodes, backboneEdges, {
@@ -269,7 +275,7 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
   }
 
   send({ type: 'progress', done: 95, total: 100, stage: 'Формирование карты...' })
-  send(buildMapMessage(selection, layoutResult, ia, tallyResult, backboneEdges, nodeInfoMap))
+  send(buildMapMessage({ ...selection, nodes }, layoutResult, ia, tallyResult, backboneEdges, nodeInfoMap))
 }
 
 self.onmessage = (e: MessageEvent<WorkerIn>) => {

@@ -136,13 +136,8 @@ export function select(
   // A word with no visible link has no position on the map: at topN 1000 a
   // raised minWeight strands hundreds of rare words, and their isolate pocket
   // explodes into a separate dead sheet. Drop them here (not in the worker),
-  // so backbone, layout, labels and picking never see them.
-  const linked = new Set<number>()
-  for (const e of visibleEdges) {
-    linked.add(e.a)
-    linked.add(e.b)
-  }
-  const shownNodes = selectedNodes.filter((n) => linked.has(n.id))
+  // so layout, labels and picking never see orphans.
+  const shownNodes = dropEdgelessNodes(selectedNodes, visibleEdges)
 
   const maxCount = selectedNodes.length > 0 ? selectedNodes[0].count : 0
   const maxWeight = visibleEdges.length > 0 ? visibleEdges[0].weight : 0
@@ -155,7 +150,22 @@ export function select(
   }
 }
 
-// Serrano disparity filter plus each node's top-2 edges. The input must already
+// Nodes without a single surviving edge have no position: neither the
+// isolate pocket in spread() nor the caption layer may ever see them.
+// Used in select() (minWeight/MAX_EDGES orphans) and in the worker after the
+// backbone (its budget cap can strand dust on dense chats too).
+export function dropEdgelessNodes(
+  nodes: SelectionNode[],
+  edges: SelectionEdge[],
+): SelectionNode[] {
+  if (edges.length === 0) return []
+  const linked = new Set<number>()
+  for (const e of edges) {
+    linked.add(e.a)
+    linked.add(e.b)
+  }
+  return nodes.filter((n) => linked.has(n.id))
+}
 // be sorted weight-desc (select() returns edges in that order).
 export function pruneSortedBackbone(sorted: SelectionEdge[], nodeCount: number, alpha = 0.05): SelectionEdge[] {
   const degree = new Map<number, number>()
