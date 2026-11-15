@@ -600,10 +600,19 @@ describe('layout — гейты корректности после замены
 
   it('S9 budget: layout of 1000 nodes stays under 400 ms', () => {
     const { nodes, edges } = synth(1000)
-    const t0 = performance.now()
+    // Warmup + median of 3: a single shot on a shared CI runner flakes on
+    // worker contention (vitest isolates test files into competing workers).
+    // The 400 ms bar itself is unchanged.
     layout(nodes, edges, { seed: 2, fullRun: true })
-    const ms = performance.now() - t0
-    console.log(`layout 1000: ${ms.toFixed(0)} ms`)
+    const samples: number[] = []
+    for (let i = 0; i < 3; i++) {
+      const t0 = performance.now()
+      layout(nodes, edges, { seed: 2, fullRun: true })
+      samples.push(performance.now() - t0)
+    }
+    samples.sort((a, b) => a - b)
+    const ms = samples[1]!
+    console.log(`layout 1000: ${ms.toFixed(0)} ms (median of ${samples.map((s) => s.toFixed(0)).join('/')})`)
     expect(ms).toBeLessThan(400)
   })
 })
