@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { blobOffset, DOMAIN_AMP, EDGE_AMP } from '../src/core/blob'
+import { blobOffset, CARVE_AMP, DOMAIN_AMP, EDGE_AMP } from '../src/core/blob'
 
 const HALF_SPANS = [100, 1300, 8000]
+// Hard clamp from the implementation: radial + domain + carve, per axis.
+const warpBound = (halfSpan: number): number => (EDGE_AMP + DOMAIN_AMP + CARVE_AMP) * halfSpan
 
 // Sample a 11x11 grid covering the figure and a margin beyond the silhouette.
 const grid = (halfSpan: number): Array<{ x: number; y: number }> => {
@@ -28,7 +30,7 @@ describe('blobOffset', () => {
 
   for (const halfSpan of HALF_SPANS) {
     it(`stays inside MAX_WARP over the grid (halfSpan ${halfSpan})`, () => {
-      const bound = (EDGE_AMP + DOMAIN_AMP) * halfSpan
+      const bound = warpBound(halfSpan)
       for (const p of grid(halfSpan)) {
         const { dx, dy } = blobOffset(p.x, p.y, 0, 0, halfSpan, 7)
         expect(Number.isFinite(dx)).toBe(true)
@@ -61,7 +63,7 @@ describe('blobOffset', () => {
 
   it('stays finite and bounded on extreme inputs', () => {
     const halfSpan = 8000
-    const bound = (EDGE_AMP + DOMAIN_AMP) * halfSpan
+    const bound = warpBound(halfSpan)
     const cases: Array<[number, number]> = [
       [0, 0],
       [1e12, -1e12],
@@ -84,6 +86,43 @@ describe('blobOffset', () => {
       expect(blobOffset(0, 0, 0, 0, bad, 7)).toEqual({ dx: 0, dy: 0 })
     }
   })
+
+  // Interior burn: the downhill flow evacuates fBm maxima, so a warped
+  // uniform grid ends up clumpier than the flat one (higher per-bin variance:
+  // filaments where flow converges, holes where it diverges).
+  for (const seed of [7, 42, 1337]) {
+    it(`carves density variance out of a uniform grid (seed ${seed})`, () => {
+      const halfSpan = 1000
+      const n = 25
+      const lo = -1.2 * halfSpan
+      const hi = 1.2 * halfSpan
+      const NB = 16
+      const cell = (hi - lo) / NB
+      const at = (p: { x: number; y: number }): number => {
+        const c = (v: number): number => Math.max(0, Math.min(NB - 1, Math.floor((v - lo) / cell)))
+        return c(p.y) * NB + c(p.x)
+      }
+      const variance = (pts: Array<{ x: number; y: number }>): number => {
+        const counts = new Array(NB * NB).fill(0)
+        for (const p of pts) counts[at(p)]++
+        const mean = pts.length / (NB * NB)
+        return counts.reduce((s: number, c: number) => s + (c - mean) * (c - mean), 0) / (NB * NB)
+      }
+      const flat: Array<{ x: number; y: number }> = []
+      for (let iy = 0; iy < n; iy++) {
+        for (let ix = 0; ix < n; ix++) {
+          flat.push({ x: lo + ((ix + 0.5) / n) * (hi - lo), y: lo + ((iy + 0.5) / n) * (hi - lo) })
+        }
+      }
+      const warped = flat.map((p) => {
+        const o = blobOffset(p.x, p.y, 0, 0, halfSpan, seed)
+        return { x: p.x + o.dx, y: p.y + o.dy }
+      })
+      // Measured 2026-11-15: flat 1.262, warped 2.53/1.74/1.66 (seeds 7/42/1337).
+      // Threshold sits at ~90% of the weakest seed; re-measure, don't re-think.
+      expect(variance(warped)).toBeGreaterThan(variance(flat) * 1.2)
+    })
+  }
 
   // Angular raggedness: the edge radius must vary WITH ANGLE (coastline),
   // not just spread out (a bigger smooth ellipse also raises raw variance).
