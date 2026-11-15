@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:739ce66bc4cd4b9f3c81e350efea172611bae66f45440a9935d929facc943d5c",
+  "pageVersion": "sha256:028c3299b4251d4a37ccafa0e57066531ffe1d167b565a4f5a5d99f3a23248c2",
   "claims": [
     {
       "id": "claim_89759be01741410198ec42ef90141c28",
@@ -8,11 +8,11 @@
       "evidence": [
         {
           "resource": "repo://src/main.ts",
-          "version": "repo-file-v1:sha256:41f4f56c7ef7282614e20886c003c42105993d04f85b1d6d32a253cc5c381aa9"
+          "version": "repo-file-v1:sha256:3b4105c575db6f8ebc1ab6757d9582b6ed227995e44e17885c3e1b3b1c28a8c1"
         },
         {
           "resource": "repo://src/ui/landing.ts",
-          "version": "repo-file-v1:sha256:d6242fcab060afd1b99c93178d3ee282ba039d7214bab31fc915de898f87872e"
+          "version": "repo-file-v1:sha256:62414c810ce8d03bd5ee0fcb154f083d16e51fdb3426a22b08a02aa9d3e106ef"
         }
       ]
     },
@@ -22,7 +22,7 @@
       "evidence": [
         {
           "resource": "repo://src/core/worker.ts",
-          "version": "repo-file-v1:sha256:b7c3df84a6df9604f5be92039729666b18287aa76a27b1a709575f191f806419"
+          "version": "repo-file-v1:sha256:1219e1c055fca8477dfe0e8b3c2a275d87a1b584a825f90d00ad1fa44ce50e0f"
         },
         {
           "resource": "repo://src/ui/progress.ts",
@@ -36,11 +36,11 @@
       "evidence": [
         {
           "resource": "repo://src/core/select.ts",
-          "version": "repo-file-v1:sha256:e3009030bf438bd1fa5f9830d460904def38b7edc1c06afd8827425b59716c8b"
+          "version": "repo-file-v1:sha256:7efb64149ee8f9f30d6f32426600e81b6989d396bffb931d4ecf4e4d3b95393d"
         },
         {
           "resource": "repo://src/ui/controls.ts",
-          "version": "repo-file-v1:sha256:afd4275b006988868a7f8be195b0e9e7282f1d4f841afeb0c71c8f3e10639087"
+          "version": "repo-file-v1:sha256:08aa09323fdf647e494ba35c0eaf3b2a675cbc4d59eb361b5fc1ebd84be11ea3"
         }
       ]
     },
@@ -50,17 +50,17 @@
       "evidence": [
         {
           "resource": "repo://src/core/worker.ts",
-          "version": "repo-file-v1:sha256:b7c3df84a6df9604f5be92039729666b18287aa76a27b1a709575f191f806419"
+          "version": "repo-file-v1:sha256:1219e1c055fca8477dfe0e8b3c2a275d87a1b584a825f90d00ad1fa44ce50e0f"
         },
         {
           "resource": "repo://src/ui/controls.ts",
-          "version": "repo-file-v1:sha256:afd4275b006988868a7f8be195b0e9e7282f1d4f841afeb0c71c8f3e10639087"
+          "version": "repo-file-v1:sha256:08aa09323fdf647e494ba35c0eaf3b2a675cbc4d59eb361b5fc1ebd84be11ea3"
         }
       ]
     }
   ],
   "verification": {
     "by": "openwiki/0.9.0",
-    "at": "2026-11-09T15:02:00.342Z"
+    "at": "2026-11-15T11:24:14.683Z"
   }
 }

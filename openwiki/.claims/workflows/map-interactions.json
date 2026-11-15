@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:c86e1954c6e5dbdecceb3bee4a18f756705696685391bc86620a4e2f39139082",
+  "pageVersion": "sha256:1649024a17d36b83a4b27d5b79b053a4522522fb7643e535a2b444bf5d4cf384",
   "claims": [
     {
       "id": "claim_60c6026154e64bc998d8511c0ac3ead0",
@@ -8,11 +8,11 @@
       "evidence": [
         {
           "resource": "repo://src/ui/mapview.ts",
-          "version": "repo-file-v1:sha256:eec3a39f8ab3746824bd32aa5e68810c0b51047740442e0f81c9cfb7334e2838"
+          "version": "repo-file-v1:sha256:a6668b8dce255d92cba3326df98ff675b2cdaf29aea22fa86e1eb2824b184293"
         },
         {
           "resource": "repo://src/ui/subgraphHighlight.ts",
-          "version": "repo-file-v1:sha256:5273585e19d24893f3fb63f6af7c3a44dc0e281851ce0aca835e8b781b079955"
+          "version": "repo-file-v1:sha256:04d5902879a9419a907266d2d4c310804ce996b5319f70ae2518b436196648d2"
         }
       ]
     },
@@ -22,7 +22,7 @@
       "evidence": [
         {
           "resource": "repo://src/ui/nodepanel.ts",
-          "version": "repo-file-v1:sha256:088d63b178994299dd1bb08b627b9a671fe51d5a5ac033390f4c84d827dcc26e"
+          "version": "repo-file-v1:sha256:9f30fc2af56284881d35f1bdcb5cbfd8d5a34be522873ee5be9126bcb31814c4"
         }
       ]
     },
@@ -42,17 +42,17 @@
     },
     {
       "id": "claim_30cb430897734442b8f6ac4fd8666ae1",
-      "statement": "Кнопка PNG сохраняет кадр 2560x1440 через sigma export-image в порядке подложка, легенда, граф; при закреплённом узле доступен фоторежим эго-сети",
+      "statement": "Кнопка PNG сохраняет текущий кадр (размер вьюпорта × DPR) через sigma export-image слоями плашка, легенда, граф; при закреплённом узле доступен фоторежим эго-сети",
       "evidence": [
         {
-          "resource": "repo://src/ui/mapview.ts",
-          "version": "repo-file-v1:sha256:eec3a39f8ab3746824bd32aa5e68810c0b51047740442e0f81c9cfb7334e2838"
+          "resource": "repo://src/ui/mapview.ts#L332-L360",
+          "version": "repo-lines-v1:sha256:a436f21e91feb23ce863a9736aa3bed62b08eda72d6f3af8be252b042512c597:eyJzZWxlY3RlZExpbmVDb3VudCI6MjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNkZjE5NGFmMTlhNDZjZjM0OWU5OWE4NjNlNjEyMTJkYjhmYzFlYmY1NjE1NGQzOTExOGM2MGM4ZGFlZjQwMWIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRiMGNlM2ZlNjViNWNhNGUwOGFmYjZiYTJhZDU1NGY1YThhMWFkOTEyNzEzNzE3YjQyNTc1Y2ZiY2JmMTE1YTgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM5NDUzMTY1NTQ4MDFiMzM1ZGY3NzliZTRlNjQ4OWYyYzk0MDc0YWZmODFjY2EzOWRhZTZkNWMxYjFkZTBlOWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdiNDY1NTA3OTcxNWJhMTc5ZDc5OTY4ZDllNGE0NWQ2NGJiYTlhMjI3NWY3YjgyNjgyZGNjN2MzYzQ0NGZjYzAifQ"
         }
       ]
     }
   ],
   "verification": {
     "by": "openwiki/0.9.0",
-    "at": "2026-11-09T15:02:00.342Z"
+    "at": "2026-11-15T11:24:14.683Z"
   }
 }
