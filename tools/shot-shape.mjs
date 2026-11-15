@@ -273,6 +273,30 @@ const main = async () => {
   await shot(cdp, 'overview')
   const metrics = await evalJs(cdp, shapeMetrics)
 
+  // Hub centrality: the user complaint is big words always landing on the rim.
+  // Top-10 by body size with radius as a share of the max radius (1 = rim).
+  const hubsReport = await evalJs(
+    cdp,
+    `(() => {
+      const mv = window.__mapview, g = mv.graph
+      const pts = g.nodes().map((k) => ({ k, ...g.getNodeAttributes(k) }))
+      const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length
+      const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length
+      const withR = pts.map((p) => ({ ...p, r: Math.hypot(p.x - cx, p.y - cy) }))
+      const maxR = Math.max(1e-9, ...withR.map((p) => p.r))
+      const med = [...withR].map((p) => p.r).sort((a, b) => a - b)[Math.floor(withR.length / 2)]
+      const top = [...withR].sort((a, b) => (b.size ?? 0) - (a.size ?? 0)).slice(0, 10)
+      return JSON.stringify({
+        medRel: +(med / maxR).toFixed(2),
+        top: top.map((p) => ({
+          label: p.label,
+          size: +((p.size ?? 0).toFixed(1)),
+          rel: +((p.r / maxR).toFixed(2)),
+        })),
+      })
+    })()`,
+  )
+
   // Mega-hub stand: the same hub contract the tests assert (reach >= 80%, degree
   // >= 300), read from the RENDERED graph so the screenshot and the numbers come
   // from one layout. `reach` = share of map words linked to the top-1 word.
@@ -347,7 +371,7 @@ const main = async () => {
   )
 
   process.stdout.write(
-    `${JSON.stringify({ tag: TAG, mega: MEGA ? asJson(megaReport) : undefined, hubShare: MEGA ? HUB_SHARE : undefined, bytes, vocab: VOCAB, messages: MESSAGES, topN: TOP_N, metrics, pin: asJson(pin), enter: asJson(enter), errors: cdp.errors }, null, 1)}\n`,
+    `${JSON.stringify({ tag: TAG, mega: MEGA ? asJson(megaReport) : undefined, hubShare: MEGA ? HUB_SHARE : undefined, bytes, vocab: VOCAB, messages: MESSAGES, topN: TOP_N, metrics, hubs: asJson(hubsReport), pin: asJson(pin), enter: asJson(enter), errors: cdp.errors }, null, 1)}\n`,
   )
 
   // Filter round-trip: one author, then back to everybody. The silhouette metrics

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { blobOffset, CARVE_AMP, DOMAIN_AMP, EDGE_AMP } from '../src/core/blob'
+import { blobOffset, CARVE_AMP, DOMAIN_AMP, EDGE_AMP, warpDamp } from '../src/core/blob'
 
 const HALF_SPANS = [100, 1300, 8000]
 // Hard clamp from the implementation: radial + domain + carve, per axis.
@@ -26,6 +26,22 @@ describe('blobOffset', () => {
     expect(Object.is(a.dx, b.dx)).toBe(true)
     expect(Object.is(a.dy, b.dy)).toBe(true)
     expect(a).toEqual(b)
+  })
+
+  it('damps only the radial term by body size', () => {
+    // Size law: dust rides full spikes, a 50px hub keeps ~15%.
+    expect(warpDamp(0)).toBe(1)
+    expect(warpDamp(5)).toBeGreaterThan(0.95)
+    expect(warpDamp(50)).toBeLessThanOrEqual(0.2)
+    const out = [50, 30, 15, 5].map((s) => warpDamp(s))
+    for (let i = 0; i < out.length - 1; i++) expect(out[i]!).toBeLessThan(out[i + 1]!)
+    // Default call equals damp=1 exactly (backward compatible).
+    const p = blobOffset(900, 300, 0, 0, 1300, 7)
+    expect(blobOffset(900, 300, 0, 0, 1300, 7, 1)).toEqual(p)
+    // Zero damp kills the rim excursion but keeps domain/carve texture:
+    // a damped hub moves strictly less than the full field at the same spot.
+    const d0 = blobOffset(900, 300, 0, 0, 1300, 7, 0)
+    expect(Math.hypot(d0.dx, d0.dy)).toBeLessThan(Math.hypot(p.dx, p.dy))
   })
 
   for (const halfSpan of HALF_SPANS) {
