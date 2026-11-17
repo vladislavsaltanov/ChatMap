@@ -273,6 +273,7 @@ export class MapView {
       this.renderer.refresh({ skipIndexation: true })
     })
     this.nodePanel.onPhoto(() => { void this.downloadNodePhoto() })
+    this.nodePanel.onCenter(() => { this.centerOnPinned() })
 
     const exportBtn = root.querySelector<HTMLButtonElement>('#export-png')!
     const zoomInBtn = root.querySelector<HTMLButtonElement>('#zoom-in')!
@@ -844,6 +845,19 @@ export class MapView {
 
     this.renderer.refresh({ skipIndexation: true })
     this.scheduleLayout()
+  }
+
+  // Center the camera on the pinned node, keeping the zoom: the panel twin
+  // of the ⊙ reset button, same 320ms beat. Fisheye is viewport-centered,
+  // so a node at the frame center gets zero displacement and lands exact.
+  private centerOnPinned(): void {
+    const r = this.renderer
+    if (!r || this.pinnedId === null) return
+    const key = String(this.pinnedId)
+    // Guard: a stale pin from a cleared map must not throw mid-click.
+    if (!this.graph.hasNode(key)) return
+    const attrs = this.graph.getNodeAttributes(key)
+    void r.getCamera().animate({ x: (attrs.x as number) ?? 0, y: (attrs.y as number) ?? 0 }, { duration: 320 })
   }
 
   // Photo of the selected node: a snapshot of the CURRENT camera view, with

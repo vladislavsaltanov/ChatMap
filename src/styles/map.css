@@ -383,6 +383,11 @@
     font-weight: 500;
   }
 
+  .label-btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+
   .icon-btn {
     width: var(--touch);
     min-width: var(--touch);
