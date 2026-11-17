@@ -102,6 +102,25 @@
     place-content: center;
   }
 
+  /* Портрет (ширина <= высоты): карта там неюзабельна — полный блок вместо main. */
+  #portrait-block {
+    display: none;
+  }
+
+  @media (max-aspect-ratio: 1/1) {
+    main {
+      display: none;
+    }
+
+    #portrait-block {
+      display: grid;
+      place-content: center;
+      min-height: 100vh;
+      padding: 24px 16px;
+      text-align: center;
+    }
+  }
+
   .landing-content {
     max-width: 60ch;
   }
@@ -241,6 +260,17 @@
 
   dialog button {
     border-radius: var(--radius-btn);
+  }
+
+  /* Узкие экраны: секция и дропзона съедают по 32px с каждой стороны — контент зажат. */
+  @media (max-width: 719px) {
+    main > section {
+      padding: 24px 16px;
+    }
+
+    .dropzone {
+      padding: 32px 20px;
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {

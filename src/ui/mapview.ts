@@ -239,7 +239,6 @@ export class MapView {
         <canvas class="map-legend" role="img"></canvas>
         <div class="plate" aria-hidden="true">
           <i></i><i></i><i></i><i></i>
-          <span>Карта слов · совместная встречаемость · лист 01</span>
         </div>
         <div class="map-progress" hidden></div>
       </div>
