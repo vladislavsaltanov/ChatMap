@@ -30,10 +30,10 @@
     pointer-events: none;
   }
 
-  /* Техническая пластина: тихая сетка, кресты совмещения, колонтитул. */
+  /* Техническая пластина: тихая сетка и кресты совмещения. */
   .plate {
     position: absolute;
-    inset: 10px;
+    inset: 20px;
     z-index: 2;
     pointer-events: none;
     border: 1px solid oklch(0.92 0.01 85 / 0.06);
@@ -61,22 +61,11 @@
   .plate i:nth-child(3) { bottom: -6px; left: -6px; }
   .plate i:nth-child(4) { bottom: -6px; right: -6px; }
 
-  .plate span {
-    position: absolute;
-    top: 12px;
-    /* Слева стоит панель параметров — колонтитул уходит в свободный правый угол. */
-    right: 20px;
-    text-align: right;
-    font: 500 12px/1 var(--font);
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    white-space: nowrap;
-    color: oklch(0.92 0.01 85 / 0.42);
-  }
 
   .map-controls {
     position: absolute;
-    bottom: 48px;
+    /* Воздух от канваса = как справа: 16 паддинг + 22 строка-подпись + 8 зазор + 8 воздух. */
+    bottom: 54px;
     right: 24px;
     display: flex;
     flex-direction: column;
@@ -112,10 +101,22 @@
     border-color: var(--ink);
   }
 
+  /* Контролы жили под панелью слова (z 10 < 20): на широких сдвигаем левее неё.
+     На узких панель почти во всю ширину — там её просто закрывают крестом. */
+  @media (min-width: 720px) {
+    #map:has(.nodepanel:not([hidden])) .map-controls {
+      right: calc(16px + 280px + 12px);
+    }
+  }
+
   .hover-line {
     min-height: 22px;
     margin: 0;
     font-variant-numeric: tabular-nums;
+    /* Одна строка всегда: длинное слово обрезаем, иначе прыгает высота грида. */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .map-progress {
@@ -140,8 +141,9 @@
 
   .drawer {
     position: absolute;
-    top: 16px;
-    left: 16px;
+    /* Воздух от канваса как у кнопок: 16 паддинг + 8. */
+    top: 24px;
+    left: 24px;
     width: min(280px, calc(100vw - 32px));
     /* Нижний левый угол карты оставлен под легенду: панель не перекрывает её. */
     max-height: calc(100vh - 168px);
@@ -208,6 +210,8 @@
   .check-label {
     flex-direction: row;
     align-items: center;
+    /* Общее правило выше даёт gap 4px (под колонку): в строке чекбокс липнет к тексту. */
+    gap: 8px;
   }
 
   .modes-list {
