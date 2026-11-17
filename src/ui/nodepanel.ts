@@ -79,7 +79,7 @@ export class NodePanel {
         <div class="header-actions">
           <button type="button" id="auto-btn" class="label-btn" aria-label="Сбросить к исходной форме" title="Сбросить к исходной форме">Сброс</button>
           <button type="button" id="photo-btn" class="label-btn" aria-label="Снимок выделенной ноды" title="Снимок выделенной ноды">Фото</button>
-          <button type="button" id="center-btn" class="icon-btn" aria-label="В центр ноды" title="В центр ноды">⊙</button>
+          <button type="button" id="center-btn" class="icon-btn" aria-label="Показать связи ноды" title="Показать связи ноды">⊙</button>
           <button type="button" id="close-btn" class="icon-btn" aria-label="Закрыть">✕</button>
         </div>
       </div>

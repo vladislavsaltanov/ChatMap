@@ -273,7 +273,7 @@ export class MapView {
       this.renderer.refresh({ skipIndexation: true })
     })
     this.nodePanel.onPhoto(() => { void this.downloadNodePhoto() })
-    this.nodePanel.onCenter(() => { this.centerOnPinned() })
+    this.nodePanel.onCenter(() => { this.frameEgo() })
 
     const exportBtn = root.querySelector<HTMLButtonElement>('#export-png')!
     const zoomInBtn = root.querySelector<HTMLButtonElement>('#zoom-in')!
@@ -847,20 +847,39 @@ export class MapView {
     this.scheduleLayout()
   }
 
-  // Center the camera on the pinned node, keeping the zoom: the panel twin
-  // of the ⊙ reset button, same 320ms beat. The camera lives in framed
-  // (~[0,1]) space, not in raw layout units, so the node must be converted
-  // with graphToFramedGraph — passing raw x/y straight to animate is what
-  // used to fling the camera into the void and blank the map.
-  private centerOnPinned(): void {
+  // Frame the pinned ego-network (the word plus all its links) instead of
+  // just centering the word: the panel twin of the ⊙ reset button, same
+  // 320ms beat. The camera lives in framed (~[0,1]) space, so every point
+  // goes through graphToFramedGraph; ratio ~= visible framed span, hence
+  // max-span x padding always fits. The padding also absorbs the fisheye
+  // spread at close zoom. A linkless word degenerates to plain centering.
+  private frameEgo(): void {
     const r = this.renderer
     if (!r || this.pinnedId === null) return
     const key = String(this.pinnedId)
     // Guard: a stale pin from a cleared map must not throw mid-click.
     if (!this.graph.hasNode(key)) return
-    const attrs = this.graph.getNodeAttributes(key)
-    const framed = r.graphToFramedGraph({ x: (attrs.x as number) ?? 0, y: (attrs.y as number) ?? 0 })
-    void r.getCamera().animate({ x: framed.x, y: framed.y }, { duration: 320 })
+    let minX = Infinity
+    let maxX = -Infinity
+    let minY = Infinity
+    let maxY = -Infinity
+    for (const nodeKey of [key, ...this.graph.neighbors(key)]) {
+      const attrs = this.graph.getNodeAttributes(nodeKey)
+      const p = r.graphToFramedGraph({ x: (attrs.x as number) ?? 0, y: (attrs.y as number) ?? 0 })
+      if (p.x < minX) minX = p.x
+      if (p.x > maxX) maxX = p.x
+      if (p.y < minY) minY = p.y
+      if (p.y > maxY) maxY = p.y
+    }
+    const cx = (minX + maxX) / 2
+    const cy = (minY + maxY) / 2
+    const span = Math.max(maxX - minX, maxY - minY)
+    // Degenerate (a word with no links): centering alone, zoom untouched.
+    if (!(span > 1e-9)) {
+      void r.getCamera().animate({ x: cx, y: cy }, { duration: 320 })
+      return
+    }
+    void r.getCamera().animate({ x: cx, y: cy, ratio: span * 1.3 }, { duration: 320 })
   }
 
   // Photo of the selected node: a snapshot of the CURRENT camera view, with
