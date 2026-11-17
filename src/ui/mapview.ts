@@ -848,8 +848,10 @@ export class MapView {
   }
 
   // Center the camera on the pinned node, keeping the zoom: the panel twin
-  // of the ⊙ reset button, same 320ms beat. Fisheye is viewport-centered,
-  // so a node at the frame center gets zero displacement and lands exact.
+  // of the ⊙ reset button, same 320ms beat. The camera lives in framed
+  // (~[0,1]) space, not in raw layout units, so the node must be converted
+  // with graphToFramedGraph — passing raw x/y straight to animate is what
+  // used to fling the camera into the void and blank the map.
   private centerOnPinned(): void {
     const r = this.renderer
     if (!r || this.pinnedId === null) return
@@ -857,7 +859,8 @@ export class MapView {
     // Guard: a stale pin from a cleared map must not throw mid-click.
     if (!this.graph.hasNode(key)) return
     const attrs = this.graph.getNodeAttributes(key)
-    void r.getCamera().animate({ x: (attrs.x as number) ?? 0, y: (attrs.y as number) ?? 0 }, { duration: 320 })
+    const framed = r.graphToFramedGraph({ x: (attrs.x as number) ?? 0, y: (attrs.y as number) ?? 0 })
+    void r.getCamera().animate({ x: framed.x, y: framed.y }, { duration: 320 })
   }
 
   // Photo of the selected node: a snapshot of the CURRENT camera view, with
