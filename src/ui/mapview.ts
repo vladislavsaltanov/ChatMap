@@ -847,39 +847,86 @@ export class MapView {
     this.scheduleLayout()
   }
 
-  // Frame the pinned ego-network (the word plus all its links) instead of
-  // just centering the word: the panel twin of the ⊙ reset button, same
-  // 320ms beat. The camera lives in framed (~[0,1]) space, so every point
-  // goes through graphToFramedGraph; ratio ~= visible framed span, hence
-  // max-span x padding always fits. The padding also absorbs the fisheye
-  // spread at close zoom. A linkless word degenerates to plain centering.
+  // Query: ego members in both spaces — graph units for the fisheye math,
+  // framed units for the camera. Caption width mirrors the collision resolver.
+  private egoPoints(r: NonNullable<MapView['renderer']>, key: string): Array<{ gx: number; gy: number; fx: number; fy: number; body: number; capW: number; capH: number }> {
+    return [key, ...this.graph.neighbors(key)].map((nodeKey) => {
+      const attrs = this.graph.getNodeAttributes(nodeKey)
+      const gx = (attrs.x as number) ?? 0
+      const gy = (attrs.y as number) ?? 0
+      const framed = r.graphToFramedGraph({ x: gx, y: gy })
+      const fs = labelFontPxFor(attrs)
+      return { gx, gy, fx: framed.x, fy: framed.y, body: visualCoreRadius((attrs.size as number) ?? 0), capW: String(attrs.label ?? '').length * fs * 0.6, capH: fs * 1.25 }
+    })
+  }
+
+  // Query: frame (framed center + ratio) fitting the pinned ego-network with
+  // fisheye displacement, bodies and captions inside. Null ratio = linkless
+  // word: centering alone, zoom untouched. Side-effect free: conversions only.
+  private egoFrame(r: NonNullable<MapView['renderer']>, key: string): { x: number; y: number; ratio: number | null } {
+    const cam = r.getCamera().getState()
+    const pts = this.egoPoints(r, key)
+    let minX = Infinity
+    let maxX = -Infinity
+    let minY = Infinity
+    let maxY = -Infinity
+    for (const p of pts) {
+      if (p.fx < minX) minX = p.fx
+      if (p.fx > maxX) maxX = p.fx
+      if (p.fy < minY) minY = p.fy
+      if (p.fy > maxY) maxY = p.fy
+    }
+    const cx0 = (minX + maxX) / 2
+    const cy0 = (minY + maxY) / 2
+    if (!(Math.max(maxX - minX, maxY - minY) > 1e-9)) return { x: cx0, y: cy0, ratio: null }
+    // Fisheye at the FUTURE ratio: strength follows the same ramp applyView
+    // uses, reach scales with the ratio (px-per-unit is proportional to it).
+    const ratioGuess = Math.max(maxX - minX, maxY - minY) * 1.3
+    const gs = r.getGraphState()
+    const k = Math.max(0, Math.min(1, (1 - ratioGuess) / 0.5))
+    const radius = (gs.fisheyeRadius ?? 0) * (ratioGuess / Math.max(1e-6, cam.ratio))
+    const centerG = r.framedGraphToGraph({ x: cx0, y: cy0 })
+    // px per framed unit at the guessed ratio, measured — no internal math.
+    const probe = { ...cam, x: cx0, y: cy0, ratio: ratioGuess }
+    const pa = r.graphToViewport({ x: cx0, y: cy0 }, { cameraState: probe })
+    const pb = r.graphToViewport({ x: cx0 + 0.01, y: cy0 }, { cameraState: probe })
+    const pxPerFramed = Math.max(1e-6, Math.hypot(pb.x - pa.x, pb.y - pa.y) / 0.01)
+    // Displaced bbox: each offset scaled by its fisheye gain, then padded by
+    // the drawn body on every side and the caption on +x (captions sit right
+    // of the marker, like the resolver assumes).
+    let dMinX = Infinity
+    let dMaxX = -Infinity
+    let dMinY = Infinity
+    let dMaxY = -Infinity
+    for (const p of pts) {
+      const d = Math.hypot(p.gx - centerG.x, p.gy - centerG.y)
+      const gain = radius > 0 && d > 1e-9 ? 1 + 0.5 * k * Math.exp(-1.8 * (d / radius) * (d / radius)) : 1
+      const bodyF = renderedNodeSize(p.body, ratioGuess) / pxPerFramed
+      const dfx = cx0 + (p.fx - cx0) * gain
+      const dfy = cy0 + (p.fy - cy0) * gain
+      if (dfx - bodyF < dMinX) dMinX = dfx - bodyF
+      if (dfx + bodyF + p.capW / pxPerFramed > dMaxX) dMaxX = dfx + bodyF + p.capW / pxPerFramed
+      if (dfy - bodyF - p.capH / pxPerFramed < dMinY) dMinY = dfy - bodyF - p.capH / pxPerFramed
+      if (dfy + bodyF + p.capH / pxPerFramed > dMaxY) dMaxY = dfy + bodyF + p.capH / pxPerFramed
+    }
+    // Slack for projection rounding only: displacement, bodies and captions
+    // are already inside the box.
+    return { x: (dMinX + dMaxX) / 2, y: (dMinY + dMaxY) / 2, ratio: Math.max(dMaxX - dMinX, dMaxY - dMinY) * 1.1 }
+  }
+
+  // Command: fly the camera to the egoFrame. Same 320ms beat as the ⊙ reset.
   private frameEgo(): void {
     const r = this.renderer
     if (!r || this.pinnedId === null) return
     const key = String(this.pinnedId)
     // Guard: a stale pin from a cleared map must not throw mid-click.
     if (!this.graph.hasNode(key)) return
-    let minX = Infinity
-    let maxX = -Infinity
-    let minY = Infinity
-    let maxY = -Infinity
-    for (const nodeKey of [key, ...this.graph.neighbors(key)]) {
-      const attrs = this.graph.getNodeAttributes(nodeKey)
-      const p = r.graphToFramedGraph({ x: (attrs.x as number) ?? 0, y: (attrs.y as number) ?? 0 })
-      if (p.x < minX) minX = p.x
-      if (p.x > maxX) maxX = p.x
-      if (p.y < minY) minY = p.y
-      if (p.y > maxY) maxY = p.y
-    }
-    const cx = (minX + maxX) / 2
-    const cy = (minY + maxY) / 2
-    const span = Math.max(maxX - minX, maxY - minY)
-    // Degenerate (a word with no links): centering alone, zoom untouched.
-    if (!(span > 1e-9)) {
-      void r.getCamera().animate({ x: cx, y: cy }, { duration: 320 })
+    const frame = this.egoFrame(r, key)
+    if (frame.ratio === null) {
+      void r.getCamera().animate({ x: frame.x, y: frame.y }, { duration: 320 })
       return
     }
-    void r.getCamera().animate({ x: cx, y: cy, ratio: span * 1.3 }, { duration: 320 })
+    void r.getCamera().animate({ x: frame.x, y: frame.y, ratio: frame.ratio }, { duration: 320 })
   }
 
   // Photo of the selected node: a snapshot of the CURRENT camera view, with
