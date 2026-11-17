@@ -1,4 +1,3 @@
-import { escapeHtml } from '../core/escapeHtml'
 import type Graph from 'graphology'
 import { applyLabelOverrides, parseLabelOverrides } from '../core/labelOverrides'
 import type { LabelOverrideChange } from '../core/labelOverrides'
@@ -65,7 +64,9 @@ export class NodePanel {
   private onSelectCallback: ((id: number) => void) | null = null
   private onOverrideCallback: ((id: number, label: string) => void) | null = null
   private onPhotoCallback: (() => void) | null = null
+  private onCenterCallback: (() => void) | null = null
   private photoBtn: HTMLButtonElement
+  private centerBtn: HTMLButtonElement
 
   constructor(root: HTMLElement) {
     this.panel = document.createElement('aside')
@@ -76,8 +77,9 @@ export class NodePanel {
       <div class="nodepanel-header">
         <h2 id="node-title">Слово</h2>
         <div class="header-actions">
-          <button type="button" id="auto-btn" class="label-btn" aria-label="Сбросить к исходной форме" title="Сбросить к исходной форме">Авто</button>
+          <button type="button" id="auto-btn" class="label-btn" aria-label="Сбросить к исходной форме" title="Сбросить к исходной форме">Сброс</button>
           <button type="button" id="photo-btn" class="label-btn" aria-label="Снимок выделенной ноды" title="Снимок выделенной ноды">Фото</button>
+          <button type="button" id="center-btn" class="icon-btn" aria-label="В центр ноды" title="В центр ноды">⊙</button>
           <button type="button" id="close-btn" class="icon-btn" aria-label="Закрыть">✕</button>
         </div>
       </div>
@@ -101,6 +103,7 @@ export class NodePanel {
     this.autoBtn = this.panel.querySelector<HTMLButtonElement>('#auto-btn')!
     this.closeBtn = this.panel.querySelector<HTMLButtonElement>('#close-btn')!
     this.photoBtn = this.panel.querySelector<HTMLButtonElement>('#photo-btn')!
+    this.centerBtn = this.panel.querySelector<HTMLButtonElement>('#center-btn')!
     this.neighborsContainer = this.panel.querySelector<HTMLElement>('#neighbors-list')!
     this.formsContainer = this.panel.querySelector<HTMLElement>('#forms-list')!
 
@@ -113,6 +116,10 @@ export class NodePanel {
 
     this.photoBtn.addEventListener('click', () => {
       this.onPhotoCallback?.()
+    })
+
+    this.centerBtn.addEventListener('click', () => {
+      this.onCenterCallback?.()
     })
 
     this.autoBtn.addEventListener('click', () => {
@@ -139,12 +146,14 @@ export class NodePanel {
     })
   }
 
-  // «Авто» must show whether there is anything to reset: with a single word
-  // form the click legitimately changes nothing, which used to look broken.
+  // «Сброс» shows whether there is anything to reset: when the label is
+  // already automatic the button is disabled, so the no-op click that
+  // used to look broken can no longer happen.
   private syncAutoState(): void {
     const overridden = !!this.currentDetails &&
       this.currentDetails.label !== this.currentDetails.defaultLabel
     this.autoBtn.classList.toggle('active', overridden)
+    this.autoBtn.disabled = !overridden
     this.autoBtn.setAttribute('aria-pressed', String(overridden))
     this.autoBtn.title = overridden ? 'Сбросить ручную подпись' : 'Подпись уже автоматическая'
   }
@@ -204,7 +213,12 @@ export class NodePanel {
       const btn = document.createElement('button')
       btn.type = 'button'
       btn.className = `form-btn ${form === this.currentDetails.label ? 'active' : ''}`
-      btn.innerHTML = `<span>${escapeHtml(form)}</span><span class="num">${cnt}</span>`
+      const formEl = document.createElement('span')
+      formEl.textContent = form
+      const countEl = document.createElement('span')
+      countEl.className = 'num'
+      countEl.textContent = String(cnt)
+      btn.append(formEl, countEl)
       btn.addEventListener('click', () => {
         if (!this.currentDetails) return
         try {
@@ -235,5 +249,9 @@ export class NodePanel {
 
   onPhoto(cb: () => void): void {
     this.onPhotoCallback = cb
+  }
+
+  onCenter(cb: () => void): void {
+    this.onCenterCallback = cb
   }
 }
