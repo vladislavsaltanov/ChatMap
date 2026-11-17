@@ -399,6 +399,11 @@
     font-size: 15px;
   }
 
+  /* The ⊙ glyph draws small: match the 18px of the map zoom buttons. */
+  #center-btn {
+    font-size: 18px;
+  }
+
   .panel-section {
     display: flex;
     flex-direction: column;
