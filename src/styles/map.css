@@ -105,7 +105,7 @@
      На узких панель почти во всю ширину — там её просто закрывают крестом. */
   @media (min-width: 720px) {
     #map:has(.nodepanel:not([hidden])) .map-controls {
-      right: calc(16px + 280px + 12px);
+      right: calc(24px + 280px + 12px);
     }
   }
 
@@ -321,9 +321,11 @@
 
   .nodepanel {
     position: absolute;
-    inset: 16px 16px 16px auto;
-    width: min(280px, calc(100vw - 32px));
-    max-height: calc(100vh - 32px);
+    /* 24px top/right = 16px canvas inset + 8px air, same rhythm as the drawer.
+       The bottom uses 54px like .map-controls: the canvas ends above the
+       hover-line row, so a viewport-based bottom hung 22px past the canvas. */
+    inset: 24px 24px 54px auto;
+    width: min(280px, calc(100vw - 48px));
     padding: 16px;
     z-index: 20;
     overflow-y: auto;
@@ -354,6 +356,9 @@
 
   .nodepanel-header {
     display: flex;
+    /* Four controls do not fit beside a long word in 248px of content: let the
+       action row wrap instead of pushing the close button past the padding. */
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
@@ -363,12 +368,21 @@
     margin: 0;
     font-size: 18px;
     font-weight: 500;
+    /* Never wider than the row: a long word truncates instead of overflowing. */
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .header-actions {
     display: flex;
     align-items: center;
     gap: 6px;
+    /* Shrink the title first, never the touch targets. */
+    flex: 0 0 auto;
+    margin-left: auto;
   }
 
   .label-btn {
