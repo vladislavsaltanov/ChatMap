@@ -154,9 +154,11 @@ export function parse(src: string): ChatExport {
   const authorId = (m: RawMessage): number => {
     const rawId = m.from_id ?? m.actor_id
     if (rawId != null) {
+      // Same strict gate as message ids: bare Number() turns crafted "1e3"
+      // (and hex "0x10") into numeric author ids and merges distinct voices.
       const cleanStr = String(rawId).replace(/^(?:(?:user|channel|chat)_?|-)+/i, '')
-      const num = Number(cleanStr)
-      if (Number.isInteger(num) && num > 0) {
+      const num = parsePositiveInt(cleanStr)
+      if (num !== null) {
         if (!authorNames.has(num)) {
           const name = String(m.from ?? m.actor ?? `Участник ${num}`)
           authorNames.set(num, name)

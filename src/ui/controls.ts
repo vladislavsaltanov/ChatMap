@@ -74,6 +74,7 @@ export class Controls {
   private sliderTopN: HTMLInputElement
   private sliderMinWeight: HTMLInputElement
   private legendCheckbox: HTMLInputElement
+  private timelineCheckbox: HTMLInputElement
   private topNVal: HTMLElement
   private minWeightVal: HTMLElement
 
@@ -82,6 +83,7 @@ export class Controls {
   private changeCallbacks: ControlsCallback[] = []
   private colorCallbacks: ColorChangeCallback[] = []
   private legendCallbacks: Array<(visible: boolean) => void> = []
+  private timelineCallbacks: Array<(enabled: boolean) => void> = []
 
   private changeTimer: number | null = null
 
@@ -101,8 +103,8 @@ export class Controls {
   constructor(root: HTMLElement) {
     const details = document.createElement('details')
     details.className = 'drawer'
-    // На узких экранах панель скрыта по умолчанию — не съедает карту целиком
-    details.open = window.matchMedia('(min-width: 720px)').matches
+    // Collapsed on every start (2026-11-18 decision): the map is the product,
+    // the drawer must never eat the canvas on load — any screen width.
     details.setAttribute('aria-label', 'Параметры')
     details.innerHTML = `
       <summary class="label">Параметры</summary>
@@ -147,6 +149,7 @@ export class Controls {
         <fieldset class="control-group">
           <legend class="label">Карта</legend>
           <label class="check-label"><input type="checkbox" id="show-legend" checked /> Подсказка на карте</label>
+          <label class="check-label" title="Срез карты по времени"><input type="checkbox" id="show-timeline" /> Таймлайн</label>
         </fieldset>
 
         <fieldset id="authors-group" class="control-group" hidden>
@@ -171,6 +174,7 @@ export class Controls {
     this.sliderTopN = details.querySelector<HTMLInputElement>('#slider-top-n')!
     this.sliderMinWeight = details.querySelector<HTMLInputElement>('#slider-min-weight')!
     this.legendCheckbox = details.querySelector<HTMLInputElement>('#show-legend')!
+    this.timelineCheckbox = details.querySelector<HTMLInputElement>('#show-timeline')!
     this.topNVal = details.querySelector<HTMLElement>('#top-n-val')!
     this.minWeightVal = details.querySelector<HTMLElement>('#min-weight-val')!
 
@@ -194,6 +198,13 @@ export class Controls {
     this.legendCheckbox.addEventListener('change', () => {
       for (const cb of this.legendCallbacks) {
         cb(this.legendCheckbox.checked)
+      }
+    })
+    // The strip owns its own protocol (timelineOn / slice), so this toggle never
+    // rides on debouncedTriggerChange(): enabling must not re-run the pipeline.
+    this.timelineCheckbox.addEventListener('change', () => {
+      for (const cb of this.timelineCallbacks) {
+        cb(this.timelineCheckbox.checked)
       }
     })
   }
@@ -294,6 +305,19 @@ export class Controls {
   onLegendChange(cb: (visible: boolean) => void): void {
     this.legendCallbacks.push(cb)
     cb(this.legendCheckbox.checked)
+  }
+
+  // [Command] Subscription only: firing on registration would send a timelineOn
+  // before any chat is open, and the strip has nothing to describe yet.
+  onTimelineChange(cb: (enabled: boolean) => void): void {
+    this.timelineCallbacks.push(cb)
+  }
+
+  // [Command] Programmatic uncheck without a change event: used when the worker
+  // refuses the strip (chat too short) so the toggle shows the refusal and no
+  // disable handler runs against a strip that never appeared.
+  setTimelineChecked(checked: boolean): void {
+    this.timelineCheckbox.checked = checked
   }
 }
 

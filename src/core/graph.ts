@@ -410,6 +410,9 @@ function seatNewNodes(
   }
 
   const fresh = nodes.filter((n) => !n.prevXY).sort((a, b) => a.id - b.id)
+  // O(1) neighbour size lookup: a linear nodes.find inside the 10-iteration
+  // relax loop cost fresh * 10 * degree * N scans on every filter switch.
+  const sizeOf = new Map(nodes.map((n) => [n.id, n.size ?? 20] as const))
   for (const node of fresh) {
     let ax = cx
     let ay = cy
@@ -438,7 +441,7 @@ function seatNewNodes(
       for (const nb of neighbours.get(node.id) ?? []) {
         const q = positions.get(nb.id)
         if (!q) continue
-        const rest = own + reservePx(nodes.find((m) => m.id === nb.id)?.size ?? 20)
+        const rest = own + reservePx(sizeOf.get(nb.id) ?? 20)
         const dx = point.x - q.x
         const dy = point.y - q.y
         const d = Math.hypot(dx, dy) || 1
@@ -657,11 +660,12 @@ export function layout(
   }
   // FRAME_ASPECT (spread.ts): the flattened plane target; S1 caps the top.
   const aspectMap = holdAspect(FRAME_ASPECT)
-  // Principal-axis probe (log only): area-weighted covariance on the held frame.
-  // Local on purpose — leaf.ts owns alignPrincipalAxis but imports reservePx from
-  // here, so importing it would close a cycle. Rotation stays OFF unless the axis
-  // sits stably >15deg off horizontal on synthetic (guards: L1/L2>1.2, dx>=0).
-  {
+  // Principal-axis probe (dev-only log): area-weighted covariance on the
+  // held frame. Local on purpose — leaf.ts owns alignPrincipalAxis but
+  // imports reservePx from here, so importing it would close a cycle.
+  // Rotation stays OFF unless the axis sits stably >15deg off horizontal
+  // on synthetic (guards: L1/L2>1.2, dx>=0).
+  if (import.meta.env.DEV) {
     let sw = 0
     let mx = 0
     let my = 0

@@ -207,4 +207,19 @@ describe('parse', () => {
     const chat = parse(JSON.stringify({ messages: [{ id: 1, reply_to_message_id: '123', text: 'x' }] }))
     expect(chat.messages[0].replyTo).toBe(123)
   })
+
+  it('(k) from_id "1e3" не становится id 1000: строгий парсер id', () => {
+    const parsed = parse(
+      JSON.stringify({
+        messages: [
+          { id: 1, type: 'message', date: '2024-01-01T00:00:00', from: 'Эхо', from_id: '1e3', text: 'привет' },
+          { id: 2, type: 'message', date: '2024-01-01T00:01:00', from: 'Бета', from_id: '1000', text: 'привет' },
+        ],
+      }),
+    )
+    // Crafted exponent id stays on the string-key path: two voices, not one.
+    expect(parsed.messages[0].authorId).not.toBe(parsed.messages[1].authorId)
+    // Digit-string ids still take the numeric path.
+    expect(parsed.messages[1].authorId).toBe(1000)
+  })
 })

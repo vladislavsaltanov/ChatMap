@@ -6,6 +6,7 @@ import { renderLanding } from './ui/landing'
 import { renderProgress, updateProgress } from './ui/progress'
 import { renderMap } from './ui/mapview'
 import { renderControls } from './ui/controls'
+import { renderTimeline } from './ui/timeline'
 import type { WorkerIn, WorkerOut } from './core/types'
 
 import Worker from './core/worker.ts?worker'
@@ -76,6 +77,44 @@ const nodeFontsReady = Promise.all([
 
 const mapView = renderMap(screens.map)
 const controls = renderControls(screens.map)
+// Mounted after the map and the drawer: as the LAST flex child of #map the strip
+// sits under the canvas, so the canvas shrinks by its height instead of being
+// covered by it.
+const timeline = renderTimeline(screens.map)
+
+// Latest-wins slice pump. The strip emits at most one bucket per 150ms, but a frame
+// costs more than that, so requests are coalesced HERE instead of inside the worker:
+// one request in flight, the newest cursor replaces the queued one, and the queue is
+// drained when the answer lands. `pendingBucket === null` means nothing is owed.
+let sliceInFlight = false
+let pendingBucket: number | null = null
+// Last toggle state. A meta answer can arrive after the user switched the strip off
+// again (the request was already in flight): the reply must not resurrect it.
+let timelineWanted = false
+
+function pumpSlice(): void {
+  if (sliceInFlight || pendingBucket === null) return
+  const bucket = pendingBucket
+  pendingBucket = null
+  sliceInFlight = true
+  worker.postMessage({ type: 'slice', bucket } satisfies WorkerIn)
+}
+
+function requestSlice(bucket: number): void {
+  pendingBucket = bucket
+  pumpSlice()
+}
+
+// [Command] Drop the strip and every owed slice. Used when the chat the strip
+// describes is replaced or lost: the meta would otherwise outlive its file, and an
+// un-answered request would leave the pump marked busy forever.
+function resetTimeline(): void {
+  timeline.hide()
+  controls.setTimelineChecked(false)
+  timelineWanted = false
+  sliceInFlight = false
+  pendingBucket = null
+}
 
 controls.onChange((cfg) => {
   if (!screens.map.hidden) mapView.showProgress(75, 100, 'Выборка узлов и рёбер...')
@@ -90,6 +129,28 @@ controls.onLegendChange((visible) => {
   mapView.setLegendVisible(visible)
 })
 
+controls.onTimelineChange((enabled) => {
+  timelineWanted = enabled
+  if (enabled) {
+    // The strip appears on the meta answer and starts at the last bucket, which is
+    // the frame already on screen (whole history): enabling slices nothing.
+    worker.postMessage({ type: 'timelineOn' } satisfies WorkerIn)
+    return
+  }
+  // Off restores the whole-history view: pin the LAST bucket (not the cursor — the
+  // cursor may sit mid-history), drop whatever was queued and hide at once.
+  const ready = timeline.metaReady()
+  const last = timeline.lastBucket()
+  timeline.hide()
+  // Guard: a toggle that never got an eligible meta (a too-short chat) has no
+  // history to restore, and bucket 0 would paint a frame nobody asked for.
+  if (!ready) return
+  pendingBucket = null
+  requestSlice(last)
+})
+
+timeline.onBucket((bucket) => requestSlice(bucket))
+
 worker.onmessage = async (e: MessageEvent<WorkerOut>) => {
   const msg = e.data
   if (msg.type === 'progress') {
@@ -103,7 +164,33 @@ worker.onmessage = async (e: MessageEvent<WorkerOut>) => {
     requestAnimationFrame(() => {
       mapView.render(msg)
       mapView.hideProgress()
+      // A filter rebuild redraws the whole history. If the strip is up and its cursor
+      // sits in the past, ask for that bucket again so the readout and the map keep
+      // telling one story; a cursor already at the last bucket IS this map, so it
+      // costs nothing. The pump coalesces this with any scrub already in flight.
+      if (timeline.metaReady() && timeline.currentBucket() !== timeline.lastBucket()) {
+        requestSlice(timeline.currentBucket())
+      }
     })
+  } else if (msg.type === 'timelineMeta') {
+    // Guard: the toggle may have been switched off while this answer was in flight.
+    if (!timelineWanted) return
+    if (!msg.eligible) {
+      // A chat with too few buckets (or an unusable date range) refuses the toggle:
+      // the checkbox unchecks itself, so the refusal is visible instead of a strip
+      // that would only be decoration.
+      timelineWanted = false
+      controls.setTimelineChecked(false)
+      return
+    }
+    timeline.show(msg)
+  } else if (msg.type === 'slice') {
+    mapView.applySlice(msg)
+    sliceInFlight = false
+    // Latest-wins: the cursor may have moved while this frame computed. A request
+    // for the bucket just applied is dropped; anything newer goes out now.
+    if (pendingBucket === msg.bucket) pendingBucket = null
+    pumpSlice()
   } else if (msg.type === 'warn') {
     addWarning(msg.message)
   } else if (msg.type === 'error') {
@@ -114,12 +201,19 @@ worker.onmessage = async (e: MessageEvent<WorkerOut>) => {
       mapView.clear()
       controls.setAuthors([])
     }
+    // The strip outlives no error: its meta describes the chat that just failed,
+    // and a slice that never got its answer would keep the pump "in flight"
+    // forever. Reset both here, on every error, not only when the map was dropped.
+    resetTimeline()
     showError(msg.message)
   }
 }
 
 function sendFile(file: File) {
   clearWarnings()
+  // A new chat invalidates the strip's meta: drop it before the open so a stale
+  // spectrum can never outlive the file it described.
+  resetTimeline()
   if (file.size > 500 * 1024 * 1024) {
     showError('Файл больше 500 МБ. Экспортируй один чат без медиа.')
     return
