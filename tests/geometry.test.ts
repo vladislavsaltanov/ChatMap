@@ -184,14 +184,14 @@ describe('bundleEdges (corridors through the figure)', () => {
   }
 
   it('is deterministic and ranks edges by weight', () => {
-    const a = bundleEdges(points, edges, 9, routes)
-    expect(a).toEqual(bundleEdges(points, edges, 9, routes))
+    const a = bundleEdges(points, edges, routes)
+    expect(a).toEqual(bundleEdges(points, edges, routes))
     expect(a.map((info) => info.rank)).toEqual([0, 1, 2])
     expect(a[0].tract).toHaveLength(4)
   })
 
   it('puts every word of one topic pair on the same corridor', () => {
-    const info = bundleEdges(points, edges, 9, routes)
+    const info = bundleEdges(points, edges, routes)
     const first = controls(info[0].tract, points[0], points[2]).c1
     const second = controls(info[2].tract, points[0], points[3]).c1
     // The corridor fan is the only difference: at most 2 * CORRIDOR_FAN world units.
@@ -201,7 +201,7 @@ describe('bundleEdges (corridors through the figure)', () => {
   })
 
   it('routes a cross-topic fibre through both gateway controls', () => {
-    const info = bundleEdges(points, edges, 9, routes)[0]
+    const info = bundleEdges(points, edges, routes)[0]
     const { c1, c2 } = controls(info.tract, points[0], points[2])
     // Controls snap to a grid of GATEWAY_CELLS across the figure: ports inside one
     // cell share a control, which is what turns neighbouring corridors into one trunk.
@@ -222,15 +222,15 @@ describe('bundleEdges (corridors through the figure)', () => {
     // first control of its links must be byte-identical to topic A's links.
     const near = { ports: new Map([...ports, [40, { x: -59, y: 2 }]]), groupOf: new Map([...groupOf, [6, 40]]) }
     const withNear = [...points, { id: 6, x: -30, y: 40 }]
-    const a = bundleEdges(withNear, [{ a: 1, b: 3, weight: 9 }], 9, near)[0]
-    const b = bundleEdges(withNear, [{ a: 6, b: 3, weight: 9 }], 9, near)[0]
+    const a = bundleEdges(withNear, [{ a: 1, b: 3, weight: 9 }], near)[0]
+    const b = bundleEdges(withNear, [{ a: 6, b: 3, weight: 9 }], near)[0]
     const first = controls(a.tract, withNear[0], withNear[2]).c1
     const second = controls(b.tract, withNear[5], withNear[2]).c1
     expect(first).toEqual(second)
   })
 
   it('bows a same-topic link through its own soma', () => {
-    const info = bundleEdges(points, [{ a: 1, b: 2, weight: 4 }], 4, routes)[0]
+    const info = bundleEdges(points, [{ a: 1, b: 2, weight: 4 }], routes)[0]
     const { c1, c2 } = controls(info.tract, points[0], points[1])
     const soma = { x: -60, y: 0 }
     const a = points[0]
@@ -251,15 +251,15 @@ describe('bundleEdges (corridors through the figure)', () => {
   })
 
   it('is safe on missing positions and degenerate edges', () => {
-    expect(bundleEdges([], [{ a: 1, b: 2 }], 0, routes)[0].tract).toEqual(straight)
-    expect(bundleEdges(points, [{ a: 1, b: 1 }], 0, routes)[0].tract).toEqual(straight)
+    expect(bundleEdges([], [{ a: 1, b: 2 }], routes)[0].tract).toEqual(straight)
+    expect(bundleEdges(points, [{ a: 1, b: 1 }], routes)[0].tract).toEqual(straight)
   })
 
   it('fuses every fibre of one fascicle onto one shared trunk control', () => {
     // Separate calls so each corridor has a single fibre (fan 0): the recovered
     // controls then differ only if the trunk itself differs.
-    const one = bundleEdges(trunkPoints, [{ a: 0, b: 1, weight: 9 }], 9, trunkRoutes)[0]
-    const two = bundleEdges(trunkPoints, [{ a: 0, b: 2, weight: 9 }], 9, trunkRoutes)[0]
+    const one = bundleEdges(trunkPoints, [{ a: 0, b: 1, weight: 9 }], trunkRoutes)[0]
+    const two = bundleEdges(trunkPoints, [{ a: 0, b: 2, weight: 9 }], trunkRoutes)[0]
     const first = controls(one.tract, trunkPoints[0], trunkPoints[1]).c1
     const second = controls(two.tract, trunkPoints[0], trunkPoints[2]).c1
     // One control for the whole fascicle: that shared point is the bundle.
@@ -270,7 +270,7 @@ describe('bundleEdges (corridors through the figure)', () => {
   })
 
   it('splits the trunk near the terminal, not at the hub', () => {
-    const info = bundleEdges(trunkPoints, [{ a: 0, b: 1, weight: 9 }], 9, trunkRoutes)[0]
+    const info = bundleEdges(trunkPoints, [{ a: 0, b: 1, weight: 9 }], trunkRoutes)[0]
     const b = trunkPoints[1]
     const { c2 } = controls(info.tract, trunkPoints[0], b)
     const spine = spineOf([trunkPoints[1], trunkPoints[2]], trunkHub)
@@ -287,7 +287,7 @@ describe('bundleEdges (corridors through the figure)', () => {
     // All words within 2 units of the soma: no arm, no bundling.
     const tight = [{ id: 0, x: 0, y: 0 }, { id: 1, x: 1, y: 1 }, { id: 2, x: 1, y: -1 }]
     const tightRoutes = { ports: trunkPorts, groupOf: trunkGroupOf, stemOf: new Map([[0, 160], [1, 161], [2, 161]]) }
-    expect(bundleEdges(tight, edge, 5, tightRoutes)[0].tract).toEqual(bundleEdges(tight, edge, 5, plain)[0].tract)
+    expect(bundleEdges(tight, edge, tightRoutes)[0].tract).toEqual(bundleEdges(tight, edge, plain)[0].tract)
     // Terminal behind the soma: the arm does not reach it, so the intra path wins.
     const behind = [...trunkPoints, { id: 4, x: -40, y: 10 }]
     const behindRoutes = {
@@ -296,13 +296,13 @@ describe('bundleEdges (corridors through the figure)', () => {
       stemOf: new Map([...trunkStems, [4, 161]]),
     }
     const backEdge = [{ a: 0, b: 4, weight: 5 }]
-    expect(bundleEdges(behind, backEdge, 5, behindRoutes)[0].tract).toEqual(
-      bundleEdges(behind, backEdge, 5, { ports: trunkPorts, groupOf: behindRoutes.groupOf })[0].tract,
+    expect(bundleEdges(behind, backEdge, behindRoutes)[0].tract).toEqual(
+      bundleEdges(behind, backEdge, { ports: trunkPorts, groupOf: behindRoutes.groupOf })[0].tract,
     )
     // Two different fascicles of one hub are not a trunk.
     const crossEdge = [{ a: 1, b: 3, weight: 5 }]
-    expect(bundleEdges(trunkPoints, crossEdge, 5, trunkRoutes)[0].tract).toEqual(
-      bundleEdges(trunkPoints, crossEdge, 5, plain)[0].tract,
+    expect(bundleEdges(trunkPoints, crossEdge, trunkRoutes)[0].tract).toEqual(
+      bundleEdges(trunkPoints, crossEdge, plain)[0].tract,
     )
   })
 })

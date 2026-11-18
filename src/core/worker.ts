@@ -137,7 +137,7 @@ function buildMapMessage(
   })
   // Edge geometry is routed through the figure's own funnels: fibres of one
   // corridor share control points, so they land on top of each other and merge.
-  const bundles = bundleEdges(posList, backboneEdges, selection.maxWeight, {
+  const bundles = bundleEdges(posList, backboneEdges, {
     ports: layoutResult.ports ?? new Map(),
     groupOf: layoutResult.groupOf ?? new Map(),
     // Fascicle identity lets intra-topic fibres share one trunk per stem instead of
@@ -250,9 +250,10 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
     fullRun,
     onStage: (done, stage) => send({ type: 'progress', done, total: 100, stage }),
   })
-  // Runtime stamp: proves which layout code the browser runs and what shape
-  // it produced. Read it in DevTools console after reopening the export.
-  {
+  // Runtime stamp: proves which layout code the (dev) browser runs and what
+  // shape it produced. Dev-only: the production console stays clean on
+  // every filter update.
+  if (import.meta.env.DEV) {
     let minX = Infinity
     let maxX = -Infinity
     let minY = Infinity
