@@ -250,9 +250,10 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
     fullRun,
     onStage: (done, stage) => send({ type: 'progress', done, total: 100, stage }),
   })
-  // Runtime stamp: proves which layout code the browser runs and what shape
-  // it produced. Read it in DevTools console after reopening the export.
-  {
+  // Runtime stamp: proves which layout code the (dev) browser runs and what
+  // shape it produced. Dev-only: the production console stays clean on
+  // every filter update.
+  if (import.meta.env.DEV) {
     let minX = Infinity
     let maxX = -Infinity
     let minY = Infinity
