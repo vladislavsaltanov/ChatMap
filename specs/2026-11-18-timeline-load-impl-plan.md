@@ -84,7 +84,7 @@ export function countsUpTo(bc: BucketCounts, t: number): Map<number, Map<AuthorI
 
 - [ ] Шаг 2.1 — Миграция кеш-тестов в `tests/tally.test.ts`: переименовать `PipelineCache`-секции под новый резолв; падают (новые поля).
 - [ ] Шаг 2.2 — Реализация в `tally.ts`: `countByBuckets` (один линейный проход по юнитам, разреженные аллокации авторов), `countsUpTo` (префикс до t включительно), рефактор `resolve`. Guard: юнит без `bucket` (undefined или ≤ 0... нет — bucket 0 валиден!) — ровно `unit.bucket === undefined` → всегда включён. Guard-комментарий обязателен.
-- [ ] Шаг 2.3 — `worker.ts`: open-путь = `buildBucketMeta` (после parse, progress-стадия «Определение авторов...» не меняется) → `resolve` → **материализация полных counts** `countsUpTo(bc, meta.count - 1)` → `select({counts, pairs: new Map()}, viewCfg, merged)` для top-N → `memberSet` → `tally(units, { memberSet })` (Task 3 даёт opts; до Task 3 — временно без opts, задел) → `select` с реальными pairs → layout как сегодня. Прогресс-проценты стадий сохранить.
+- [ ] Шаг 2.3 — `worker.ts`: open-путь = `buildBucketMeta` (после parse, progress-стадия «Определение авторов...» не меняется) → `resolve` → **материализация полных counts** `countsUpTo(bc, meta.count - 1)` → `tally(units)` (полный скан; ограничение по memberSet вводит Task 3 — `select` с пустыми pairs вернул бы пустой набор узлов) → `select` с реальными pairs → layout как сегодня. Прогресс-проценты стадий сохранить.
 - [ ] Шаг 2.4 — `npx vitest run tests/tally.test.ts` → PASS; `npm run typecheck` → 0.
 - [ ] Шаг 2.5 — Commit: `feat(core): bucketed pass-1 counts replace full-pair tally in the open path`.
 
@@ -99,6 +99,7 @@ export function countsUpTo(bc: BucketCounts, t: number): Map<number, Map<AuthorI
 export type ScanOpts = { memberSet?: Set<number>; maxBucket?: number }
 export function tally(units: RawUnit[], opts?: ScanOpts): TallyResult
 ```
+- `select.ts` += `export function topIds(counts, cfg, merged): number[]` — [Query] топ-N id по mode (together/author; cross до Task 6 — все id со счётом). `worker.ts` здесь же переключает open-путь: `countsUpTo` → `topIds` → `tally(units, { memberSet })` → `select` (реальные pairs) — выигрыш по памяти/времени приземляется на этом шаге.
 Гарды в скане пар (до `edgeKey`): `if (opts?.memberSet !== undefined && (!mset.has(u) || !mset.has(v))) continue`; `if (opts?.maxBucket !== undefined && (unit.bucket ?? 0) > opts.maxBucket) skip unit`. `tally(units)` без opts — байт-идентично сегодняшнему (оракул).
 
 - [ ] Шаг 3.1 — TDD: тесты среза — юнит с `bucket > maxBucket` исключён; пара вне memberSet не в pairs; пара с undefined-bucket включена всегда.
@@ -198,7 +199,7 @@ export function crossCandidates(units: RawUnit[], meta: BucketMeta): Set<number>
 
 ## YAGNI (сознательно вне плана)
 
-- Morph-анимация между срезами (v1: мгновенно после compute; анимация — отдельный tast, если скраб покажется резким).
+- Morph-анимация между срезами (v1: мгновенно после compute; анимация — отдельная задача, если скраб покажется резким).
 - Режим «окно за N месяцев» и объединение топов по бакетам — фаза 3 дизайна.
 - Кеш срезов (latest-wins без LRU), кеш cross-кандидатов только до смены фильтра.
 - Гранулярность тоньше недели; таймзоны (локальное календарное время устройства принято).
