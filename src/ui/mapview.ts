@@ -4,7 +4,8 @@ import { drawOnCanvas } from '@sigma/export-image'
 import { coreFrac, edgeColor, edgeWidth, egoNodeScale, fisheyeGain, fisheyePoint, labelZoomRatio, phaseFor, quadOf, renderedNodeSize, visualCoreRadius, type FisheyeConfig } from '../core/geometry'
 import { resolveLabelBackdrops, resolveLabelBoxes, type LabelBox, type LabelCircle } from '../core/labels'
 import { LEGEND_TEXT } from '../core/legend'
-import type { AuthorId, MapMsg } from '../core/types'
+import type { AuthorId, MapMsg, WorkerEdge, WorkerNode } from '../core/types'
+import type { SliceMsg, SliceNode } from '../core/slice'
 import { buildNodeDetails, getLabelOverrides, NodePanel } from './nodepanel'
 import { ENTER_TOTAL_MS, labelFontPxFor, labelIsLegible, MAP_SIGMA_SETTINGS, MAP_SIGMA_STYLES } from './mapStyles'
 import { DEFAULT_NODE_COLOR, NEURAL_PRIMITIVES, PLATE_COLOR, setNeuralTime } from './neural'
@@ -19,20 +20,23 @@ const FLAT_VIEW: ViewState = { x: 0.5, y: 0.5, ratio: 1, angle: 0 }
 // pointer, slow enough that the 12% boost arrives as motion instead of a jump.
 const GROW_MS = 110
 
-// p90 of the drawn cores: the caption bar for THIS map, i.e. only the top decile by
-// body earns a name at the overview. A fixed px threshold cannot serve a 30-word and
-// a 1000-word map — measured: at 12px captions a 600-word map rendered 221 captions,
-// a name on almost every dot.
+// [Query] p90 of the drawn cores: the caption bar for one map (labelCoreBar) or one
+// timeline frame (applySlice). Two callers, one law — a fixed px threshold would
+// name almost every dot on a 30-word map and nobody on a 1000-word one.
+function coreBar(cores: number[]): number {
+  // Guard: an empty set (empty map, empty frame) keeps the default bar.
+  if (cores.length === 0) return 6
+  cores.sort((a, b) => a - b)
+  return Math.max(5, cores[Math.min(cores.length - 1, Math.floor(cores.length * 0.9))])
+}
+
 function labelCoreBar(graph: Graph): number {
   const cores: number[] = []
   graph.forEachNode((_key, attrs) => {
     if (!attrs.label) return
     cores.push(visualCoreRadius((attrs.size as number) ?? 0))
   })
-  // Guard: an empty map (or one without labels) keeps the default bar.
-  if (cores.length === 0) return 6
-  cores.sort((a, b) => a - b)
-  return Math.max(5, cores[Math.min(cores.length - 1, Math.floor(cores.length * 0.9))])
+  return coreBar(cores)
 }
 
 export class MapView {
@@ -675,6 +679,101 @@ export class MapView {
     this.renderer?.refresh()
   }
 
+  // [Command] Node attributes of one pinned word. render() and applySlice() both
+  // write through this rule: a scrubbed map keeps the same label, canonical form,
+  // position and port data as the whole-history map, and only count/lead/size (the
+  // frame's own numbers) travel per slice. Colour follows the lead by the same law
+  // in both paths, so a word that changes hands in the frame also changes tint.
+  // Overrides are re-read at every write, so a caption renamed while a slice is up
+  // returns renamed.
+  private nodeAttributes(pinned: WorkerNode, overrides: Record<string, string>, live?: SliceNode): Record<string, unknown> {
+    const authorLead = live === undefined ? pinned.authorLead : live.authorLead
+    return {
+      nodeId: pinned.id,
+      label: overrides[pinned.canon] || pinned.label,
+      defaultLabel: pinned.label,
+      canon: pinned.canon,
+      x: pinned.x,
+      y: pinned.y,
+      size: live === undefined ? pinned.size : live.size,
+      color: this.authorColors.get(authorLead) ?? DEFAULT_NODE_COLOR,
+      count: live === undefined ? pinned.count : live.count,
+      authorLead,
+      phase: pinned.phase,
+      arm0: pinned.arm0,
+      arm1: pinned.arm1,
+      arm2: pinned.arm2,
+      arm3: pinned.arm3,
+      arm4: pinned.arm4,
+    }
+  }
+
+  // [Query] Frame's reach baseline: the median drawn length of ITS OWN edges, in
+  // layout units. render() and applySlice() share it, so a long weak link dissolves
+  // identically in the whole map and in every slice.
+  private medianEdgeLength(edges: WorkerEdge[]): number {
+    const lens: number[] = []
+    for (const edge of edges) {
+      const a = String(edge.a)
+      const b = String(edge.b)
+      // Guard: an edge over a word outside the graph has no geometry to measure.
+      if (!this.graph.hasNode(a) || !this.graph.hasNode(b)) continue
+      const na = this.graph.getNodeAttributes(a)
+      const nb = this.graph.getNodeAttributes(b)
+      const len = Math.hypot((na.x as number) - (nb.x as number), (na.y as number) - (nb.y as number))
+      if (len > 0) lens.push(len)
+    }
+    lens.sort((x, y) => x - y)
+    return lens.length > 0 ? lens[Math.floor(lens.length / 2)] : 0
+  }
+
+  // [Command] Add one frame's edges. Callers own the clear (render() clears the
+  // whole graph, applySlice() clears the edge layer), so this only writes. The
+  // size/tint/reach/route mapping is ONE rule with two callers: render and every
+  // scrub must draw a link exactly alike, so they change together or not at all.
+  private addEdges(edges: WorkerEdge[], maxWeight: number): void {
+    const medianLen = this.medianEdgeLength(edges)
+    for (const edge of edges) {
+      const a = String(edge.a)
+      const b = String(edge.b)
+      // Guard: both ends present (a word the frame dropped carries no links) and no
+      // duplicate pair (a simple graph cannot hold the same link twice).
+      if (!this.graph.hasNode(a) || !this.graph.hasNode(b) || this.graph.hasEdge(a, b)) continue
+      const w = edgeWidth(edge.weight, maxWeight)
+      // Quad follows frequency: hairlines for rare links, wide arteries for
+      // frequent ones. halfPx must always exceed the shader's filament —
+      // round 12 widened the filament, so the quad grows with it.
+      const edgeSize = 2.8 + 4.2 * Math.pow(w, 1.3) + 0.8 * edge.bundle
+      const lead = this.graph.getNodeAttribute(a, 'authorLead') as AuthorId | undefined
+      const tint = (lead !== undefined && this.authorColors.get(lead)) || DEFAULT_NODE_COLOR
+      const color = edgeColor(edge.weight, maxWeight, tint)
+      const lodSize = Math.min(
+        this.graph.getNodeAttribute(a, 'size') as number,
+        this.graph.getNodeAttribute(b, 'size') as number,
+      )
+      const na = this.graph.getNodeAttributes(a)
+      const nb = this.graph.getNodeAttributes(b)
+      this.graph.addEdge(a, b, {
+        size: edgeSize,
+        color,
+        weight: edge.weight,
+        alpha: edge.alpha,
+        bead: edge.bead,
+        bundle: edge.bundle,
+        rank: edge.rank,
+        tractRank: edge.tractRank,
+        strength: w,
+        reach:
+          medianLen <= 0
+            ? 1
+            : Math.hypot((na.x as number) - (nb.x as number), (na.y as number) - (nb.y as number)) / medianLen,
+        phase: phaseFor(edge.a ^ edge.b),
+        lodSize,
+        tract: edge.tract,
+      })
+    }
+  }
+
   render(msg: MapMsg): void {
     // A re-render of the same map (filter update) must not replay the whole
     // entrance wave: only a fresh chat gets the staggered assembly.
@@ -688,81 +787,12 @@ export class MapView {
     const overrides = getLabelOverrides()
 
     for (const node of msg.nodes) {
-      const lead = node.authorLead
-      const defaultColor = (lead !== undefined && this.authorColors.get(lead)) || DEFAULT_NODE_COLOR
-      const color = defaultColor
-      const customLabel = overrides[node.canon]
-      this.graph.addNode(String(node.id), {
-        nodeId: node.id,
-        label: customLabel || node.label,
-        defaultLabel: node.label,
-        canon: node.canon,
-        x: node.x,
-        y: node.y,
-        size: node.size,
-        color,
-        count: node.count,
-        authorLead: node.authorLead,
-        phase: node.phase,
-        arm0: node.arm0,
-        arm1: node.arm1,
-        arm2: node.arm2,
-        arm3: node.arm3,
-        arm4: node.arm4,
-      })
+      this.graph.addNode(String(node.id), this.nodeAttributes(node, overrides))
     }
 
     // Geometric reach of each edge vs the map median: long weak links dissolve
     // in edgeOpacity, sparing strong corridors. Computed from layout coords.
-    const nodePos = new Map(msg.nodes.map((n) => [n.id, n]))
-    const edgeLens = msg.edges
-      .map((e) => {
-        const a = nodePos.get(e.a)
-        const b = nodePos.get(e.b)
-        return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0
-      })
-      .filter((l) => l > 0)
-      .sort((x, y) => x - y)
-    const medianLen = edgeLens.length > 0 ? edgeLens[Math.floor(edgeLens.length / 2)] : 0
-
-    for (const edge of msg.edges) {
-      const a = String(edge.a)
-      const b = String(edge.b)
-      if (this.graph.hasNode(a) && this.graph.hasNode(b) && !this.graph.hasEdge(a, b)) {
-        const w = edgeWidth(edge.weight, msg.maxWeight)
-        // Quad follows frequency: hairlines for rare links, wide arteries for
-        // frequent ones. halfPx must always exceed the shader's filament —
-        // round 12 widened the filament, so the quad grows with it.
-        const edgeSize = 2.8 + 4.2 * Math.pow(w, 1.3) + 0.8 * edge.bundle
-        const lead = this.graph.getNodeAttribute(a, 'authorLead') as AuthorId | undefined
-        const tint = (lead !== undefined && this.authorColors.get(lead)) || DEFAULT_NODE_COLOR
-        const color = edgeColor(edge.weight, msg.maxWeight, tint)
-        const lodSize = Math.min(
-          this.graph.getNodeAttribute(a, 'size') as number,
-          this.graph.getNodeAttribute(b, 'size') as number,
-        )
-        this.graph.addEdge(a, b, {
-          size: edgeSize,
-          color,
-          weight: edge.weight,
-          alpha: edge.alpha,
-          bead: edge.bead,
-          bundle: edge.bundle,
-          rank: edge.rank,
-          tractRank: edge.tractRank,
-          strength: w,
-          reach: (() => {
-            const a = nodePos.get(edge.a)
-            const b = nodePos.get(edge.b)
-            if (!a || !b || medianLen <= 0) return 1
-            return Math.hypot(a.x - b.x, a.y - b.y) / medianLen
-          })(),
-          phase: phaseFor(edge.a ^ edge.b),
-          lodSize,
-          tract: edge.tract,
-        })
-      }
-    }
+    this.addEdges(msg.edges, msg.maxWeight)
 
     // Caption bar for this map: computed once per render, published by applyView.
     this.labelCoreMin = labelCoreBar(this.graph)
@@ -786,6 +816,80 @@ export class MapView {
       this.animator.jump('enter', 0)
       this.animator.to('enter', 1, ENTER_TOTAL_MS)
     }
+  }
+
+  // [Command] One timeline frame over the PINNED layout. Positions, ports and
+  // fascicles are pinned, so a slice changes counts, author leads, sizes and the
+  // visible edge set only: the silhouette never moves and the camera is not reset.
+  applySlice(msg: SliceMsg): void {
+    const pinned = this.lastMsg
+    // Guard: a slice before any map has no pinned universe to recolour.
+    if (pinned === null) return
+
+    const overrides = getLabelOverrides()
+    const pinnedById = new Map<number, WorkerNode>()
+    for (const node of pinned.nodes) pinnedById.set(node.id, node)
+    const sliceById = new Map<number, SliceNode>()
+    for (const node of msg.nodes) sliceById.set(node.id, node)
+
+    // Invisibility mechanism, verified against the installed renderer. Sigma 4.0.4
+    // resolves node visibility ONLY from its styles: DisplayData has no `hidden`
+    // field (declarations/src/types.d.ts:49-61, visibility only), and the library's
+    // DEFAULT visibility rule maps the node STATE `isHidden`
+    // (declarations/src/types/styles.d.ts:7) to 'hidden'
+    // (declarations/src/types/styles.d.ts:263-268). A `hidden` node ATTRIBUTE is read
+    // nowhere. Our custom node styles REPLACE that default with the LOD law
+    // (mapStyles.ts:220-224), exactly as the edge rule's comment says custom stages
+    // do (mapStyles.ts:522-524), so setNodeState({isHidden}) would be a no-op too.
+    // What does hide a body is the law itself: size 0 -> drawnCore 0 -> bodyAlpha 0
+    // -> visibility 'hidden', opacity 0 (captions follow the same alpha). So a word
+    // outside the frame keeps its attributes but loses its size, which also keeps the
+    // graph stable: adding/dropping nodes fires a FULL re-index per node in Sigma
+    // 4.0.4 (dropNodeGraphUpdate -> refresh({schedule:true}) re-indexes every node),
+    // i.e. a quadratic pass per scrub step. graph.order therefore still counts the
+    // pinned universe — the LOD density knobs stay at the whole-map level.
+    this.graph.updateEachNodeAttributes(
+      (key, attrs) => {
+        const node = pinnedById.get(Number(key))
+        // Guard: a graph that is not the pinned one has nothing to slice.
+        if (node === undefined) return attrs
+        const live = sliceById.get(node.id)
+        // A word the frame dropped: same attributes, zero body.
+        if (live === undefined) return { ...attrs, size: 0 }
+        return { ...attrs, ...this.nodeAttributes(node, overrides, live) }
+      },
+      // The slice touches only these fields; x/y stay put, so Sigma may skip the
+      // re-indexation of this event (the full refresh below does it once).
+      { attributes: ['count', 'authorLead', 'size', 'color'] },
+    )
+
+    // The edge layer follows the frame's OWN backbone: clear and re-add through the
+    // same mapping render() writes with. Caption overrides keep applying — a kept
+    // word keeps its label attribute untouched, and a word coming back gets its
+    // override through nodeAttributes().
+    this.graph.clearEdges()
+    this.transitHidden = new Set<string>()
+    this.addEdges(msg.edges, msg.maxWeight)
+
+    // A pin or hover whose word left the frame cannot stay: its panel would describe
+    // a body that is no longer drawn and the highlight would point at nothing.
+    if (this.pinnedId !== null && !sliceById.has(this.pinnedId)) this.pin(null)
+    if (this.subgraphKey !== null) {
+      const focused = pinnedById.get(Number(this.subgraphKey))
+      if (focused === undefined || !sliceById.has(focused.id)) this.subgraphKey = null
+    }
+
+    // Caption bar for THIS frame: p90 over the words the slice draws. Graph
+    // membership cannot answer it any more (hidden bodies stay in the graph), so the
+    // bar is measured from the slice's own cores.
+    this.labelCoreMin = coreBar(msg.nodes.map((node) => visualCoreRadius(node.size)))
+    // The styles read the bar from the graph state, and every size changed: publish
+    // the bar, then take one full refresh (indexation included). Slices are throttled
+    // to one per 150ms, so this is the cheap honest option; the caption layout itself
+    // follows on the next frame.
+    this.renderer?.setGraphState({ labelCoreMin: this.labelCoreMin })
+    this.renderer?.refresh()
+    this.scheduleLayout()
   }
 
   renderAuthors(colors: Map<AuthorId, string>): void {
