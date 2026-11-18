@@ -1,4 +1,3 @@
-import { debounce } from '../core/debounce'
 import { escapeHtml } from '../core/escapeHtml'
 import type { ViewCfg, ViewMode } from '../core/select'
 import type { AuthorId, FilterCfg } from '../core/types'
@@ -84,12 +83,20 @@ export class Controls {
   private colorCallbacks: ColorChangeCallback[] = []
   private legendCallbacks: Array<(visible: boolean) => void> = []
 
-  private debouncedTriggerChange = debounce(() => {
-    const cfg = this.getCfg()
-    for (const cb of this.changeCallbacks) {
-      cb(cfg)
+  private changeTimer: number | null = null
+
+  private debouncedTriggerChange(): void {
+    if (this.changeTimer !== null) {
+      window.clearTimeout(this.changeTimer)
     }
-  }, 150)
+    this.changeTimer = window.setTimeout(() => {
+      this.changeTimer = null
+      const cfg = this.getCfg()
+      for (const cb of this.changeCallbacks) {
+        cb(cfg)
+      }
+    }, 150)
+  }
 
   constructor(root: HTMLElement) {
     const details = document.createElement('details')

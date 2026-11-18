@@ -5,7 +5,7 @@ description: Строгая локальность данных, валидац�
 tags: [privacy, validation, limits, offline]
 verified:
   - by: openwiki/0.9.0
-    at: 2026-11-09T15:02:00.342Z
+    at: 2026-11-15T11:24:14.683Z
 sources:
   - id: openwiki-source-171995b5cb5816121c644989
     resource: repo://src/core/parse.ts
@@ -15,7 +15,7 @@ sources:
     resource: repo://src/ui/controls.ts
   - id: openwiki-source-1d1af45935f6f3c30be0e508
     resource: repo://src/ui/landing.ts
-generated: { by: "pi", at: "2026-11-09T15:02:00.342Z" }
+generated: { by: "pi", at: "2026-11-15T11:24:14.683Z" }
 ---
 
 # Приватность и ограничения
@@ -52,6 +52,6 @@ generated: { by: "pi", at: "2026-11-09T15:02:00.342Z" }
 
 ## Что это значит для пользователя
 
-Если карта не построилась —checklist: это JSON-экспорт из Telegram Desktop
+Если карта не построилась — чеклист: это JSON-экспорт из Telegram Desktop
 или AyuGram, а не HTML; файл не обрезан; в чате есть текстовые сообщения.
 Ничего никуда не загружается, можно безопасно пробовать снова локально.

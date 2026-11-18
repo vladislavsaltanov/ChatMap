@@ -1,9 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { isStopword, matchesLaugh, matchesMat } from '../src/core/filters'
-import { Intern } from '../src/core/intern'
-import { buildUnits, edgeKey, filterCacheKey, mergeCacheKey, parseEdgeKey, PipelineCache, tally, type PairStat, type RawUnit } from '../src/core/tally'
+import { Intern, MAX_TOKEN_ID } from '../src/core/intern'
+import { buildUnits, dropFor, edgeKey, filterCacheKey, mergeCacheKey, parseEdgeKey, PipelineCache, tally, type PairStat, type RawUnit } from '../src/core/tally'
 import { tokenize } from '../src/core/tokenize'
-import type { ChatExport, FilterCfg, Message, Tok } from '../src/core/types'
+import type { ChatExport, FilterCfg, Message } from '../src/core/types'
 
 // pass-through spy so tests can count tokenize() calls
 vi.mock('../src/core/tokenize', async (importOriginal) => {
@@ -21,6 +20,11 @@ describe('tally', () => {
     expect(typeof edgeKey(2, 5)).toBe('number')
     expect(parseEdgeKey(edgeKey(5, 2))).toEqual([2, 5])
     expect(parseEdgeKey(edgeKey(1, 3006))).toEqual([1, 3006])
+  })
+
+  it('throws before pair keys can collide', () => {
+    expect(() => edgeKey(1, MAX_TOKEN_ID + 1)).toThrow(RangeError)
+    expect(parseEdgeKey(edgeKey(MAX_TOKEN_ID - 1, MAX_TOKEN_ID))).toEqual([MAX_TOKEN_ID - 1, MAX_TOKEN_ID])
   })
 
   it('(a) 5 tokens in one unit: all 10 pairs, weight 1/d for distance d <= W=4', () => {
@@ -103,6 +107,14 @@ describe('tally', () => {
     const res = tally([u1, u2])
     expect(res.pairs.get(edgeKey(1, 2))?.nX.get(10)).toBe(1)
     // genuinely new adjacent pairs still appear
+    expect(res.pairs.get(edgeKey(2, 3))?.nX.get(10)).toBe(0.7)
+  })
+
+  it('adjacent messages count a repeated cross pair once', () => {
+    const u1: RawUnit = { id: 1, authorId: 10, dateMs: 1000, replyTo: null, tokens: new Uint32Array([1, 2, 1]) }
+    const u2: RawUnit = { id: 2, authorId: 10, dateMs: 2000, replyTo: null, tokens: new Uint32Array([3]) }
+    const res = tally([u1, u2])
+    expect(res.pairs.get(edgeKey(1, 3))?.nX.get(10)).toBe(0.7)
     expect(res.pairs.get(edgeKey(2, 3))?.nX.get(10)).toBe(0.7)
   })
 
@@ -264,14 +276,7 @@ const CFG: FilterCfg = {
   smartMerge: false,
 }
 
-// uncached oracle: buildUnits + tally with the same drop rules as worker.ts runPipeline
-const dropFor = (cfg: FilterCfg) => (t: Tok) =>
-  (!cfg.tech && t.cls === 'tech') ||
-  (!cfg.digits && t.cls === 'digits') ||
-  (!cfg.stopwords && isStopword(t.word)) ||
-  (!cfg.mat && matchesMat(t.word, cfg.customMat)) ||
-  (!cfg.laugh && matchesLaugh(t.word, cfg.customLaugh))
-
+// uncached oracle: buildUnits + tally with the production drop rules
 const oracle = (chat: ChatExport, cfg: FilterCfg) => {
   const ia = new Intern()
   return { ia, tallyResult: tally(buildUnits(chat, ia, dropFor(cfg))) }
@@ -418,6 +423,43 @@ describe('PipelineCache', () => {
     expect(onTokenizeProgress.mock.calls).toEqual([[5000, 5005]])
   })
 
+  it('keeps a second filter slot so an A->B->A toggle recomputes once', () => {
+    const cache = new PipelineCache()
+    const cfgA = { ...CFG, smartMerge: true }
+    const cfgB = { ...cfgA, mat: true }
+    cache.resolve(chat, cfgA)
+
+    const onTally = vi.fn()
+    const onMerge = vi.fn()
+    cache.resolve(chat, cfgB, { onTallyStart: onTally, onMergeStart: onMerge })
+    expect(onTally).toHaveBeenCalledTimes(1)
+    expect(onMerge).toHaveBeenCalledTimes(1)
+
+    // Coming back must reuse the first slot instead of paying for the tally again.
+    const back = cache.resolve(chat, cfgA, { onTallyStart: onTally, onMergeStart: onMerge })
+    expect(onTally).toHaveBeenCalledTimes(1)
+    expect(onMerge).toHaveBeenCalledTimes(1)
+    expect(back).toMatchObject({ tallyCached: true, mergeCached: true })
+    expect(back.tallyResult).toEqual(oracle(chat, cfgA).tallyResult)
+  })
+
+  it('evicts the least recently used filter slot beyond the cap', () => {
+    const cache = new PipelineCache()
+    const cfgB = { ...CFG, mat: true }
+    const cfgC = { ...CFG, laugh: true }
+    cache.resolve(chat, CFG)
+    cache.resolve(chat, cfgB)
+    // The third distinct filter key drops the least recently used one (CFG).
+    cache.resolve(chat, cfgC)
+
+    const onTally = vi.fn()
+    cache.resolve(chat, cfgB, { onTallyStart: onTally })
+    expect(onTally).not.toHaveBeenCalled()
+
+    cache.resolve(chat, CFG, { onTallyStart: onTally })
+    expect(onTally).toHaveBeenCalledTimes(1)
+  })
+
   it('matches the uncached buildUnits + tally result across a sequence of filter changes', () => {
     const cache = new PipelineCache()
     const cfgs: FilterCfg[] = [
@@ -433,5 +475,28 @@ describe('PipelineCache', () => {
       expect(got.tallyResult).toEqual(want.tallyResult)
       expect(got.ia.idToCanon).toEqual(want.ia.idToCanon)
     }
+  })
+
+  it('не вливает редкую форму в частотное самостоятельное слово корпуса', () => {
+    // The corpus is the dictionary: 30 standalone «меня» must not swallow the two
+    // rare verb forms that stem to the same four letters (see canon.ts).
+    const chat: ChatExport = {
+      name: 'stem',
+      chatType: 'personal_chat',
+      messages: [
+        ...Array.from({ length: 30 }, (_, i) => textMsg(i + 1, 1, 'меня тут')),
+        textMsg(31, 2, 'менять план'),
+        textMsg(32, 2, 'меняет вид'),
+      ],
+    }
+    const { ia } = new PipelineCache().resolve(chat, CFG)
+    const idOf = (form: string): number | undefined => {
+      for (const [id, forms] of ia.forms) if (forms.has(form)) return id
+      return undefined
+    }
+    const pronoun = idOf('меня')
+    expect(pronoun).toBeDefined()
+    expect(idOf('менять')).not.toBe(pronoun)
+    expect(idOf('меняет')).not.toBe(pronoun)
   })
 })

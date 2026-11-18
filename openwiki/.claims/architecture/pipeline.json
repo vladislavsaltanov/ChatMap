@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:74dca15a1868d50bdce13de3aa741905d1e202e71a979a63fb14ba77565fc288",
+  "pageVersion": "sha256:f3b62692daaa9e7149907590ba861bbaae0d874e6d55bc1ad08adf17620a9265",
   "claims": [
     {
       "id": "claim_38a215f5a5744f39b6f3ca39f791a5ad",
@@ -8,7 +8,7 @@
       "evidence": [
         {
           "resource": "repo://src/core/parse.ts",
-          "version": "repo-file-v1:sha256:b866e5a9eeb2a5e11ecc1db49d7595a49b572bfa13442c85c6a8f8ef4ee5d984"
+          "version": "repo-file-v1:sha256:5426d0c712750b9719d4f4110143e970094bb65923789271bf993d44c84b9806"
         }
       ]
     },
@@ -24,15 +24,15 @@
     },
     {
       "id": "claim_1725bb91683548659b92fe5249045c8a",
-      "statement": "canon — стеммер по окончаниям без словарей, Intern присваивает каноническим формам числовые id и копит карту поверхностных форм с частотами",
+      "statement": "canon — стеммер по окончаниям без словарей с защитой STEM_DOMINANCE от ложных склеек; Intern присваивает id с явным пределом диапазона и копит карту поверхностных форм",
       "evidence": [
         {
-          "resource": "repo://src/core/canon.ts",
-          "version": "repo-file-v1:sha256:02e9149be3c02bc172027e58bb303dff2dab37d1d067fa045c6818c4537fd918"
+          "resource": "repo://src/core/canon.ts#L40-L48",
+          "version": "repo-lines-v1:sha256:cabc45b604b8ff0b7b48fe6823e869948b72d8ad86e9c67f900f563117fad988:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMWI5ZjUzODE1NDE2OWRlZWJkYWQ3MTBiYjM3MjkwMjhkMzAzNjg3MzkxYzEyMzBhZjg5NmUxZDJmOGZmNGQ0ZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNjQxOGY5OGRmYjU2YTEzNzMzOTdlYWY3NTM2MWUwZWYzMDllN2RiNjRmOTg0YjIyN2IwYzczYjRkYTc4MDE5NyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiODUxOGJiYzQzMDAyN2EwZjU5MzllMzU0MjZkZTk4YmQxOTgxZjdkNjY4MWU1MjMxNzU5YjY3ZTQ2OGIxOTM3NyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMDE4NGU0YzAwYTA2YTUwOTIyYzRhZjliMGQzY2Y0MzEwNzkwYTJmZWQ4YmVlNGQyMDY3OTVhMmJlMTQ4NzFjMyJ9"
         },
         {
-          "resource": "repo://src/core/intern.ts",
-          "version": "repo-file-v1:sha256:6212f7823acff966dc8232f083323b634f45dad0c2ab8e5d182ccce8acaed4a1"
+          "resource": "repo://src/core/intern.ts#L5-L30",
+          "version": "repo-lines-v1:sha256:7b6b26d5ab8989f20f10f946531d526e6aa445f7492b900782923bd346acc866:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYwZWUwYzkyZWY2NzlhZTMzN2UwNGZjMGM3ZDQwNDExMTEwZGY5YjJkY2JkYjk5NGVmMWYzMDI0YjBmNjZmNzciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA1ODkyZjJjODIxZTAxYmUzY2ZhZTUwYTkyOGU4OWQ2NDZmM2VmYWNlN2JlNmNhNDFiM2UwMjdmYTVkNzYyNWYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk5YzRiZWU5NDYzMmFkMWJlOWNmZmUxMWM3MzhkN2FjNWVhZWM0YzA1MDFiYmI0Mzc4MTY4Y2JmNzY1MjFiN2MiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRjOTRkYzYyMDIyY2QzYjZjYmViNzI1ZGNkMmIxOTYwYjhiM2M1Y2ZmZTY0ZDNjZWJjNGJmYjNkYjAxMDVkZjgifQ"
         }
       ]
     },
@@ -42,17 +42,21 @@
       "evidence": [
         {
           "resource": "repo://src/core/filters.ts",
-          "version": "repo-file-v1:sha256:0d6aa8e7d3dc658dff9c97cd592e679571f477ee91f27b7c8ff95107b98a87c7"
+          "version": "repo-file-v1:sha256:6de14392d1b43cdbd8a1491f15b797033162bd8c3121e6977b5de1de3c186910"
         }
       ]
     },
     {
       "id": "claim_1ade1c7357704687b5a84bc6bd846897",
-      "statement": "tally строит counts по авторам и pairs с затуханием 1/d в окне 4; reply весит 1.0, соседние сообщения до 10 минут — 0.7, большой разрыв — без связи",
+      "statement": "tally строит counts по авторам и pairs с затуханием 1/d в окне 4; reply весит 1.0, соседние сообщения — 0.7; PipelineCache держит токенизацию одну на чат и по два слота tally/merge на фильтры",
       "evidence": [
         {
-          "resource": "repo://src/core/tally.ts",
-          "version": "repo-file-v1:sha256:6635c456c0032a68274ec06b1f245611672d01f1ee7d80cff854bb3d2bdb650a"
+          "resource": "repo://src/core/tally.ts#L370-L380",
+          "version": "repo-lines-v1:sha256:bfee35192b8486b2cac724dc77824250fd648b934f1e4dc2e0d3f428052a104a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUyMmZhYTUzNWJkMmVhM2Q1MmU3NDFlZDQ1NDQzNWI3ZmU0OWU4MzU4NmU5NDNkOThkODJiYmZiMjRkMWY1YzUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc0ODU0YjczZmM1MDc1ZGM2YTc0ODYwNjg1Yzk2ZWE2MjYzYmU4MTZhNzBlOTljNzZlNzcxYjI0NzJhNWUxYWQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIwNDliNjBiNjQ2ZThmZjk4YjliYTc2YzE0NmE5ZmNkMzllODQyZjY2YmVlMTQxYzkwNzMxODAxODRiNjI3MDUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY4MGM3M2U0OGYwODZiMTRjNWJiOGEyZjRmMGVkNDIwMDU3OTE1ZjRhOWYyYzhhY2U3OTMyNjRmZTgzZjUwYTkifQ"
+        },
+        {
+          "resource": "repo://src/core/tally.ts#L7-L12",
+          "version": "repo-lines-v1:sha256:041dd30aa4a351420c9e1f8ba965f832779ec33ba629259bcb745068e1829f7f:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiODIzNTMzZDk4ZjY1NGQ5MTZkNDQwN2Y0NTk2NGM5NWQ4NTA3NTNmZDhiMDRjMzI1ODJjMGZkZjY4ZjU5NGI3OCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMmE0NjgyMmI4NWRlMmQyZTBhNzRiZTUwYWIyYTMxNzQ3MDQwYmFiMDM3NDM1ODFjZmQ1ZTFkMDc1Yzc0NWE5NyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOGM1ODc4ODljYjM4ZTI1ZWRjNjNlMzk2NWM0N2ExOWNhYzRhOTM1Y2E4MWVkOWM2NDcwOTJmOWRiYjI0M2I2MCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNjBiMzE5NmQ2MGY4YWYxMjg5OTc5NzBjYmFiOTI3MGRmNTVjMjMwYmNmYTg2ODBmNzM0YmVjNjM3NWMyNGI5OCJ9"
         }
       ]
     },
@@ -69,6 +73,6 @@
   ],
   "verification": {
     "by": "openwiki/0.9.0",
-    "at": "2026-11-09T15:02:00.342Z"
+    "at": "2026-11-15T11:24:14.683Z"
   }
 }

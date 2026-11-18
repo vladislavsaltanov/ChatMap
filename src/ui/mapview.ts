@@ -1,12 +1,12 @@
 import Graph from 'graphology'
 import Sigma from 'sigma'
 import { drawOnCanvas } from '@sigma/export-image'
-import { coreFrac, edgeColor, edgeWidth, fisheyePoint, labelZoomRatio, phaseFor, renderedNodeSize, visualCoreRadius, type FisheyeConfig } from '../core/geometry'
+import { coreFrac, edgeColor, edgeWidth, egoNodeScale, fisheyeGain, fisheyePoint, labelZoomRatio, phaseFor, quadOf, renderedNodeSize, visualCoreRadius, type FisheyeConfig } from '../core/geometry'
 import { resolveLabelBackdrops, resolveLabelBoxes, type LabelBox, type LabelCircle } from '../core/labels'
 import { LEGEND_TEXT } from '../core/legend'
 import type { AuthorId, MapMsg } from '../core/types'
 import { buildNodeDetails, getLabelOverrides, NodePanel } from './nodepanel'
-import { MAP_SIGMA_SETTINGS, MAP_SIGMA_STYLES } from './mapStyles'
+import { ENTER_TOTAL_MS, labelFontPxFor, labelIsLegible, MAP_SIGMA_SETTINGS, MAP_SIGMA_STYLES } from './mapStyles'
 import { DEFAULT_NODE_COLOR, NEURAL_PRIMITIVES, PLATE_COLOR, setNeuralTime } from './neural'
 import { drawLegend } from './legend'
 import { SubgraphAnimator } from './subgraphAnim'
@@ -15,14 +15,37 @@ import type { CustomEdgeState, CustomGraphState, CustomNodeState } from './mapSt
 
 type ViewState = { x: number; y: number; ratio: number; angle: number }
 const FLAT_VIEW: ViewState = { x: 0.5, y: 0.5, ratio: 1, angle: 0 }
+// Growth ramp of the focused body. Fast enough to feel like a response to the
+// pointer, slow enough that the 12% boost arrives as motion instead of a jump.
+const GROW_MS = 110
+
+// p90 of the drawn cores: the caption bar for THIS map, i.e. only the top decile by
+// body earns a name at the overview. A fixed px threshold cannot serve a 30-word and
+// a 1000-word map — measured: at 12px captions a 600-word map rendered 221 captions,
+// a name on almost every dot.
+function labelCoreBar(graph: Graph): number {
+  const cores: number[] = []
+  graph.forEachNode((_key, attrs) => {
+    if (!attrs.label) return
+    cores.push(visualCoreRadius((attrs.size as number) ?? 0))
+  })
+  // Guard: an empty map (or one without labels) keeps the default bar.
+  if (cores.length === 0) return 6
+  cores.sort((a, b) => a - b)
+  return Math.max(5, cores[Math.min(cores.length - 1, Math.floor(cores.length * 0.9))])
+}
 
 export class MapView {
   private container: HTMLElement
-  private hoverLine: HTMLElement
+  // Transient progress caption inside the canvas; hover feedback is the node
+  // panel now, so there is no always-on status row under the map.
+  private statusEl: HTMLElement
   private progressEl: HTMLElement
   private legendCanvas: HTMLCanvasElement
   private legendVisible = true
   private graph: Graph
+  // Published to the styles as `labelCoreMin`; see labelCoreBar().
+  private labelCoreMin = 6
   private renderer: Sigma<any, any, any, CustomNodeState, CustomEdgeState, CustomGraphState> | null = null
   private pinnedId: number | null = null
   private highlight: SubgraphHighlight
@@ -35,16 +58,18 @@ export class MapView {
   private layoutRaf: number | null = null
   private idleTimer: number | null = null
   private animator = new SubgraphAnimator((v) => {
-    this.renderer?.setGraphState({ dimAlpha: v.dim, focusAlpha: v.focus, releaseAlpha: v.release, enterAlpha: v.enter })
+    // Every tweened field must be forwarded: a field nobody writes stays at its
+    // start value in the graph state and its style function never moves.
+    this.renderer?.setGraphState({
+      dimAlpha: v.dim,
+      focusAlpha: v.focus,
+      releaseAlpha: v.release,
+      growAlpha: v.grow,
+      enterAlpha: v.enter,
+      promote: v.promote,
+    })
     this.renderer?.refresh({ skipIndexation: true })
   })
-
-  private labelLine(id: number): string {
-    const key = String(id)
-    if (!this.graph.hasNode(key)) return 'слово · 0'
-    const attrs = this.graph.getNodeAttributes(key)
-    return `${attrs.label} · ${attrs.count}`
-  }
 
   private cancelIdleTimer(): void {
     if (this.idleTimer !== null) {
@@ -70,7 +95,6 @@ export class MapView {
     this.idleTimer = window.setTimeout(() => {
       this.idleTimer = null
       if (this.pinnedId === null && this.subgraphKey !== null) {
-        this.hoverLine.textContent = 'слово · 0'
         this.fadeToIdle()
       }
     }, 50)
@@ -80,6 +104,9 @@ export class MapView {
   private fadeToIdle(): void {
     this.cancelIdleTimer()
     this.subgraphKey = null
+    // The boosted body hands its growth back on the same beat as the dim: leaving
+    // a word must never snap it down to its resting size.
+    this.animator.to('grow', 0, 120)
     this.animator.to('focus', 0, 100)
     this.animator.to('dim', 0, 120, () => {
       if (this.subgraphKey === null) {
@@ -91,26 +118,113 @@ export class MapView {
     })
   }
 
-  // Focus ego-subgraph: snaps instantly (1 frame) when moving between nodes, avoids animation queue latency
-  private focusSubgraph(key: string, topN: number): void {
+  // New map must not inherit hover/pin visuals: drop highlight states,
+  // snap tweens to zero, and clear the active-subgraph graph state.
+  private resetInteractionState(): void {
+    this.highlight.clear(this.renderer)
+    this.animator.jump('dim', 0)
+    this.animator.jump('focus', 0)
+    this.animator.jump('release', 0)
+    this.animator.jump('grow', 0)
+    this.animator.jump('promote', 0)
+    this.pinnedId = null
+    this.subgraphKey = null
+    this.renderer?.setGraphState({
+      hasActiveSubgraph: false,
+      dimAlpha: 0,
+      focusAlpha: 0,
+      releaseAlpha: 0,
+      growAlpha: 0,
+      pinActive: false,
+    })
+  }
+
+  // Focus ego-subgraph: the fan itself snaps (1 frame) when moving between nodes,
+  // avoids animation queue latency.
+  // `labelBudget` bounds only the neighbours whose captions are forced; every link
+  // of the word is lit and tiered by weight (see SubgraphHighlight.swap).
+  private focusSubgraph(key: string, labelBudget: number): void {
     this.cancelIdleTimer()
     const alreadyActive = this.animator.value('dim') > 0.4
+    // The crowd around the word is cleared GEOMETRICALLY, by distance to this node:
+    // publish where it is and how wide its disc is, in px (the unit node sizes use).
+    this.publishFocusPoint(key)
+    // Re-pinning the word that is already focused must not restart its growth:
+    // jumping the ramp back to zero would shrink that body for a single frame.
+    const retarget = this.highlight.centerKey() !== key
+    // Growth the outgoing word had already reached: its release fade starts there,
+    // so a fast sweep across words never lifts a body before shrinking it.
+    const handed = retarget ? this.animator.value('grow') : 0
     this.highlight.flushReleased(this.renderer)
-    this.highlight.swap(this.renderer, key, topN)
+    this.highlight.swap(this.renderer, key, labelBudget, this.inFrameTest())
+
+    if (retarget) {
+      this.animator.jump('grow', 0)
+      // The growth must be SEEN, not merely scheduled. The first painted frame of
+      // a focus change is the expensive one (lit fan, forced captions, label
+      // atlas) — measured at ~170ms on a software rasterizer — and a ramp started
+      // inside it is over before a single step is drawn. Start on the frame after.
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          if (this.highlight.centerKey() === key) this.animator.to('grow', 1, GROW_MS)
+        }),
+      )
+    } else if (this.animator.value('grow') < 1) {
+      // The same word is lit again while its idle tween is still shrinking it:
+      // resume the growth instead of letting that tween shade a focused body.
+      this.animator.to('grow', 1, GROW_MS)
+    }
 
     if (alreadyActive) {
       // Rapid hover across nodes: snap active subgraph in 1 frame without animation queue lag
       this.animator.jump('dim', 1)
       this.animator.jump('focus', 1)
-      this.animator.jump('release', 0)
+      this.animator.jump('release', handed)
+      this.animator.to('release', 0, GROW_MS, () => this.highlight.flushReleased(this.renderer))
     } else {
       // Initial entry from idle: snappy 90ms entry
-      this.animator.jump('release', 1)
-      this.animator.to('release', 0, 90, () => this.highlight.flushReleased(this.renderer))
+      this.animator.jump('release', 0)
       this.animator.to('focus', 1, 90)
       this.animator.to('dim', 1, 100)
     }
     this.scheduleLayout()
+  }
+
+  // Query: is this node inside the current frame (plus a margin)? Hovering a word
+  // at a close-up must rank its visible neighbours first — the globally heaviest
+  // links all point off the canvas there, so the ego network looked empty until
+  // the user nudged the wheel to zoom out.
+  // Command: publish the selected word's position and disc radius so the styles can
+  // clear the bodies touching it. One graph-state write per focus change; the
+  // camera factor is read here because styles never see the camera.
+  private publishFocusPoint(key: string): void {
+    const r = this.renderer
+    if (!r || !this.graph.hasNode(key)) return
+    const a = this.graph.getNodeAttributes(key)
+    const p0 = r.graphToViewport({ x: 0, y: 0 })
+    const p1 = r.graphToViewport({ x: 1, y: 0 })
+    r.setGraphState({
+      focusX: (a.x as number) ?? 0,
+      focusY: (a.y as number) ?? 0,
+      // Contact band: the drawn disc plus a breath of its aura.
+      focusReach: visualCoreRadius((a.size as number) ?? 0) * 1.15,
+      focusPxPerUnit: Math.max(1e-6, Math.hypot(p1.x - p0.x, p1.y - p0.y)),
+    })
+  }
+  private inFrameTest(): (nodeKey: string) => boolean {
+    const r = this.renderer
+    if (!r) return () => true
+    const cam = r.getCamera().getState()
+    const dims = r.getDimensions()
+    const margin = Math.min(dims.width, dims.height) * 0.15
+    const fisheye = r.getGraphState() as FisheyeConfig
+    return (nodeKey: string): boolean => {
+      // Guard: a key from a stale diff must not throw mid-hover.
+      if (!this.graph.hasNode(nodeKey)) return false
+      const attrs = this.graph.getNodeAttributes(nodeKey)
+      const p = r.graphToViewport(fisheyePoint(attrs.x, attrs.y, fisheye), { cameraState: cam })
+      return p.x >= -margin && p.y >= -margin && p.x <= dims.width + margin && p.y <= dims.height + margin
+    }
   }
 
   constructor(root: HTMLElement) {
@@ -119,9 +233,9 @@ export class MapView {
         <canvas class="map-legend" role="img"></canvas>
         <div class="plate" aria-hidden="true">
           <i></i><i></i><i></i><i></i>
-          <span>Карта слов · совместная встречаемость · лист 01</span>
         </div>
         <div class="map-progress" hidden></div>
+        <p class="map-status label" role="status" hidden></p>
       </div>
       <div class="map-controls">
         <button type="button" id="export-png" aria-label="Экспорт в PNG" class="num">PNG</button>
@@ -129,11 +243,10 @@ export class MapView {
         <button type="button" id="zoom-out" aria-label="Отдалить">−</button>
         <button type="button" id="zoom-reset" aria-label="В центр">⊙</button>
       </div>
-      <p class="hover-line label">слово · 0</p>
     `
 
     this.container = root.querySelector<HTMLElement>('.canvas')!
-    this.hoverLine = root.querySelector<HTMLElement>('.hover-line')!
+    this.statusEl = root.querySelector<HTMLElement>('.map-status')!
     this.progressEl = root.querySelector<HTMLElement>('.map-progress')!
     this.legendCanvas = root.querySelector<HTMLCanvasElement>('.map-legend')!
     this.legendCanvas.setAttribute('aria-label', LEGEND_TEXT)
@@ -148,12 +261,10 @@ export class MapView {
       if (this.graph.hasNode(key)) {
         this.graph.setNodeAttribute(key, 'label', label)
       }
-      if (this.pinnedId === id) {
-        this.hoverLine.textContent = this.labelLine(id)
-      }
       this.renderer.refresh({ skipIndexation: true })
     })
     this.nodePanel.onPhoto(() => { void this.downloadNodePhoto() })
+    this.nodePanel.onCenter(() => { this.frameEgo() })
 
     const exportBtn = root.querySelector<HTMLButtonElement>('#export-png')!
     const zoomInBtn = root.querySelector<HTMLButtonElement>('#zoom-in')!
@@ -162,6 +273,8 @@ export class MapView {
 
     exportBtn.addEventListener('click', () => {
       if (!this.renderer) return
+      // SAFETY: drawOnCanvas types the renderer by its own sigma version; ours is
+      // the same runtime object, only the generic parameters differ.
       void drawOnCanvas(this.renderer as unknown as Parameters<typeof drawOnCanvas>[0], {
         backgroundColor: 'rgba(0, 0, 0, 0)',
       }).then((graph) => {
@@ -244,11 +357,17 @@ export class MapView {
         dimAlpha: 0,
         focusAlpha: 0,
         releaseAlpha: 0,
+        growAlpha: 0,
+        focusX: 0,
+        focusY: 0,
+        focusReach: 0,
+        focusPxPerUnit: 0,
         enterAlpha: 1,
         lodRatio: 1,
         cameraRatio: 1,
         mapDensity: 0,
         pinActive: false,
+        promote: 0,
         photoMode: false,
         labelBlocked: new Set<string>(),
         labelBackdrop: new Set<string>(),
@@ -265,11 +384,17 @@ export class MapView {
       dimAlpha: 0,
       focusAlpha: 0,
       releaseAlpha: 0,
+      growAlpha: 0,
+      focusX: 0,
+      focusY: 0,
+      focusReach: 0,
+      focusPxPerUnit: 0,
       enterAlpha: 1,
       lodRatio: 1,
       cameraRatio: 1,
       mapDensity: 0,
       pinActive: false,
+      promote: 0,
       photoMode: false,
       labelBlocked: new Set<string>(),
       labelBackdrop: new Set<string>(),
@@ -291,13 +416,13 @@ export class MapView {
       }
     })
     if (import.meta.env.DEV) {
+      // SAFETY: dev-only hook, the property is read by the local test harness.
       const devWindow = window as unknown as { __mapview?: MapView }
       devWindow.__mapview = this
     }
 
     const handleNodeEnter = (nodeKey: string) => {
       this.cancelIdleTimer()
-      this.hoverLine.textContent = this.labelLine(Number(nodeKey))
       if (this.pinnedId === null && this.subgraphKey !== nodeKey) {
         this.subgraphKey = nodeKey
         this.focusSubgraph(nodeKey, 8)
@@ -342,9 +467,11 @@ export class MapView {
 
   // Dense maps are treated as slightly zoomed out, so small-node dust fades earlier.
   // Only affects LOD opacity/labels; Sigma scales real sizes by the true camera ratio.
+  // Capped at 1.3: the old (order/300)^0.8 reached 2.63 on a 1000-word map and hid a
+  // quarter of the nodes at the default view, which is why the figure disappeared.
   private lodBoost(): number {
     const order = this.graph.order
-    return order > 300 ? Math.pow(order / 300, 0.8) : 1
+    return order > 300 ? Math.min(1.3, Math.sqrt(order / 300)) : 1
   }
 
   // Approximate label boxes and marker discs in screen px, mirroring Sigma's
@@ -362,20 +489,39 @@ export class MapView {
     const margin = (r.getPrimitives()?.nodes?.label?.margin as number | undefined) ?? 5
     const boxes: LabelBox[] = []
     const circles: LabelCircle[] = []
+    // LOD gate replicated from the node style. Reading `getNodeDisplayData` here
+    // closed a feedback loop — layout -> display data -> layout — and captions
+    // flickered across zoom steps: the same camera could yield two different
+    // blocked sets one frame apart.
+    const effective = cam.ratio * this.lodBoost()
+    const graphState = r.getGraphState()
+    const dimming = (graphState.dimAlpha ?? 0) > 0
+    // Captions visible on the previous frame are sticky: they keep their slot
+    // under a tighter clearance, so a couple of pixels of camera drift cannot
+    // evict them and bring them back on the next zoom step.
+    const prevBlocked = graphState.labelBlocked
 
     for (const key of this.graph.nodes()) {
       const a = this.graph.getNodeAttributes(key)
-      const d = r.getNodeDisplayData(key)
-      if (!a.label || d?.visibility === 'hidden') continue
+      if (!a.label) continue
+      // A caption that is already fading out must not take a slot in the resolver:
+      // it would pop in for a couple of zoom steps and vanish again.
+      if (!labelIsLegible(a, cam.ratio, this.labelCoreMin)) continue
       const core = visualCoreRadius((a.size as number) ?? 0)
       if (renderedNodeSize(core, cam.ratio) < 2) continue
+      // baseNodeVisibility(): nothing is hidden while an ego-network is focused.
+      if (!dimming && renderedNodeSize(core, effective) < 2) continue
 
       // Obel Mono has a fixed 0.600 em advance in every weight, so this is an
-      // exact width estimate rather than the old 0.62 heuristic.
-      const fs = ((d?.labelSize as number) ?? 18.5) * zk
+      // exact width estimate rather than the old 0.62 heuristic. The kegel keeps
+      // the caption at its designed size on screen at every zoom level, and the
+      // per-node base comes from the SAME function the style uses (a small dot
+      // carries a small word).
+      const fs = labelFontPxFor(a)
       const w = Math.max(8, String(a.label).length * fs * 0.6)
       const h = fs * 1.25
-      const rad = r.scaleSize((d?.size as number) ?? 0)
+      // Sigma offsets the caption by the drawn quad radius (core + aura).
+      const rad = renderedNodeSize(quadOf(core), cam.ratio)
       // Captions must use the SAME displaced position as the marker, otherwise
       // the collision grid drifts away from the words actually on screen.
       const pos = r.graphToViewport(fisheyePoint(a.x, a.y, fisheye), { cameraState: cam })
@@ -391,6 +537,7 @@ export class MapView {
         w,
         h,
         priority: core + forced,
+        sticky: !prevBlocked?.has(key),
       })
     }
     // A wider breathing gap keeps the earlier-appearing captions readable
@@ -483,8 +630,10 @@ export class MapView {
     const layout = this.computeLabelLayout(cam, fisheye)
     const effective = ratio * this.lodBoost()
     // A 30-node map has no visual noise; a 600-node one does. LOD suppression
-    // scales with map density so small chats stay fully detailed.
-    const mapDensity = Math.max(0, Math.min(1, (this.graph.order - 50) / 350))
+    // scales with map density so small chats stay fully detailed. The ramp
+    // saturates at 600 nodes instead of 400: at 400-600 the map still has room
+    // for structure, and hiding its dust there was pure loss.
+    const mapDensity = Math.max(0, Math.min(1, (this.graph.order - 50) / 550))
     const state = r.getGraphState()
     const applied = state.lodRatio ?? 1
     const sameLod = Math.abs(effective - applied) / Math.max(effective, applied) < 0.01
@@ -501,6 +650,7 @@ export class MapView {
     r.setGraphState({
       lodRatio: effective,
       cameraRatio: ratio,
+      labelCoreMin: this.labelCoreMin,
       mapDensity,
       labelBlocked: layout.blocked,
       labelBackdrop: layout.backdrop,
@@ -510,13 +660,30 @@ export class MapView {
     r.refresh({ skipIndexation: true })
   }
 
+  // A failed open leaves no chat in the worker (it resets first), so the drawn
+  // map must not outlive it: the next filter would hit a worker that ignores
+  // it and the view would claim words the worker no longer has.
+  clear(): void {
+    this.resetInteractionState()
+    this.cancelIdleTimer()
+    this.graph.clear()
+    this.lastMsg = null
+    this.transitHidden = new Set<string>()
+    this.authorColors = new Map()
+    this.nodePanel.hide()
+    this.hideProgress()
+    this.renderer?.refresh()
+  }
+
   render(msg: MapMsg): void {
+    // A re-render of the same map (filter update) must not replay the whole
+    // entrance wave: only a fresh chat gets the staggered assembly.
+    const hadMap = this.graph.order > 0
+    this.resetInteractionState()
     this.cancelIdleTimer()
     this.lastMsg = msg
     this.graph.clear()
     this.transitHidden = new Set<string>()
-    this.highlight.reset()
-    this.subgraphKey = null
 
     const overrides = getLabelOverrides()
 
@@ -597,23 +764,28 @@ export class MapView {
       }
     }
 
+    // Caption bar for this map: computed once per render, published by applyView.
+    this.labelCoreMin = labelCoreBar(this.graph)
     if (!this.renderer) {
       this.initRenderer()
     } else {
       this.renderer.refresh()
     }
 
-    if (this.pinnedId !== null) {
-      this.pin(this.pinnedId)
-    } else {
-      this.renderer?.getCamera().reset()
-    }
+    // resetInteractionState() nulls pinnedId at the top of render, and only
+    // click handlers re-pin, so there is nothing to restore here.
+    this.renderer?.getCamera().reset()
     this.applyView(this.renderer?.getCamera().getState() ?? FLAT_VIEW)
     // Fonts are loaded by the time a map arrives; repaint with the real face.
     this.paintLegend()
-    // Fresh map fades in instead of popping: restart the enter tween.
-    this.animator.jump('enter', 0)
-    this.animator.to('enter', 1, 600)
+    // Fresh map fades in instead of popping: restart the staggered enter tween
+    // (per-node offsets and scale live in mapStyles).
+    if (hadMap) {
+      this.animator.jump('enter', 1)
+    } else {
+      this.animator.jump('enter', 0)
+      this.animator.to('enter', 1, ENTER_TOTAL_MS)
+    }
   }
 
   renderAuthors(colors: Map<AuthorId, string>): void {
@@ -634,14 +806,17 @@ export class MapView {
     if (!this.renderer) return
 
     const active = id !== null && this.graph.hasNode(String(id))
-    // A pin (unlike a hover) forces labels across the whole ego-network.
+    // A pin owes to no hover animation: it must own the top layer before the
+    // first frame of its lift.
     this.renderer.setGraphState({ pinActive: active })
+    // The lift itself: 0 is the resting size, 1 the promoted one. Re-pinning
+    // another word while the lift is up is a no-op, not a snap back to zero.
+    this.animator.to('promote', active ? 1 : 0, active ? 220 : 160)
 
     if (active) {
       const key = String(id)
       this.subgraphKey = key
       this.focusSubgraph(key, 12)
-      this.hoverLine.textContent = this.labelLine(id)
 
       const rawForms = this.lastMsg?.forms
       const forms = rawForms instanceof Map
@@ -653,12 +828,170 @@ export class MapView {
       }
     } else {
       this.fadeToIdle()
-      this.hoverLine.textContent = 'слово · 0'
       this.nodePanel.hide()
     }
 
     this.renderer.refresh({ skipIndexation: true })
     this.scheduleLayout()
+  }
+
+  // Query: ego members in both spaces — graph units for the fisheye math,
+  // framed units for the camera. Caption width mirrors the collision resolver.
+  private egoPoints(r: NonNullable<MapView['renderer']>, key: string): Array<{ gx: number; gy: number; fx: number; fy: number; quad: number; scale: number; capW: number; capH: number }> {
+    return [key, ...this.graph.neighbors(key)].map((nodeKey) => {
+      const attrs = this.graph.getNodeAttributes(nodeKey)
+      const gx = (attrs.x as number) ?? 0
+      const gy = (attrs.y as number) ?? 0
+      const framed = r.graphToFramedGraph({ x: gx, y: gy })
+      const fs = labelFontPxFor(attrs)
+      // Quad, not core: captions anchor to the quad, and the pinned word's
+      // quad rides the grow+promote lift (egoNodeScale at rest).
+      const scale = nodeKey === key ? egoNodeScale(1, 1) : egoNodeScale(0, 0)
+      return { gx, gy, fx: framed.x, fy: framed.y, quad: quadOf(visualCoreRadius((attrs.size as number) ?? 0)), scale, capW: String(attrs.label ?? '').length * fs * 0.6, capH: fs * 1.25 }
+    })
+  }
+
+  // Query: px taken by overlay panels on each side of the canvas. Those panels
+  // float OVER the map, so a word inside the canvas but under one of them is not
+  // visible — the fit must target the free rect, not the whole canvas.
+  private overlayInsets(): { l: number; t: number; r: number; b: number } {
+    const out = { l: 0, t: 0, r: 0, b: 0 }
+    const root = this.container.parentElement
+    if (!root) return out
+    const canvas = this.container.getBoundingClientRect()
+    // Breathing room between the frame and a panel edge.
+    const gap = 12
+    for (const sel of ['.drawer', '.nodepanel']) {
+      const el = root.querySelector<HTMLElement>(sel)
+      if (!el || el.hidden) continue
+      const box = el.getBoundingClientRect()
+      // Guard: a collapsed or off-screen panel carves nothing out.
+      if (box.width < 24 || box.height < 24) continue
+      const leftGap = box.left - canvas.left
+      const rightGap = canvas.right - box.right
+      // Side-agnostic: whichever edge the panel hugs earns the inset.
+      if (leftGap <= rightGap) out.l = Math.max(out.l, leftGap + box.width + gap)
+      else out.r = Math.max(out.r, rightGap + box.width + gap)
+    }
+    return out
+  }
+
+  // Query: frame (framed center + ratio) fitting the pinned ego-network with
+  // fisheye displacement, bodies and captions inside. Null ratio = linkless
+  // word: centering alone, zoom untouched. Side-effect free: conversions only.
+  private egoFrame(r: NonNullable<MapView['renderer']>, key: string): { x: number; y: number; ratio: number | null } {
+    const cam = r.getCamera().getState()
+    const pts = this.egoPoints(r, key)
+    let minX = Infinity
+    let maxX = -Infinity
+    let minY = Infinity
+    let maxY = -Infinity
+    let maxCapW = 0
+    let maxCapH = 0
+    for (const p of pts) {
+      if (p.fx < minX) minX = p.fx
+      if (p.fx > maxX) maxX = p.fx
+      if (p.fy < minY) minY = p.fy
+      if (p.fy > maxY) maxY = p.fy
+      if (p.capW > maxCapW) maxCapW = p.capW
+      if (p.capH > maxCapH) maxCapH = p.capH
+    }
+    const cx0 = (minX + maxX) / 2
+    const cy0 = (minY + maxY) / 2
+    if (!(Math.max(maxX - minX, maxY - minY) > 1e-9)) return { x: cx0, y: cy0, ratio: null }
+    // Fixed-point over center AND ratio: displacement is computed around the
+    // future frame, but an asymmetric ego shifts its middle and padding grows
+    // the span — so each pass re-anchors the gains on the shifted middle,
+    // re-centers on the free rect and rescales the reach to the new ratio.
+    // Three passes converge; the 1.06 slack covers projection rounding only.
+    const gs = r.getGraphState()
+    const dims = r.getDimensions()
+    // Fit target: the free rect between overlay panels, and its center.
+    const insets = this.overlayInsets()
+    const availW = Math.max(160, dims.width - insets.l - insets.r)
+    const availH = Math.max(160, dims.height - insets.t - insets.b)
+    const targetX = insets.l + availW / 2
+    const targetY = insets.t + availH / 2
+    let ratioGuess = Math.max(maxX - minX, maxY - minY) * 1.3
+    let ccx = cx0
+    let ccy = cy0
+    let dMinX = 0
+    let dMaxX = 0
+    let dMinY = 0
+    let dMaxY = 0
+    for (let iter = 0; iter < 3; iter++) {
+      const k = Math.max(0, Math.min(1, (1 - ratioGuess) / 0.5))
+      const radius = (gs.fisheyeRadius ?? 0) * (ratioGuess / Math.max(1e-6, cam.ratio))
+      const centerG = r.framedGraphToGraph({ x: ccx, y: ccy })
+      // px per framed unit at the guessed ratio, measured — no internal math.
+      const probe = { ...cam, x: ccx, y: ccy, ratio: ratioGuess }
+      const pa = r.framedGraphToViewport({ x: ccx, y: ccy }, { cameraState: probe })
+      const pb = r.framedGraphToViewport({ x: ccx + 0.01, y: ccy }, { cameraState: probe })
+      const pxPerFramed = Math.max(1e-6, Math.hypot(pb.x - pa.x, pb.y - pa.y) / 0.01)
+      dMinX = Infinity
+      dMaxX = -Infinity
+      dMinY = Infinity
+      dMaxY = -Infinity
+      for (const p of pts) {
+        const gain = fisheyeGain(Math.hypot(p.gx - centerG.x, p.gy - centerG.y), radius, k)
+        const quadF = (renderedNodeSize(p.quad, ratioGuess) * p.scale) / pxPerFramed
+        const dfx = ccx + (p.fx - ccx) * gain
+        const dfy = ccy + (p.fy - ccy) * gain
+        if (dfx - quadF < dMinX) dMinX = dfx - quadF
+        if (dfx + quadF > dMaxX) dMaxX = dfx + quadF
+        if (dfy - quadF < dMinY) dMinY = dfy - quadF
+        if (dfy + quadF > dMaxY) dMaxY = dfy + quadF
+      }
+      ccx = (dMinX + dMaxX) / 2
+      ccy = (dMinY + dMaxY) / 2
+      // Land the box center on the free rect's center instead of the canvas
+      // center: the camera pin (x, y) maps to the viewport middle, so the
+      // correction is the pixel offset converted back to framed units.
+      const at = r.framedGraphToViewport({ x: ccx, y: ccy }, { cameraState: { ...cam, x: ccx, y: ccy, ratio: ratioGuess } })
+      ccx += (targetX - at.x) / pxPerFramed
+      // Viewport y grows downward while framed y grows upward.
+      ccy -= (targetY - at.y) / pxPerFramed
+      // The visible framed box is NOT square: px-per-framed turns out equal on
+      // both axes (measured 4463 vs 4460), so the box carries the free rect's
+      // aspect. Fitting with max(spanX, spanY) assumed a square and clipped
+      // tall egos vertically — the single cause of every "still misses" round.
+      const visX = availW / pxPerFramed
+      const visY = availH / pxPerFramed
+      ratioGuess = ratioGuess * Math.max((dMaxX - dMinX) / visX, (dMaxY - dMinY) / visY) * 1.06
+    }
+    // Captions sit right of their marker: reserve the widest one plus the
+    // resolver gap on +x, and the tallest one vertically. Captions widen the
+    // ratio only — never the middle — or the center drifts right and left
+    // members fall out of frame.
+    const finalProbe = { ...cam, x: ccx, y: ccy, ratio: ratioGuess }
+    const fpa = r.framedGraphToViewport({ x: ccx, y: ccy }, { cameraState: finalProbe })
+    const fpb = r.framedGraphToViewport({ x: ccx + 0.01, y: ccy }, { cameraState: finalProbe })
+    const pxFinal = Math.max(1e-6, Math.hypot(fpb.x - fpa.x, fpb.y - fpa.y) / 0.01)
+    const capXF = (maxCapW + 5 * (1 / labelZoomRatio(ratioGuess))) / pxFinal
+    const capYF = maxCapH / pxFinal
+    // Same aspect-correct fit for the caption-inclusive box.
+    const needX = dMaxX - dMinX + capXF
+    const needY = dMaxY - dMinY + capYF
+    return {
+      x: ccx,
+      y: ccy,
+      ratio: ratioGuess * Math.max(needX / (availW / pxFinal), needY / (availH / pxFinal)) * 1.06,
+    }
+  }
+
+  // Command: fly the camera to the egoFrame. Same 320ms beat as the ⊙ reset.
+  private frameEgo(): void {
+    const r = this.renderer
+    if (!r || this.pinnedId === null) return
+    const key = String(this.pinnedId)
+    // Guard: a stale pin from a cleared map must not throw mid-click.
+    if (!this.graph.hasNode(key)) return
+    const frame = this.egoFrame(r, key)
+    if (frame.ratio === null) {
+      void r.getCamera().animate({ x: frame.x, y: frame.y }, { duration: 320 })
+      return
+    }
+    void r.getCamera().animate({ x: frame.x, y: frame.y, ratio: frame.ratio }, { duration: 320 })
   }
 
   // Photo of the selected node: a snapshot of the CURRENT camera view, with
@@ -677,12 +1010,14 @@ export class MapView {
     const cam = r.getCamera().getState()
     const dims = r.getDimensions()
     const live = r.getGraphState()
+    // SAFETY: same renderer instance, only the sigma generic parameters differ.
     const canvas = await drawOnCanvas(r as unknown as Parameters<typeof drawOnCanvas>[0], {
       width: dims.width,
       height: dims.height,
       backgroundColor: 'rgba(0, 0, 0, 0)',
       cameraState: { ...cam },
       withTempRenderer: async (tmp) => {
+        // SAFETY: the temp renderer is created by drawOnCanvas with our graph/state types.
         const t = tmp as unknown as Sigma<any, any, any, CustomNodeState, CustomEdgeState, CustomGraphState>
         t.setGraphState({
           ...live,
@@ -693,6 +1028,9 @@ export class MapView {
           // photo exactly like on screen, not dropped.
           focusAlpha: 1,
           releaseAlpha: 0,
+          // The photo is a still of the finished state: the body is fully grown,
+          // never caught mid-ramp because the user clicked during the animation.
+          growAlpha: 1,
           cameraRatio: cam.ratio,
           lodRatio: live.lodRatio ?? cam.ratio,
           labelBlocked: new Set<string>(),
@@ -725,7 +1063,8 @@ export class MapView {
     this.container.setAttribute('aria-busy', 'true')
     this.progressEl.hidden = false
     this.progressEl.style.width = `${pct}%`
-    this.hoverLine.textContent = stage
+    this.statusEl.hidden = false
+    this.statusEl.textContent = stage
       ? `Обновление · ${stage.replace(/\.\.\.$/, '')} · ${pct}%`
       : `Обновление · ${pct}%`
   }
@@ -734,12 +1073,8 @@ export class MapView {
     this.progressEl.hidden = true
     this.progressEl.style.width = '0%'
     this.container.removeAttribute('aria-busy')
-    if (this.pinnedId !== null && this.graph.hasNode(String(this.pinnedId))) {
-      const attrs = this.graph.getNodeAttributes(String(this.pinnedId))
-      this.hoverLine.textContent = `${attrs.label} · ${attrs.count}`
-    } else {
-      this.hoverLine.textContent = 'слово · 0'
-    }
+    this.statusEl.hidden = true
+    this.statusEl.textContent = ''
   }
 }
 

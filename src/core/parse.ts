@@ -43,20 +43,48 @@ export function flatten(text: unknown, depth = 0): TextPart[] {
 
 type RawMessage = Record<string, unknown>
 
+// Boundary parser: Telegram JSON stores ids/dates as numbers or digit strings,
+// but hostile exports use exponents ("1e3"), Infinity, or booleans. Accept only
+// finite positives and /^\d+$/ strings so "1e3" never becomes id 1000.
+export function parsePositiveInt(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return Number.isInteger(value) && value > 0 ? value : null
+  }
+  if (typeof value === 'string' && /^\d+$/.test(value)) {
+    const num = Number(value)
+    return Number.isSafeInteger(num) && num > 0 ? num : null
+  }
+  return null
+}
+
+// Same strictness for timestamps: Number("1e309") is Infinity, which would
+// poison sorting and layout math with a non-finite dateMs.
+export function parseFinitePositiveNumber(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && value > 0 ? value : null
+  }
+  if (typeof value === 'string' && /^\d+$/.test(value)) {
+    const num = Number(value)
+    return Number.isFinite(num) && num > 0 ? num : null
+  }
+  return null
+}
+
 function parseDateMs(m: RawMessage): number {
   if (m.date_unixtime != null) {
-    const num = Number(m.date_unixtime)
-    if (!Number.isNaN(num) && num > 0) return num * 1000
+    const num = parseFinitePositiveNumber(m.date_unixtime)
+    if (num !== null) return num * 1000
   }
-  if (typeof m.date === 'number') {
-    return m.date * 1000
-  }
-  if (typeof m.date === 'string') {
-    if (/^\d+$/.test(m.date)) {
-      return Number(m.date) * 1000
+  if (m.date != null) {
+    // ISO strings stay on Date.parse; digit-only strings and numbers go
+    // through the finite-positive gate.
+    if (typeof m.date === 'string' && !/^\d+$/.test(m.date)) {
+      const parsed = Date.parse(m.date)
+      if (!Number.isNaN(parsed)) return parsed
+    } else {
+      const num = parseFinitePositiveNumber(m.date)
+      if (num !== null) return num * 1000
     }
-    const parsed = Date.parse(m.date)
-    if (!Number.isNaN(parsed)) return parsed
   }
   return 0
 }
@@ -150,15 +178,15 @@ export function parse(src: string): ChatExport {
     .filter((m): m is RawMessage => !!m && typeof m === 'object')
     .map((m, idx) => {
       const kind = m.type === 'service' ? 'service' : 'message'
-      // Number(null) and Number('') are 0, Number(true) is 1: those would collide with real ids
-      const numId = typeof m.id === 'number' || typeof m.id === 'string' ? Number(m.id) : NaN
+      // Null/""/"bad"/"1e3" fall back to -(idx+1): no NaN, no 0, no exponent ids.
+      const parsedId = parsePositiveInt(m.id)
       return {
-        id: Number.isInteger(numId) && numId > 0 ? numId : -(idx + 1),
+        id: parsedId ?? -(idx + 1),
         kind,
         authorId: authorId(m),
         dateMs: parseDateMs(m),
         parts: kind === 'service' ? [] : flatten(m.text),
-        replyTo: typeof m.reply_to_message_id === 'number' ? m.reply_to_message_id : null,
+        replyTo: parsePositiveInt(m.reply_to_message_id),
       }
     })
 

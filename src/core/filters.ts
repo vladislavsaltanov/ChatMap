@@ -1,3 +1,5 @@
+import type { FilterCfg } from './types'
+
 const RU_STOPWORDS = new Set([
   'и', 'в', 'не', 'на', 'я', 'что', 'с', 'по', 'а', 'он',
   'как', 'то', 'все', 'она', 'так', 'его', 'но', 'да', 'ты', 'к',
@@ -78,12 +80,44 @@ const MAT_EXACT = new Set([
 
 // Innocent words that start with a mat form: built-in rules skip them, customRoots still apply.
 const MAT_ALLOWLIST = ['мудр', 'херсон', 'херес', 'сукн', 'бляха']
+const MAT_ALLOW_BY_FIRST = indexByFirst(MAT_ALLOWLIST)
 
 const LAUGH_LITERALS = new Set(['лол', 'кек', 'lol', 'lmao', 'rofl', 'kek'])
 const LAUGH_GLYPHS = /^[хаеиоуыэ-]+$/u
 
+// Hyphenated compounds (ебать-копать) split on any dash form.
+const WORD_HYPHENS = /[-–—]/u
+
+// One normalization for every word and list item: lowercase + ё -> е.
+function normalize(s: string): string {
+  return s.toLowerCase().replace(/ё/g, 'е')
+}
+
+type PreparedList = {
+  exact: Set<string>
+  rootsByFirst: Map<string, string[]>
+}
+
+// User lists compile once per config: an item ending with '-' is a prefix root,
+// the rest are exact words. Normalization happens here, not per token.
+function prepareList(items: string[]): PreparedList {
+  const exact = new Set<string>()
+  const roots: string[] = []
+  for (const item of items) {
+    const raw = normalize(item.trim())
+    if (!raw) continue
+    if (raw.endsWith('-')) {
+      // A lone '-' is inert by design: its empty root used to match every short Cyrillic word.
+      const root = raw.slice(0, -1)
+      if (root) roots.push(root)
+    } else exact.add(raw)
+  }
+  // A root can only match words sharing its first char, so one bucket per char is enough.
+  return { exact, rootsByFirst: indexByFirst(roots) }
+}
+
 export function isStopword(word: string): boolean {
-  const clean = word.toLowerCase().replace(/ё/g, 'е')
+  const clean = normalize(word)
   return RU_STOPWORDS.has(clean) || EN_STOPWORDS.has(clean)
 }
 
@@ -108,14 +142,19 @@ function stripMatPrefix(clean: string): string {
 }
 
 // Innocent words that start with a mat form: built-in rules skip the whole word.
+// Same first-char bucket trick as the roots: a prefix shares the word's first char.
 function isMatAllowlisted(s: string): boolean {
-  return MAT_ALLOWLIST.some((prefix) => s.startsWith(prefix))
+  const candidates = MAT_ALLOW_BY_FIRST.get(s.at(0) ?? '') ?? []
+  for (const prefix of candidates) {
+    if (s.startsWith(prefix)) return true
+  }
+  return false
 }
 
 // Root scan over the word's first-char bucket only: a root can match solely
 // words starting with the same char, so the result equals a full scan.
-function matchesIndexedRoots(word: string): boolean {
-  const candidates = MAT_ROOTS_BY_FIRST.get(word.at(0) ?? '') ?? []
+function matchesRoots(word: string, rootsByFirst: Map<string, string[]>): boolean {
+  const candidates = rootsByFirst.get(word.at(0) ?? '') ?? []
   for (const root of candidates) {
     if (matchesRootRule(word, root)) return true
   }
@@ -127,70 +166,87 @@ function matchesMatBuiltin(clean: string): boolean {
   const stripped = stripMatPrefix(clean)
   if (isMatAllowlisted(clean) || (stripped !== clean && isMatAllowlisted(stripped))) return false
   if (MAT_EXACT.has(clean)) return true
-  if (matchesIndexedRoots(clean)) return true
+  if (matchesRoots(clean, MAT_ROOTS_BY_FIRST)) return true
   if (stripped !== clean) {
     if (MAT_EXACT.has(stripped)) return true
-    if (matchesIndexedRoots(stripped)) return true
+    if (matchesRoots(stripped, MAT_ROOTS_BY_FIRST)) return true
   }
   return false
 }
 
+// Custom list against an already normalized word: exact hit first, then roots.
+function matchesList(clean: string, list: PreparedList): boolean {
+  return list.exact.has(clean) || matchesRoots(clean, list.rootsByFirst)
+}
+
+// Mat rules for one normalized word: built-in forms (with one prefix retry),
+// then the user list (custom roots still apply to allowlisted words).
+function matchesMatRules(clean: string, custom: PreparedList): boolean {
+  return matchesMatBuiltin(clean) || matchesList(clean, custom)
+}
+
+// Parts are already normalized; each one follows the same rules and is
+// allowlisted independently (бляха-муха stays clean).
+function matchesMatParts(clean: string, custom: PreparedList): boolean {
+  for (const part of clean.split(WORD_HYPHENS)) {
+    if (part.length >= 2 && matchesMatRules(part, custom)) return true
+  }
+  return false
+}
+
+// Full mat verdict for one normalized word: whole-word rules, then hyphen parts.
+// The only composition point: the public predicate and the compiled one share it.
+function matchesMatAll(clean: string, custom: PreparedList): boolean {
+  if (matchesMatRules(clean, custom)) return true
+  // Hyphenated compounds: ебать-копать.
+  return WORD_HYPHENS.test(clean) && matchesMatParts(clean, custom)
+}
+
+// Shared empty list: the common 'no custom words' case allocates nothing.
+const EMPTY_LIST: PreparedList = { exact: new Set(), rootsByFirst: new Map() }
+
+// Compat wrapper for tests and one-off checks. It compiles the list per call,
+// so per-token work must go through compileWordRules.
 export function matchesMat(word: string, customRoots: string[]): boolean {
-  const clean = word.toLowerCase().replace(/ё/g, 'е')
-  if (matchesMatBuiltin(clean) || matchesMatCustom(clean, customRoots)) return true
-  // Hyphenated compounds: ебать-копать. Each part follows the same rules;
-  // every part is allowlisted independently (бляха-муха stays clean).
-  if (/[-–—]/.test(clean)) {
-    return clean
-      .split(/[-–—]/u)
-      .some((part) => part.length >= 2 && (matchesMatBuiltin(part) || matchesMatCustom(part, customRoots)))
-  }
-  return false
+  return matchesMatAll(normalize(word), customRoots.length > 0 ? prepareList(customRoots) : EMPTY_LIST)
 }
 
-function matchesMatCustom(clean: string, customRoots: string[]): boolean {
-  for (const item of customRoots) {
-    const raw = item.trim().toLowerCase().replace(/ё/g, 'е')
-    if (!raw) continue
-    if (raw.endsWith('-')) {
-      const root = raw.slice(0, -1)
-      if (matchesRootRule(clean, root)) {
-        return true
-      }
-    } else if (clean === raw) {
-      return true
-    }
-  }
-
-  return false
+function matchesLaughBuiltin(clean: string): boolean {
+  if (LAUGH_LITERALS.has(clean)) return true
+  if (!LAUGH_GLYPHS.test(clean)) return false
+  const h = clean.match(/х/gu)
+  return h !== null && h.length >= 2
 }
 
+// Laugh rules for one normalized word: literals, the >=2 'х' glyph rule, then the user list.
+function matchesLaughRules(clean: string, custom: PreparedList): boolean {
+  return matchesLaughBuiltin(clean) || matchesList(clean, custom)
+}
+
+// Compat wrapper, same per-call compilation caveat as matchesMat.
 export function matchesLaugh(word: string, customItems: string[]): boolean {
-  const clean = word.toLowerCase().replace(/ё/g, 'е')
+  return matchesLaughRules(normalize(word), customItems.length > 0 ? prepareList(customItems) : EMPTY_LIST)
+}
 
-  if (LAUGH_LITERALS.has(clean)) {
-    return true
+// Per-config predicate: "this word is dropped by the mat/laugh category rules".
+// Flags and user lists are resolved once; a token costs one normalize plus
+// set/map probes. Category order matches dropFor: mat first, then laugh.
+export function compileWordRules(
+  cfg: Pick<FilterCfg, 'mat' | 'laugh' | 'customMat' | 'customLaugh'>
+): (word: string) => boolean {
+  const matOn = !cfg.mat
+  const laughOn = !cfg.laugh
+  // Both categories shown: nothing in this layer can drop a word.
+  if (!matOn && !laughOn) return () => false
+
+  const customMat = prepareList(cfg.customMat)
+  const customLaugh = prepareList(cfg.customLaugh)
+
+  // Lists are snapshotted on purpose: the predicate lives for one tally pass, so
+  // in-place mutation of cfg.customMat/customLaugh afterwards is not observed.
+  return (word) => {
+    const clean = normalize(word)
+    if (matOn && matchesMatAll(clean, customMat)) return true
+    return laughOn && matchesLaughRules(clean, customLaugh)
   }
-
-  if (LAUGH_GLYPHS.test(clean)) {
-    const hMatches = clean.match(/х/gu)
-    if (hMatches && hMatches.length >= 2) {
-      return true
-    }
-  }
-
-  for (const item of customItems) {
-    const raw = item.trim().toLowerCase().replace(/ё/g, 'е')
-    if (!raw) continue
-    if (raw.endsWith('-')) {
-      const root = raw.slice(0, -1)
-      if (matchesRootRule(clean, root)) {
-        return true
-      }
-    } else if (clean === raw) {
-      return true
-    }
-  }
-
-  return false
 }

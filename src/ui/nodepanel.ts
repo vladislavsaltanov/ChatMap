@@ -1,6 +1,6 @@
-import { escapeHtml } from '../core/escapeHtml'
 import type Graph from 'graphology'
-import { isOverridableKey, parseLabelOverrides } from '../core/labelOverrides'
+import { applyLabelOverrides, parseLabelOverrides } from '../core/labelOverrides'
+import type { LabelOverrideChange } from '../core/labelOverrides'
 
 const STORAGE_KEY = 'chatmap.labels'
 
@@ -12,25 +12,12 @@ export function getLabelOverrides(): Record<string, string> {
   }
 }
 
-export function saveLabelOverride(canon: string, label: string): void {
-  if (!isOverridableKey(canon)) return
-  try {
-    const overrides = getLabelOverrides()
-    overrides[canon] = label
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides))
-  } catch {
-    // Ignore storage quota or disabled errors
-  }
-}
-
-export function clearLabelOverride(canon: string): void {
-  try {
-    const overrides = getLabelOverrides()
-    delete overrides[canon]
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides))
-  } catch {
-    // Ignore storage errors
-  }
+// UI Command: single read, single write, throws on storage failure.
+// Null result (forbidden key) skips the write silently, like parse skips it.
+export function commitLabelOverrides(changes: LabelOverrideChange[]): void {
+  const next = applyLabelOverrides(localStorage.getItem(STORAGE_KEY), changes)
+  if (next === null) return
+  localStorage.setItem(STORAGE_KEY, next)
 }
 
 export type NodeDetails = {
@@ -77,7 +64,9 @@ export class NodePanel {
   private onSelectCallback: ((id: number) => void) | null = null
   private onOverrideCallback: ((id: number, label: string) => void) | null = null
   private onPhotoCallback: (() => void) | null = null
+  private onCenterCallback: (() => void) | null = null
   private photoBtn: HTMLButtonElement
+  private centerBtn: HTMLButtonElement
 
   constructor(root: HTMLElement) {
     this.panel = document.createElement('aside')
@@ -88,8 +77,9 @@ export class NodePanel {
       <div class="nodepanel-header">
         <h2 id="node-title">Слово</h2>
         <div class="header-actions">
-          <button type="button" id="auto-btn" class="label-btn" aria-label="Сбросить к исходной форме" title="Сбросить к исходной форме">Авто</button>
+          <button type="button" id="auto-btn" class="label-btn" aria-label="Сбросить к исходной форме" title="Сбросить к исходной форме">Сброс</button>
           <button type="button" id="photo-btn" class="label-btn" aria-label="Снимок выделенной ноды" title="Снимок выделенной ноды">Фото</button>
+          <button type="button" id="center-btn" class="icon-btn" aria-label="Показать связи ноды" title="Показать связи ноды">⊙</button>
           <button type="button" id="close-btn" class="icon-btn" aria-label="Закрыть">✕</button>
         </div>
       </div>
@@ -113,6 +103,7 @@ export class NodePanel {
     this.autoBtn = this.panel.querySelector<HTMLButtonElement>('#auto-btn')!
     this.closeBtn = this.panel.querySelector<HTMLButtonElement>('#close-btn')!
     this.photoBtn = this.panel.querySelector<HTMLButtonElement>('#photo-btn')!
+    this.centerBtn = this.panel.querySelector<HTMLButtonElement>('#center-btn')!
     this.neighborsContainer = this.panel.querySelector<HTMLElement>('#neighbors-list')!
     this.formsContainer = this.panel.querySelector<HTMLElement>('#forms-list')!
 
@@ -127,13 +118,24 @@ export class NodePanel {
       this.onPhotoCallback?.()
     })
 
+    this.centerBtn.addEventListener('click', () => {
+      this.onCenterCallback?.()
+    })
+
     this.autoBtn.addEventListener('click', () => {
       if (!this.currentDetails) return
       // Also drop a legacy key saved under the label itself, otherwise an old
       // override could survive the reset and be re-applied on the next render.
-      clearLabelOverride(this.currentDetails.canon)
-      clearLabelOverride(this.currentDetails.label)
-      clearLabelOverride(this.currentDetails.defaultLabel)
+      try {
+        commitLabelOverrides([
+          [this.currentDetails.canon, null],
+          [this.currentDetails.label, null],
+          [this.currentDetails.defaultLabel, null],
+        ])
+      } catch {
+        // Storage failed: keep the old label visible.
+        return
+      }
       this.currentDetails.label = this.currentDetails.defaultLabel
       this.titleEl.textContent = this.currentDetails.label
       this.renderForms()
@@ -144,12 +146,14 @@ export class NodePanel {
     })
   }
 
-  // «Авто» must show whether there is anything to reset: with a single word
-  // form the click legitimately changes nothing, which used to look broken.
+  // «Сброс» shows whether there is anything to reset: when the label is
+  // already automatic the button is disabled, so the no-op click that
+  // used to look broken can no longer happen.
   private syncAutoState(): void {
     const overridden = !!this.currentDetails &&
       this.currentDetails.label !== this.currentDetails.defaultLabel
     this.autoBtn.classList.toggle('active', overridden)
+    this.autoBtn.disabled = !overridden
     this.autoBtn.setAttribute('aria-pressed', String(overridden))
     this.autoBtn.title = overridden ? 'Сбросить ручную подпись' : 'Подпись уже автоматическая'
   }
@@ -209,12 +213,22 @@ export class NodePanel {
       const btn = document.createElement('button')
       btn.type = 'button'
       btn.className = `form-btn ${form === this.currentDetails.label ? 'active' : ''}`
-      btn.innerHTML = `<span>${escapeHtml(form)}</span><span class="num">${cnt}</span>`
+      const formEl = document.createElement('span')
+      formEl.textContent = form
+      const countEl = document.createElement('span')
+      countEl.className = 'num'
+      countEl.textContent = String(cnt)
+      btn.append(formEl, countEl)
       btn.addEventListener('click', () => {
         if (!this.currentDetails) return
+        try {
+          commitLabelOverrides([[this.currentDetails.canon, form]])
+        } catch {
+          // Storage failed: keep the old label visible.
+          return
+        }
         this.currentDetails.label = form
         this.titleEl.textContent = form
-        saveLabelOverride(this.currentDetails.canon, form)
         this.renderForms()
         this.syncAutoState()
         if (this.onOverrideCallback) {
@@ -235,5 +249,9 @@ export class NodePanel {
 
   onPhoto(cb: () => void): void {
     this.onPhotoCallback = cb
+  }
+
+  onCenter(cb: () => void): void {
+    this.onCenterCallback = cb
   }
 }

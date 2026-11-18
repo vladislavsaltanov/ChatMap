@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { pruneSortedBackbone, select, type SelectionEdge } from '../src/core/select'
+import { dropEdgelessNodes, pruneSortedBackbone, select, type SelectionEdge } from '../src/core/select'
 import { edgeKey, type TallyResult } from '../src/core/tally'
 
 // pruneSortedBackbone requires weight-desc input, the order select() emits.
@@ -44,12 +44,34 @@ describe('select', () => {
         [1, new Map([[100, 10]])],
         [2, new Map([[100, 10]])],
       ]),
-      pairs: new Map([
-        [key, { nX: new Map([[100, 3]]), nCross: 0 }],
-      ]),
+      pairs: new Map([[key, { nX: new Map([[100, 3]]), nCross: 0 }]]),
     }
     const sel = select(tallyData, { mode: { kind: 'together' }, topN: 10, minWeight: 5 })
     expect(sel.edges.length).toBe(0)
+  })
+
+  it('(b2) drops words left linkless by the weight threshold', () => {
+    // The user scenario: a frequent word (count 32) whose every co-occurrence
+    // is weaker than minWeight. Rendered, it would be a labelless dot with no
+    // lines — at topN 1000 hundreds of such words form a separate dead sheet.
+    // A word with no visible link has no position: drop it, keep the count
+    // scale (maxCount) from the pre-drop head so sizes stay stable.
+    const tallyData: TallyResult = {
+      counts: new Map([
+        [1, new Map([[100, 32]])],
+        [2, new Map([[100, 40]])],
+        [3, new Map([[100, 40]])],
+      ]),
+      pairs: new Map([
+        [edgeKey(1, 2), { nX: new Map([[100, 2]]), nCross: 0 }],
+        [edgeKey(1, 3), { nX: new Map([[100, 3]]), nCross: 0 }],
+        [edgeKey(2, 3), { nX: new Map([[100, 9]]), nCross: 0 }],
+      ]),
+    }
+    const sel = select(tallyData, { mode: { kind: 'together' }, topN: 10, minWeight: 5 })
+    expect(sel.edges).toEqual([{ a: 2, b: 3, weight: 9 }])
+    expect(sel.nodes.map((n) => n.id)).toEqual([2, 3])
+    expect(sel.maxCount).toBe(40)
   })
 
   it('(c) selects top-N nodes by count desc, breaking ties by id asc', () => {
@@ -59,13 +81,26 @@ describe('select', () => {
         [1, new Map([[100, 10]])],
         [2, new Map([[100, 20]])],
       ]),
-      pairs: new Map(),
+      pairs: new Map([[edgeKey(1, 2), { nX: new Map([[100, 5]]), nCross: 0 }]]),
     }
-    const sel = select(tallyData, { mode: { kind: 'together' }, topN: 2, minWeight: 0 })
+    const sel = select(tallyData, { mode: { kind: 'together' }, topN: 3, minWeight: 0 })
+    // Order kept (2 before 1); linkless node 3 is dropped — it has no position.
     expect(sel.nodes).toEqual([
       { id: 2, count: 20 },
       { id: 1, count: 10 },
     ])
+  })
+
+  it('(d0) dropEdgelessNodes keeps only linked nodes, empty edges give empty nodes', () => {
+    const nodes = [
+      { id: 1, count: 10 },
+      { id: 2, count: 5 },
+      { id: 3, count: 1 },
+    ]
+    expect(dropEdgelessNodes(nodes, [])).toEqual([])
+    expect(
+      dropEdgelessNodes(nodes, [{ a: 1, b: 2, weight: 4 }]).map((n) => n.id),
+    ).toEqual([1, 2])
   })
 
   it('(d) caps visible edges at 10 000 max', () => {

@@ -5,7 +5,7 @@ description: Разделение worker/main, роль graphology и sigma.js, 
 tags: [architecture, worker, sigma, privacy, overview]
 verified:
   - by: openwiki/0.9.0
-    at: 2026-11-09T15:02:00.342Z
+    at: 2026-11-15T11:24:14.683Z
 sources:
   - id: openwiki-source-5b54a58d1b51cd490b0e7162
     resource: repo://package.json
@@ -19,7 +19,7 @@ sources:
     resource: repo://src/main.ts
   - id: openwiki-source-8837b206dbd5c7ef6a549ee2
     resource: repo://src/ui/mapview.ts
-generated: { by: "pi", at: "2026-11-09T15:02:00.342Z" }
+generated: { by: "pi", at: "2026-11-15T11:24:14.683Z" }
 ---
 
 # Архитектура системы
@@ -33,7 +33,9 @@ ChatMap — одна статическая страница: JSON-экспор�
 Тяжёлая чистая логика живёт в `src/core/` и целиком выполняется в Web Worker:
 
 - парсинг экспорта, токенизация, канонизация, фильтры, подсчёт связей;
-- выборка узлов и рёбер, детерминированная раскладка ForceAtlas2.
+- выборка узлов и рёбер, детерминированная assignment-раскладка
+  (группы → лендмарки → fBm-силуэт → рамка; детали — в
+  «Граф, раскладка и рендер»).
 
 Главный поток только рисует и управляет экранами:
 
@@ -42,7 +44,8 @@ ChatMap — одна статическая страница: JSON-экспор�
 - `src/ui/controls.ts`, `nodepanel.ts`, `legend.ts` — режимы, фильтры, панель слова.
 
 Протокол воркера задан типами `WorkerIn` / `WorkerOut`:
-`open` с текстом JSON, `update` с конфигом фильтров и вида;
+`open` с буфером файла (zero-copy `ArrayBuffer`, опциональный `seed`),
+`update` с конфигом фильтров и вида;
 назад — `progress`, `ready` (авторы, счётчики), `map` (узлы, рёбра, формы),
 а также `warn` и `error`.
 
@@ -56,6 +59,6 @@ ChatMap — одна статическая страница: JSON-экспор�
 
 ## Технологический каркас
 
-TypeScript, Vite, graphology + `graphology-layout-forceatlas2`, sigma.js v4.
+TypeScript, Vite, graphology, sigma.js v4.
 Стили — каскадные слои `@layer`, custom properties, `oklch()`, тёмная тема.
 UI-фреймворков нет, зависимости минимальны.
