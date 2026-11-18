@@ -62,6 +62,20 @@ export type WorkerIn =
   // [Query] Timeline cursor: one frame at a bucket index, answered by a 'slice'.
   // Latest-wins lives on the sender side, so no request id travels here.
   | { type: 'slice'; bucket: number }
+  // [Command] The strip is about to be shown: answer with the bucket meta once.
+  // No recount — pass 1 already produced it, so this is a cache read.
+  | { type: 'timelineOn' }
+
+// One-shot strip layout data for the UI; msgCounts is a plain array so the
+// structured clone stays simple (the strip renders it as tick heights).
+export type TimelineMetaMsg = {
+  type: 'timelineMeta'
+  eligible: boolean
+  count: number
+  monthStarts: number[] // count+1 boundaries, ms
+  labels: string[] // count cursor labels
+  msgCounts: number[] // count: messages per bucket, service included
+}
 
 export type WorkerOut =
   | { type: 'progress'; done: number; total: number; stage?: string }
@@ -79,6 +93,8 @@ export type WorkerOut =
   // One timeline frame over the pinned layout; the member is imported rather than
   // restated so `type: 'slice'` narrows against a single definition.
   | SliceMsg
+  // Strip layout for the timeline UI; sent on demand, never on every open.
+  | TimelineMetaMsg
 
 export type MapMsg = Extract<WorkerOut, { type: 'map' }>
 

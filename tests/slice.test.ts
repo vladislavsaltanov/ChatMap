@@ -1,17 +1,23 @@
 import { describe, expect, it } from 'vitest'
-import { buildSlice, type SliceMsg } from '../src/core/slice'
+import { buildSlice, crossCandidates, type SliceMsg } from '../src/core/slice'
 import { PipelineCache, countsUpTo } from '../src/core/tally'
 import type { Intern } from '../src/core/intern'
 import type { ViewCfg } from '../src/core/select'
 import type { ChatExport, FilterCfg, Message } from '../src/core/types'
 
-const textMsg = (id: number, authorId: number, text: string, dateMs = id * 1000): Message => ({
+const textMsg = (
+  id: number,
+  authorId: number,
+  text: string,
+  dateMs = id * 1000,
+  replyTo: number | null = null,
+): Message => ({
   id,
   kind: 'message',
   authorId,
   dateMs,
   parts: [{ text, entity: 'plain' }],
-  replyTo: null,
+  replyTo,
 })
 
 const CFG: FilterCfg = {
@@ -63,7 +69,13 @@ const pinOf = (
 
 type Resolved = ReturnType<PipelineCache['resolve']>
 
-const sliceOf = (res: Resolved, bucket: number, universe: Set<number>, view: ViewCfg = VIEW): SliceMsg =>
+const sliceOf = (
+  res: Resolved,
+  bucket: number,
+  universe: Set<number>,
+  view: ViewCfg = VIEW,
+  cross?: Set<number>,
+): SliceMsg =>
   buildSlice({
     units: res.units,
     bucketCounts: res.bucketCounts,
@@ -74,6 +86,7 @@ const sliceOf = (res: Resolved, bucket: number, universe: Set<number>, view: Vie
     ia: res.ia,
     layout: pinOf(universe),
     memberUniverse: universe,
+    cross,
   })
 
 // Seven consecutive months (март..сентябрь 2024) => the month regime, seven buckets.
@@ -216,5 +229,77 @@ describe('buildSlice sizes', () => {
     // счёт у всех слов равен: иерархии нет, размер один на всех
     expect(new Set(early.nodes.map((node) => node.size)).size).toBe(1)
     expect(new Set(late.nodes.map((node) => node.size)).size).toBe(1)
+  })
+})
+
+// Timeline-candidate fixture: three minutes of chat (< 14 days => ineligible meta),
+// then one reply two hours later so the reply misses the adjacency window on purpose.
+const CROSS_BASE = new Date(2024, 2, 10, 12, 0, 0).getTime()
+const minutes = (n: number): number => CROSS_BASE + n * 60_000
+
+const crossChat: ChatExport = {
+  name: 'cross',
+  chatType: 'personal_chat',
+  messages: [
+    textMsg(1, 1, 'альфа бета', minutes(0)),
+    textMsg(2, 2, 'гамма дельта', minutes(1)),
+    textMsg(3, 2, 'омега сигма', minutes(2)),
+    textMsg(4, 2, 'тау фита', minutes(3)),
+    textMsg(5, 1, 'кси пси', minutes(120), 4),
+  ],
+}
+
+describe('crossCandidates', () => {
+  it('(h) соседство разных авторов и ответы поперёк авторов красят оба конца', () => {
+    const res = new PipelineCache().resolve(crossChat, CFG)
+    const candidates = crossCandidates(res.units, res.meta)
+    const inSet = (form: string): boolean => candidates.has(idOfForm(res.ia, form))
+
+    // сообщения 1 и 2 — разные авторы, зазор 1 минута: в сете оба конца пары
+    for (const form of ['альфа', 'бета', 'гамма', 'дельта']) expect(inSet(form)).toBe(true)
+
+    // середина чата: соседи с обеих сторон того же автора, cross-связи нет
+    for (const form of ['омега', 'сигма']) expect(inSet(form)).toBe(false)
+
+    // ответ через 2 часа: зазор вне окна 10 минут, но ответ всё равно связывает концы
+    for (const form of ['кси', 'пси', 'тау', 'фита']) expect(inSet(form)).toBe(true)
+
+    // чат короче 14 дней: мета неэлигибельна, скан кандидатов от этого не зависит
+    expect(res.meta.eligible).toBe(false)
+  })
+})
+
+// Две соседние реплики разных авторов: у каждой пары слов поперёк них есть реальный
+// nCross, поэтому у cross-режима есть что показать.
+const crossPairChat: ChatExport = {
+  name: 'cross-pair',
+  chatType: 'personal_chat',
+  messages: [
+    textMsg(1, 1, 'альфа бета', minutes(0)),
+    textMsg(2, 2, 'гамма дельта', minutes(1)),
+  ],
+}
+
+describe('buildSlice cross mode', () => {
+  it('(i) cross-срез уважает переданный сет, без него — прежний фолбэк', () => {
+    const res = new PipelineCache().resolve(crossPairChat, CFG)
+    const universe = allIds(res.ia)
+    const crossView: ViewCfg = { ...VIEW, mode: { kind: 'cross' } }
+    const last = res.meta.count - 1
+    const beta = idOfForm(res.ia, 'бета')
+    const crossSet = new Set([idOfForm(res.ia, 'альфа'), idOfForm(res.ia, 'гамма')])
+
+    // «бета» посчитана и лежит во вселенной, но cross-кандидатом не является
+    expect(countsUpTo(res.bucketCounts, last).has(beta)).toBe(true)
+    const filtered = sliceOf(res, last, universe, crossView, crossSet)
+    expect(filtered.nodes.map((node) => node.id).sort((a, b) => a - b)).toEqual(
+      [...crossSet].sort((a, b) => a - b),
+    )
+    expect(filtered.edges.length).toBeGreaterThan(0)
+
+    // без cross-аргумента режим держит фолбэк: кандидаты — все посчитанные id
+    const fallback = sliceOf(res, last, universe, crossView)
+    expect(fallback.nodes.some((node) => node.id === beta)).toBe(true)
+    expect(fallback.nodes.length).toBeGreaterThan(filtered.nodes.length)
   })
 })

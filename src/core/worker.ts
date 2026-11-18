@@ -13,8 +13,8 @@ import {
   type SelectionNode,
   type ViewCfg,
 } from './select'
-import { buildSlice } from './slice'
-import { PipelineCache, countsUpTo, tally, type PipelineCallbacks, type ResolveResult } from './tally'
+import { buildSlice, crossCandidates } from './slice'
+import { PipelineCache, countsUpTo, filterCacheKey, tally, type PipelineCallbacks, type ResolveResult } from './tally'
 import type {
   AuthorId,
   ChatExport,
@@ -41,6 +41,11 @@ type PinnedLayout = {
   universe: Set<number>
 }
 let lastPinned: PinnedLayout | null = null
+
+// Cross-mode candidates for the pinned universe, lazy and filter-scoped: the set is a
+// property of the filtered units, so only a filter switch (or a new chat) invalidates
+// it — topN/minWeight/mode never do. One full-range scan replaces the oracle's pair map.
+let crossUniverse: { key: string; set: Set<number> } | null = null
 
 const DEFAULT_FILTER_CFG: FilterCfg = {
   mat: false,
@@ -71,6 +76,8 @@ function resetWorkerState(): void {
   positionsCache.clear()
   // A slice of the previous chat has no coordinates in this one.
   lastPinned = null
+  // Cross candidates are unit ids of the previous chat's filter: stale by definition.
+  crossUniverse = null
 }
 
 type NodeInfo = { bestForm: string; forms: Array<[string, number]>; size: number }
@@ -381,6 +388,17 @@ self.onmessage = (e: MessageEvent<WorkerIn>) => {
       // A->B->A read and slices stay consistent with the map the pin was taken from.
       // No callbacks on purpose: scrubbing the strip must not replay progress stages.
       const res = resolveData(openChat, currentFilterCfg, {})
+      // Cross candidates are woken only when the cross mode asks. Keyed by the filter
+      // config: the mask lives in raw unit-id space, so a merge (post-pass) never
+      // invalidates it and a filter switch always does.
+      let cross: Set<number> | undefined
+      if (currentViewCfg.mode.kind === 'cross') {
+        const key = filterCacheKey(currentFilterCfg)
+        if (crossUniverse === null || crossUniverse.key !== key) {
+          crossUniverse = { key, set: crossCandidates(res.units, res.meta) }
+        }
+        cross = crossUniverse.set
+      }
       send(
         buildSlice({
           units: res.units,
@@ -397,8 +415,24 @@ self.onmessage = (e: MessageEvent<WorkerIn>) => {
             stemOf: pinned.stemOf,
           },
           memberUniverse: pinned.universe,
+          cross,
         }),
       )
+    } else if (msg.type === 'timelineOn') {
+      // [Command] Strip layout request. Guard: no open chat means no buckets to describe.
+      if (!chat) return
+      // Warm-cache read: the open/update path already built the meta, so showing the
+      // strip never re-tokenizes and never replays a progress stage.
+      const res = resolveData(chat, currentFilterCfg, {})
+      // Sent even when ineligible: the UI owns the decision to hide the strip.
+      send({
+        type: 'timelineMeta',
+        eligible: res.meta.eligible,
+        count: res.meta.count,
+        monthStarts: res.meta.monthStarts,
+        labels: res.meta.labels,
+        msgCounts: Array.from(res.meta.msgCounts),
+      })
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err)
