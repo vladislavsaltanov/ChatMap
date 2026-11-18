@@ -15,7 +15,16 @@ import {
 import type { LayoutPort } from './graph'
 import type { Intern } from './intern'
 import { dropEdgelessNodes, pruneSortedBackbone, type SelectionEdge, type ViewCfg } from './select'
-import { countsUpTo, edgeKey, parseEdgeKey, tally, type BucketCounts, type PairStat, type RawUnit } from './tally'
+import {
+  ADJACENT_CLOSE_MS,
+  countsUpTo,
+  edgeKey,
+  parseEdgeKey,
+  tally,
+  type BucketCounts,
+  type PairStat,
+  type RawUnit,
+} from './tally'
 import type { BucketMeta } from './timebuckets'
 import type { AuthorId, WorkerEdge } from './types'
 
@@ -86,11 +95,20 @@ function foldRoots(raw: Counts, merged?: Map<number, number>): Counts {
 // Restriction to the pinned universe happens BEFORE the slice, so an early word
 // that was a period favourite but never reached the whole-chat top can never
 // appear — documented v1 limitation of the pinned node set.
-function rankSlice(counts: Counts, view: ViewCfg, universe: Set<number>): RankedNode[] {
+function rankSlice(
+  counts: Counts,
+  view: ViewCfg,
+  universe: Set<number>,
+  cross?: Set<number>,
+): RankedNode[] {
   const candidates: RankedNode[] = []
   for (const [id, byAuthor] of counts) {
     // Guard: a word outside the pinned universe has no position on the map.
     if (!universe.has(id)) continue
+    // Guard: cross is defined by links, so only a word that ever linked across authors
+    // is a candidate. Without a mask (callers before the timeline) the mode keeps the
+    // old fallback — every counted id — instead of silently emptying the map.
+    if (view.mode.kind === 'cross' && cross !== undefined && !cross.has(id)) continue
     const count = modeCount(byAuthor, view.mode)
     // Guard: zero in this mode (another author's word) is not a candidate.
     if (count <= 0) continue
@@ -174,6 +192,100 @@ function edgeWeight(stat: PairStat, mode: ViewCfg['mode']): number {
   return sumNx + stat.nCross
 }
 
+// Guard: exact copy of tally's private isCloseGap law — unknown dates count as close
+// (never punish missing data), out-of-order or far gaps do not link.
+function isCloseGap(prevMs: number, nextMs: number): boolean {
+  if (prevMs <= 0 || nextMs <= 0) return true
+  const gap = nextMs - prevMs
+  return gap >= 0 && gap <= ADJACENT_CLOSE_MS
+}
+
+// [Query] Words that ever share a cross-author link over the FULL range: adjacent
+// close-gap messages of different authors and cross-author replies. Pair-event scan
+// only — no pair map is materialized, so this costs one pass, not the oracle's memory.
+export function crossCandidates(units: RawUnit[], meta: BucketMeta): Set<number> {
+  // Accepted, never read: the set is range-agnostic by design, and an ineligible chat
+  // (count === 1) yields the same candidates as an eligible one.
+  void meta
+  const out = new Set<number>()
+  const unitsByMsgId = new Map<number, RawUnit[]>()
+  const messages: Array<{ authorId: AuthorId; dateMs: number; units: Uint32Array[] }> = []
+  const msgIndexById = new Map<number, number>()
+
+  // Group units into messages in export order, exactly like tally(): the meaning of
+  // "adjacent message" and "reply target" must not drift between the two scans.
+  for (const unit of units) {
+    const msgId = unit.id ?? unit.msgId
+    if (msgId !== undefined) {
+      let list = unitsByMsgId.get(msgId)
+      if (!list) {
+        list = []
+        unitsByMsgId.set(msgId, list)
+      }
+      list.push(unit)
+    }
+    // Units without an id (tests only; buildUnits always sets one) stand as their own message.
+    if (msgId === undefined) {
+      messages.push({ authorId: unit.authorId, dateMs: unit.dateMs, units: [unit.tokens] })
+      continue
+    }
+    let idx = msgIndexById.get(msgId)
+    if (idx === undefined) {
+      idx = messages.length
+      msgIndexById.set(msgId, idx)
+      messages.push({ authorId: unit.authorId, dateMs: unit.dateMs, units: [] })
+    }
+    messages[idx].units.push(unit.tokens)
+  }
+
+  const mark = (tokens: Uint32Array): void => {
+    for (let i = 0; i < tokens.length; i++) out.add(tokens[i])
+  }
+
+  // Adjacent messages with a small gap: only a cross-author pair can ever reach the
+  // cross view, and a hit nominates every word of BOTH sides. Same-author neighbours
+  // add nothing — their links are counted into nX, never into nCross.
+  for (let mi = 0; mi + 1 < messages.length; mi++) {
+    const a = messages[mi]
+    const b = messages[mi + 1]
+    // Guard: a far neighbour is not a link (same boundary as the oracle).
+    if (!isCloseGap(a.dateMs, b.dateMs)) continue
+    // Guard: same-author adjacency carries no cross evidence.
+    if (a.authorId === b.authorId) continue
+    for (const unit of a.units) mark(unit)
+    for (const unit of b.units) mark(unit)
+  }
+
+  // Replies: an explicit answer across authors links regardless of the time gap, so
+  // both endpoints are nominated; a same-author reply stays inside nX.
+  for (const unit of units) {
+    // Guard: only a reply with a target has a second endpoint.
+    if (unit.replyTo == null) continue
+    const targetUnits = unitsByMsgId.get(unit.replyTo)
+    // Guard: a target dropped by filtering links nothing.
+    if (!targetUnits) continue
+    for (const targetUnit of targetUnits) {
+      // Guard: same author on both ends never increments nCross.
+      if (unit.authorId === targetUnit.authorId) continue
+      mark(unit.tokens)
+      mark(targetUnit.tokens)
+    }
+  }
+
+  return out
+}
+
+// [Query] Cross mask in the ranking (merge-root) id space: candidates arrive as raw unit
+// ids, so a variant's cross link must also nominate its root. Without a merge or a mask
+// the set is returned untouched.
+function crossRoots(cross: Set<number> | undefined, merged?: Map<number, number>): Set<number> | undefined {
+  // Guard: no mask => the caller keeps the all-counted-ids fallback; no merge => raw ids are roots.
+  if (cross === undefined || merged === undefined || merged.size === 0) return cross
+  const out = new Set<number>()
+  for (const id of cross) out.add(merged.get(id) ?? id)
+  return out
+}
+
 // Guard: the strip can only address buckets the chat actually has. A stale cursor
 // (filter switch rebuilt the meta), a fractional index or NaN clamps here instead
 // of reading past the bucket arrays.
@@ -206,8 +318,11 @@ export function buildSlice(args: {
     stemOf?: Map<number, number>
   }
   memberUniverse: Set<number>
+  // Cross-mode candidate mask in raw unit-id space (crossCandidates); absent = the
+  // mode keeps the all-counted-ids fallback so pre-timeline callers still work.
+  cross?: Set<number>
 }): SliceMsg {
-  const { units, bucketCounts, merged, meta, view, ia, layout, memberUniverse } = args
+  const { units, bucketCounts, merged, meta, view, ia, layout, memberUniverse, cross } = args
   const bucket = clampBucket(args.bucket, meta)
   const lastBucket = Math.max(0, meta.count - 1)
 
@@ -216,7 +331,7 @@ export function buildSlice(args: {
 
   const rawCounts = countsUpTo(bucketCounts, bucket)
   const sliceCounts = foldRoots(rawCounts, merged)
-  const ranked = rankSlice(sliceCounts, view, memberUniverse)
+  const ranked = rankSlice(sliceCounts, view, memberUniverse, crossRoots(cross, merged))
   // Guard: this mode has no counts yet (author mode before their first message).
   if (ranked.length === 0) return emptySlice(bucket)
 
