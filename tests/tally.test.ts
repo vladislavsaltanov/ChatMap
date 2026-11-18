@@ -625,3 +625,71 @@ describe('pass-1 buckets', () => {
     )
   })
 })
+
+describe('slice scan', () => {
+  // An hour apart: adjacency never fires, so each unit's pair set stands alone.
+  const early: RawUnit = { id: 1, authorId: 1, dateMs: 1000, replyTo: null, bucket: 0, tokens: new Uint32Array([1, 2]) }
+  const late: RawUnit = {
+    id: 2,
+    authorId: 1,
+    dateMs: 1000 + 3_600_000,
+    replyTo: null,
+    bucket: 2,
+    tokens: new Uint32Array([3, 4]),
+  }
+
+  it('(a) юнит выше курсора исключён из пар и из частот', () => {
+    // The future reply would leak through the raw reply pass without its own cutoff.
+    const futureReply: RawUnit = {
+      id: 9,
+      authorId: 1,
+      dateMs: 2_000_000,
+      replyTo: 1,
+      bucket: 2,
+      tokens: new Uint32Array([3]),
+    }
+    const units = [early, late, futureReply]
+    // baseline: two window pairs plus the reply links (1,3) and (2,3)
+    expect(tally(units).pairs.size).toBe(4)
+
+    const res = tally(units, { maxBucket: 0 })
+    expect([...res.pairs.keys()]).toEqual([edgeKey(1, 2)])
+    // the future unit's tokens contribute no counts either
+    expect(res.counts.has(3)).toBe(false)
+    expect(res.counts.has(4)).toBe(false)
+    expect(res.counts.get(1)).toEqual(new Map([[1, 1]]))
+  })
+
+  it('(b) юнит без бакета всегда попадает в срез', () => {
+    const unstamped: RawUnit = { id: 3, authorId: 2, dateMs: 0, replyTo: null, tokens: new Uint32Array([5, 6]) }
+    for (const maxBucket of [0, 3]) {
+      const res = tally([unstamped], { maxBucket })
+      expect(res.pairs.get(edgeKey(5, 6))?.nX.get(2)).toBe(1)
+      expect(res.counts.get(5)).toEqual(new Map([[2, 1]]))
+    }
+  })
+
+  it('(c) пара с концом вне memberSet не доходит до pairs, но частоты остаются', () => {
+    // 4 is outside the mask, so the late window pair dies before edgeKey
+    const res = tally([early, late], { memberSet: new Set([1, 2, 3]) })
+    expect([...res.pairs.keys()]).toEqual([edgeKey(1, 2)])
+    // membership narrows pairs only: whole-history counts still carry token 4
+    expect(res.counts.get(4)).toEqual(new Map([[1, 1]]))
+    expect(res.counts.get(3)).toEqual(new Map([[1, 1]]))
+  })
+
+  it('(d) tally(units) совпадает с самим собой при опущенных и undefined-опциях', () => {
+    const units: RawUnit[] = [
+      early,
+      late,
+      { id: 7, authorId: 2, dateMs: 0, replyTo: 1, tokens: new Uint32Array([5, 6, 5]) },
+      { authorId: 3, dateMs: 2000, replyTo: null, tokens: new Uint32Array([7, 8]), bucket: 1 },
+    ]
+    const plain = tally(units)
+    expect(tally(units, undefined)).toEqual(plain)
+    // an empty opts object must stay the oracle too
+    expect(tally(units, {})).toEqual(plain)
+    // sanity anchor: the fixture really links across units (reply + adjacency)
+    expect(plain.pairs.get(edgeKey(5, 1))?.nCross).toBe(1)
+  })
+})

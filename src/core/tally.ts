@@ -34,6 +34,15 @@ export type TallyResult = {
   counts: Map<number, Map<AuthorId, number>>
 }
 
+// Pass-2 narrowing for a timeline slice. memberSet lives in RAW token-id space (the
+// preimage of the selected merge roots) and filters pair candidates only; maxBucket
+// drops whole units above the cursor, counts included. Without opts the scan is the
+// whole-history oracle every equivalence test compares against.
+export type ScanOpts = {
+  memberSet?: Set<number>
+  maxBucket?: number
+}
+
 // Pass-1 store: token -> author -> one counter per time bucket. Sparse by design
 // (only seen tokens and authors allocate); a cursor slice is a prefix sum over the
 // Uint32Array, so switching buckets never re-scans the units.
@@ -143,8 +152,11 @@ function countSurfaces(tokenized: TokUnit[][]): Map<string, number> {
 }
 
 // keeps the max candidate weight per pair key within one message
-function relax(best: Map<number, number>, u: number, v: number, w: number) {
+function relax(best: Map<number, number>, u: number, v: number, w: number, memberSet?: Set<number>) {
   if (u === v) return
+  // Guard: a slice keeps only links whose both words survived the cursor. Checked
+  // before edgeKey, so a dropped candidate never pays for a key.
+  if (memberSet !== undefined && (!memberSet.has(u) || !memberSet.has(v))) return
   const key = edgeKey(u, v)
   if ((best.get(key) ?? 0) < w) best.set(key, w)
 }
@@ -173,7 +185,15 @@ function isCloseGap(prevMs: number, nextMs: number): boolean {
   return gap >= 0 && gap <= ADJACENT_CLOSE_MS
 }
 
-export function tally(units: RawUnit[]): TallyResult {
+// [Query] Link scan over the units: intra-message windows, close adjacency, replies.
+// opts narrows the scan for a timeline slice: maxBucket drops units above the cursor
+// (their counts too — a future message must not page a word into the slice), while
+// memberSet filters pair candidates ONLY. Counts stay whole-history under memberSet:
+// select() ranks on them and the UI reads author leads, so a membership mask must not
+// shrink the frequencies of the words it keeps.
+export function tally(units: RawUnit[], opts?: ScanOpts): TallyResult {
+  const memberSet = opts?.memberSet
+  const maxBucket = opts?.maxBucket
   const pairs = new Map<number, PairStat>()
   const counts = new Map<number, Map<AuthorId, number>>()
   const unitsByMsgId = new Map<number, RawUnit[]>()
@@ -199,6 +219,9 @@ export function tally(units: RawUnit[]): TallyResult {
   const msgIndexById = new Map<number, number>()
 
   for (const unit of units) {
+    // Guard: a unit above the cursor is outside the slice entirely. An unstamped unit
+    // reads as bucket 0, so any non-negative cursor keeps it (undated = always shown).
+    if (maxBucket !== undefined && (unit.bucket ?? 0) > maxBucket) continue
     const msgId = unit.id ?? unit.msgId
     if (msgId !== undefined) {
       let list = unitsByMsgId.get(msgId)
@@ -241,7 +264,7 @@ export function tally(units: RawUnit[]): TallyResult {
       const a = msg.units[ui]
       for (let i = 0; i < a.length; i++) {
         for (let d = 1; d <= WINDOW_SIZE && i + d < a.length; d++) {
-          relax(best, a[i], a[i + d], 1 / d)
+          relax(best, a[i], a[i + d], 1 / d, memberSet)
         }
       }
       for (let uj = ui + 1; uj < msg.units.length; uj++) {
@@ -249,7 +272,7 @@ export function tally(units: RawUnit[]): TallyResult {
         const ca = capped(a)
         for (let i = 0; i < ca.length; i++) {
           for (let j = 0; j < b.length; j++) {
-            relax(best, ca[i], b[j], INTER_UNIT_WEIGHT)
+            relax(best, ca[i], b[j], INTER_UNIT_WEIGHT, memberSet)
           }
         }
       }
@@ -286,6 +309,9 @@ export function tally(units: RawUnit[]): TallyResult {
         for (let i = 0; i < ua.length; i++) {
           for (let j = 0; j < ub.length; j++) {
             if (ua[i] === ub[j]) continue
+            // Guard: an endpoint outside the selection can never form a shown edge,
+            // so the candidate dies before its key is built.
+            if (memberSet !== undefined && (!memberSet.has(ua[i]) || !memberSet.has(ub[j]))) continue
             const key = edgeKey(ua[i], ub[j])
             if (seenStamp.get(key) === stamp || prevA.has(key) || prevB.has(key)) continue
             seenStamp.set(key, stamp)
@@ -301,6 +327,9 @@ export function tally(units: RawUnit[]): TallyResult {
   const seenReplyStamp = new Map<number, number>()
   let replyStamp = 0
   for (const unit of units) {
+    // Guard: the reply pass reads the raw list, so the slice cutoff must drop a
+    // future reply source here too — its pairs would leak past the cursor.
+    if (maxBucket !== undefined && (unit.bucket ?? 0) > maxBucket) continue
     if (unit.replyTo == null) continue
     const targetUnits = unitsByMsgId.get(unit.replyTo)
     if (!targetUnits) continue
@@ -316,6 +345,8 @@ export function tally(units: RawUnit[]): TallyResult {
         for (let j = 0; j < ct.length; j++) {
           const v = ct[j]
           if (u === v) continue
+          // Guard: same membership rule as the adjacency pass, before the key.
+          if (memberSet !== undefined && (!memberSet.has(u) || !memberSet.has(v))) continue
           const key = edgeKey(u, v)
           if (seenReplyStamp.get(key) !== replyStamp) {
             seenReplyStamp.set(key, replyStamp)

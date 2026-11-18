@@ -2,7 +2,17 @@ import { armsFromIndex, buildArmsIndex, bundleEdges, edgeAlpha, footprintScale, 
 import { getLruCache, layout, setLruCache, type LayoutNodeInput, type LayoutResult } from './graph'
 import type { Intern } from './intern'
 import { parse } from './parse'
-import { dropEdgelessNodes, pruneSortedBackbone, select, type Selection, type SelectionEdge, type SelectionNode, type ViewCfg } from './select'
+import {
+  dropEdgelessNodes,
+  memberPreimage,
+  pruneSortedBackbone,
+  select,
+  topIds,
+  type Selection,
+  type SelectionEdge,
+  type SelectionNode,
+  type ViewCfg,
+} from './select'
 import { PipelineCache, countsUpTo, tally, type PipelineCallbacks, type ResolveResult } from './tally'
 import type {
   AuthorId,
@@ -220,10 +230,13 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
   })
   const { ia, units, merged, meta } = res
   // Pass 1 is bucketed; the map wants whole-history totals, so materialize the prefix
-  // up to the last bucket. Pairs still come from the full tally scan: limiting the scan
-  // to the selected words is the next step, and select() needs real pairs either way.
+  // up to the last bucket. Pass 2 then scans pairs only for the cursor's words:
+  // memberSet is the raw-id preimage of the ranked roots, so the scan skips every
+  // pair select() would drop anyway. Counts stay whole-history on both stages.
   const counts = countsUpTo(res.bucketCounts, meta.count - 1)
-  const { pairs } = tally(units)
+  const selected = topIds(counts, currentViewCfg, merged)
+  const memberSet = memberPreimage(counts, selected, merged)
+  const { pairs } = tally(units, { memberSet })
 
   // 'ready' needs the tallied counts, so it goes out here (full run only) and before any 'map'
   if (fullRun && authorNames) {
