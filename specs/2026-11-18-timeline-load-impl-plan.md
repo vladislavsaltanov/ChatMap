@@ -110,10 +110,9 @@ export function tally(units: RawUnit[], opts?: ScanOpts): TallyResult
 
 ### Task 4: Срез как чистая функция — `buildSlice`
 
-**Files:**
-- Create: `src/core/slice.ts`
-- Modify: `src/core/types.ts`, `src/core/worker.ts`
-- Test: `tests/slice.test.ts`
+**Files (parallel-batch split per APPEND_SYSTEM §3 — no two writers on one file):**
+- Task 4a (PARALLEL with Task 3 — disjoint files): Create `src/core/slice.ts` + `tests/slice.test.ts`; `SliceNode`/`SliceMsg` types live IN `slice.ts`. Imports of `countsUpTo`/`ScanOpts` are pinned by Tasks 2-3 and may not exist yet when 4a starts — write against the pinned shapes, never define them here.
+- Task 4b (spine, sequential after Task 3): Modify `src/core/types.ts` (`WorkerOut |= SliceMsg` via import from slice.ts) + `src/core/worker.ts` (slice handler + `lastPinned` layout state).
 
 **Interfaces (Produces, для Tasks 6-8):**
 ```ts
@@ -135,9 +134,10 @@ export function buildSlice(args: {
 Worker: `self.onmessage` += `{type:'slice'}` → `buildSlice` → `send(msg)`; состояние `memberUniverse`/`layout`/`meta` хранится с open (layout-результат уже сохраняется неявно — вынести в module-scope переменную `lastPinned`).
 
 - [ ] Шаг 4.1 — TDD: чистые тесты buildSlice на мини-чате: срез меньших индексов даёт меньшие counts; рёбра только внутри пин-множества; `maxBucket` сквозной; размеры уважают `footprintScale` вселенной; edges-геометрия идентична полному бакету при T=last (тракт-коэффициенты).
-- [ ] Шаг 4.2 — Реализация `slice.ts` + types + worker-хендлер.
-- [ ] Шаг 4.3 — `npx vitest run tests/slice.test.ts` + typecheck → PASS.
-- [ ] Шаг 4.4 — Commit: `feat(core): pure slice builder over pinned layout`.
+- [ ] Шаг 4.2 (a) — Реализация `slice.ts` (parallel track; unresolved-import diagnostics on `./tally` countsUpTo/ScanOpts are EXPECTED until the spine lands).
+- [ ] Шаг 4.3 (a) — `npx vitest run tests/slice.test.ts` + typecheck → PASS (Main runs after the spine batch lands).
+- [ ] Шаг 4.4 (a) — Commit: `feat(core): pure slice builder over pinned layout`.
+- [ ] Шаг 4.5 (b, после Task 3) — Обвязка types.ts + worker-хендлер; verify: `npx vitest run tests/slice.test.ts` + typecheck; Commit: `feat(core): worker serves timeline slices`.
 
 ### Task 5: Гейт скорости/памяти фазы 1
 
