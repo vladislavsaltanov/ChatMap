@@ -1,4 +1,8 @@
 import type { ViewCfg } from './select'
+// Type-only on purpose: slice.ts reads AuthorId/WorkerEdge back from this module,
+// so a value import here would close a module cycle. `import type` is erased at
+// build, which keeps the message contract in one place and the graph acyclic.
+import type { SliceMsg } from './slice'
 
 export type Entity = 'plain'|'link'|'code'|'mention'|'other'
 export type TextPart = { text: string; entity: Entity }
@@ -55,6 +59,23 @@ export type WorkerEdge = {
 export type WorkerIn =
   | { type: 'open'; buf: ArrayBuffer; seed?: number }
   | { type: 'update'; cfg: FilterCfg & ViewCfg }
+  // [Query] Timeline cursor: one frame at a bucket index, answered by a 'slice'.
+  // Latest-wins lives on the sender side, so no request id travels here.
+  | { type: 'slice'; bucket: number }
+  // [Command] The strip is about to be shown: answer with the bucket meta once.
+  // No recount — pass 1 already produced it, so this is a cache read.
+  | { type: 'timelineOn' }
+
+// One-shot strip layout data for the UI; msgCounts is a plain array so the
+// structured clone stays simple (the strip renders it as tick heights).
+export type TimelineMetaMsg = {
+  type: 'timelineMeta'
+  eligible: boolean
+  count: number
+  monthStarts: number[] // count+1 boundaries, ms
+  labels: string[] // count cursor labels
+  msgCounts: number[] // count: messages per bucket, service included
+}
 
 export type WorkerOut =
   | { type: 'progress'; done: number; total: number; stage?: string }
@@ -69,6 +90,11 @@ export type WorkerOut =
     }
   | { type: 'warn'; message: string }
   | { type: 'error'; message: string }
+  // One timeline frame over the pinned layout; the member is imported rather than
+  // restated so `type: 'slice'` narrows against a single definition.
+  | SliceMsg
+  // Strip layout for the timeline UI; sent on demand, never on every open.
+  | TimelineMetaMsg
 
 export type MapMsg = Extract<WorkerOut, { type: 'map' }>
 

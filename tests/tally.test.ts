@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Intern, MAX_TOKEN_ID } from '../src/core/intern'
-import { buildUnits, dropFor, edgeKey, filterCacheKey, mergeCacheKey, parseEdgeKey, PipelineCache, tally, type PairStat, type RawUnit } from '../src/core/tally'
+import { buildUnits, countByBuckets, countsUpTo, dropFor, edgeKey, filterCacheKey, mergeCacheKey, parseEdgeKey, PipelineCache, tally, type PairStat, type RawUnit, type ResolveResult } from '../src/core/tally'
 import { tokenize } from '../src/core/tokenize'
 import type { ChatExport, FilterCfg, Message } from '../src/core/types'
 
@@ -282,6 +282,10 @@ const oracle = (chat: ChatExport, cfg: FilterCfg) => {
   return { ia, tallyResult: tally(buildUnits(chat, ia, dropFor(cfg))) }
 }
 
+// pass-1 whole-history counts: what the open path uses instead of tally().counts
+const fullCounts = (res: ResolveResult): Map<number, Map<number, number>> =>
+  countsUpTo(res.bucketCounts, res.meta.count - 1)
+
 describe('buildUnits progress', () => {
   it('calls onProgress(doneMsgs, totalMsgs) at every 5000th message index', () => {
     const chatOf = (n: number): ChatExport => ({
@@ -334,27 +338,27 @@ describe('PipelineCache', () => {
     ],
   }
 
-  it('toggling stopwords recomputes tally and merge without re-tokenizing', () => {
+  it('toggling stopwords recomputes counts and merge without re-tokenizing', () => {
     const cache = new PipelineCache()
     const cfg = { ...CFG, smartMerge: true }
     const before = cache.resolve(chat, cfg)
 
     const onTokenize = vi.fn()
-    const onTally = vi.fn()
+    const onCount = vi.fn()
     const onMerge = vi.fn()
     const after = cache.resolve(chat, { ...cfg, stopwords: true }, {
       onTokenizeStart: onTokenize,
-      onTallyStart: onTally,
+      onCountStart: onCount,
       onMergeStart: onMerge,
     })
     expect(onTokenize).not.toHaveBeenCalled()
     expect(tokenizeSpy).toHaveBeenCalledTimes(3)
-    expect(onTally).toHaveBeenCalledTimes(1)
+    expect(onCount).toHaveBeenCalledTimes(1)
     expect(onMerge).toHaveBeenCalledTimes(1)
-    expect(after).toMatchObject({ tallyCached: false, mergeCached: false })
-    // 'ну' and 'про' are stopwords: kept now, so the tally must change
-    expect(after.tallyResult).not.toEqual(before.tallyResult)
-    expect(after.tallyResult).toEqual(oracle(chat, { ...cfg, stopwords: true }).tallyResult)
+    expect(after.countsCached).toBe(false)
+    // 'ну' and 'про' are stopwords: kept now, so the counts must change
+    expect(fullCounts(after)).not.toEqual(fullCounts(before))
+    expect(fullCounts(after)).toEqual(oracle(chat, { ...cfg, stopwords: true }).tallyResult.counts)
   })
 
   it('toggling smartMerge recomputes only the merge', () => {
@@ -362,46 +366,46 @@ describe('PipelineCache', () => {
     const off = cache.resolve(chat, CFG)
     expect(off.merged).toBeUndefined()
 
-    const onTally = vi.fn()
+    const onCount = vi.fn()
     const onMerge = vi.fn()
-    const on = cache.resolve(chat, { ...CFG, smartMerge: true }, { onTallyStart: onTally, onMergeStart: onMerge })
-    expect(onTally).not.toHaveBeenCalled()
+    const on = cache.resolve(chat, { ...CFG, smartMerge: true }, { onCountStart: onCount, onMergeStart: onMerge })
+    expect(onCount).not.toHaveBeenCalled()
     expect(onMerge).toHaveBeenCalledTimes(1)
-    expect(on).toMatchObject({ tallyCached: true, mergeCached: false })
-    expect(on.tallyResult).toBe(off.tallyResult)
+    expect(on.countsCached).toBe(true)
+    expect(on.units).toBe(off.units)
     expect(on.ia).toBe(off.ia)
     expect(on.merged).toBeInstanceOf(Map)
 
-    // switching off keeps the tally; switching back on reuses the stored merge
+    // switching off keeps the counts slot; switching back on reuses the stored merge
     const offAgain = cache.resolve(chat, CFG)
     expect(offAgain.merged).toBeUndefined()
-    expect(offAgain).toMatchObject({ tallyCached: true, mergeCached: true })
+    expect(offAgain.countsCached).toBe(true)
     const onAgain = cache.resolve(chat, { ...CFG, smartMerge: true })
-    expect(onAgain).toMatchObject({ tallyCached: true, mergeCached: true })
+    expect(onAgain.countsCached).toBe(true)
     expect(onAgain.merged).toBe(on.merged)
   })
 
-  it('toggling a filter recomputes tally and merge without re-tokenizing', () => {
+  it('toggling a filter recomputes counts and merge without re-tokenizing', () => {
     const cache = new PipelineCache()
     const cfg = { ...CFG, smartMerge: true }
     const before = cache.resolve(chat, cfg)
 
     const onTokenize = vi.fn()
-    const onTally = vi.fn()
+    const onCount = vi.fn()
     const onMerge = vi.fn()
     const after = cache.resolve(chat, { ...cfg, mat: true }, {
       onTokenizeStart: onTokenize,
-      onTallyStart: onTally,
+      onCountStart: onCount,
       onMergeStart: onMerge,
     })
     expect(onTokenize).not.toHaveBeenCalled()
     expect(tokenizeSpy).toHaveBeenCalledTimes(3)
-    expect(onTally).toHaveBeenCalledTimes(1)
+    expect(onCount).toHaveBeenCalledTimes(1)
     expect(onMerge).toHaveBeenCalledTimes(1)
-    expect(after).toMatchObject({ tallyCached: false, mergeCached: false })
-    // 'блять' is kept now, so the tally must actually change
-    expect(after.tallyResult).not.toEqual(before.tallyResult)
-    expect(after.tallyResult).toEqual(oracle(chat, { ...cfg, mat: true }).tallyResult)
+    expect(after.countsCached).toBe(false)
+    // 'блять' is kept now, so the counts must actually change
+    expect(fullCounts(after)).not.toEqual(fullCounts(before))
+    expect(fullCounts(after)).toEqual(oracle(chat, { ...cfg, mat: true }).tallyResult.counts)
   })
 
   it('a different ChatExport object tokenizes again', () => {
@@ -429,18 +433,34 @@ describe('PipelineCache', () => {
     const cfgB = { ...cfgA, mat: true }
     cache.resolve(chat, cfgA)
 
-    const onTally = vi.fn()
+    const onCount = vi.fn()
     const onMerge = vi.fn()
-    cache.resolve(chat, cfgB, { onTallyStart: onTally, onMergeStart: onMerge })
-    expect(onTally).toHaveBeenCalledTimes(1)
+    cache.resolve(chat, cfgB, { onCountStart: onCount, onMergeStart: onMerge })
+    expect(onCount).toHaveBeenCalledTimes(1)
     expect(onMerge).toHaveBeenCalledTimes(1)
 
-    // Coming back must reuse the first slot instead of paying for the tally again.
-    const back = cache.resolve(chat, cfgA, { onTallyStart: onTally, onMergeStart: onMerge })
-    expect(onTally).toHaveBeenCalledTimes(1)
+    // Coming back must reuse the first slot instead of paying for pass 1 again.
+    const back = cache.resolve(chat, cfgA, { onCountStart: onCount, onMergeStart: onMerge })
+    expect(onCount).toHaveBeenCalledTimes(1)
     expect(onMerge).toHaveBeenCalledTimes(1)
-    expect(back).toMatchObject({ tallyCached: true, mergeCached: true })
-    expect(back.tallyResult).toEqual(oracle(chat, cfgA).tallyResult)
+    expect(back.countsCached).toBe(true)
+    expect(fullCounts(back)).toEqual(oracle(chat, cfgA).tallyResult.counts)
+  })
+
+  it('reports countsCached as false on a miss and true on an A->B->A reuse', () => {
+    const cache = new PipelineCache()
+    const cfgA = { ...CFG, smartMerge: true }
+    const cfgB = { ...cfgA, mat: true }
+    const firstA = cache.resolve(chat, cfgA)
+    const b = cache.resolve(chat, cfgB)
+    const secondA = cache.resolve(chat, cfgA)
+    expect(firstA.countsCached).toBe(false)
+    expect(b.countsCached).toBe(false)
+    expect(secondA.countsCached).toBe(true)
+    // the reused slot hands back the very same pass-1 store
+    expect(secondA.units).toBe(firstA.units)
+    expect(secondA.bucketCounts).toBe(firstA.bucketCounts)
+    expect(b.units).not.toBe(firstA.units)
   })
 
   it('evicts the least recently used filter slot beyond the cap', () => {
@@ -452,12 +472,12 @@ describe('PipelineCache', () => {
     // The third distinct filter key drops the least recently used one (CFG).
     cache.resolve(chat, cfgC)
 
-    const onTally = vi.fn()
-    cache.resolve(chat, cfgB, { onTallyStart: onTally })
-    expect(onTally).not.toHaveBeenCalled()
+    const onCount = vi.fn()
+    cache.resolve(chat, cfgB, { onCountStart: onCount })
+    expect(onCount).not.toHaveBeenCalled()
 
-    cache.resolve(chat, CFG, { onTallyStart: onTally })
-    expect(onTally).toHaveBeenCalledTimes(1)
+    cache.resolve(chat, CFG, { onCountStart: onCount })
+    expect(onCount).toHaveBeenCalledTimes(1)
   })
 
   it('matches the uncached buildUnits + tally result across a sequence of filter changes', () => {
@@ -472,7 +492,7 @@ describe('PipelineCache', () => {
     for (const cfg of cfgs) {
       const got = cache.resolve(chat, cfg)
       const want = oracle(chat, cfg)
-      expect(got.tallyResult).toEqual(want.tallyResult)
+      expect(fullCounts(got)).toEqual(want.tallyResult.counts)
       expect(got.ia.idToCanon).toEqual(want.ia.idToCanon)
     }
   })
@@ -498,5 +518,178 @@ describe('PipelineCache', () => {
     expect(pronoun).toBeDefined()
     expect(idOf('менять')).not.toBe(pronoun)
     expect(idOf('меняет')).not.toBe(pronoun)
+  })
+})
+
+// Seven consecutive months (март..сентябрь 2024) => the month regime, seven buckets.
+const monthChat: ChatExport = {
+  name: 'months',
+  chatType: 'personal_chat',
+  messages: [
+    textMsg(1, 1, 'март слово', new Date(2024, 2, 10).getTime()),
+    textMsg(2, 1, 'апрель слово', new Date(2024, 3, 10).getTime()),
+    textMsg(3, 2, 'май слово', new Date(2024, 4, 10).getTime()),
+    textMsg(4, 2, 'июнь слово', new Date(2024, 5, 10).getTime()),
+    textMsg(5, 1, 'июль слово', new Date(2024, 6, 10).getTime()),
+    textMsg(6, 1, 'август слово', new Date(2024, 7, 10).getTime()),
+    textMsg(7, 1, 'сентябрь слово', new Date(2024, 8, 10).getTime()),
+  ],
+}
+
+// brute-force prefix over the unit list: the oracle for countsUpTo
+const prefixOracle = (units: RawUnit[], t: number): Map<number, Map<number, number>> => {
+  const out = new Map<number, Map<number, number>>()
+  for (const unit of units) {
+    // same guard as countByBuckets: an unstamped unit belongs to bucket 0
+    if ((unit.bucket ?? 0) > t) continue
+    for (const tokId of unit.tokens) {
+      let byAuthor = out.get(tokId)
+      if (!byAuthor) {
+        byAuthor = new Map()
+        out.set(tokId, byAuthor)
+      }
+      byAuthor.set(unit.authorId, (byAuthor.get(unit.authorId) ?? 0) + 1)
+    }
+  }
+  return out
+}
+
+const totalCounts = (counts: Map<number, Map<number, number>>): number => {
+  let sum = 0
+  for (const byAuthor of counts.values()) for (const cnt of byAuthor.values()) sum += cnt
+  return sum
+}
+
+// token id of a surface form, by scanning the intern table (ids are not stable a priori)
+const idOfForm = (ia: Intern, form: string): number => {
+  for (const [id, forms] of ia.forms) if (forms.has(form)) return id
+  return -1
+}
+
+describe('pass-1 buckets', () => {
+  it('stamps unit.bucket from BucketMeta and leaves it undefined without one', () => {
+    // buildUnits keeps its old signature: no meta, no stamps.
+    const unstamped = buildUnits(monthChat, new Intern(), dropFor(CFG))
+    expect(unstamped.length).toBe(7)
+    expect(unstamped.every((unit) => unit.bucket === undefined)).toBe(true)
+
+    const res = new PipelineCache().resolve(monthChat, CFG)
+    expect(res.meta.eligible).toBe(true)
+    expect(res.meta.count).toBe(7) // март..сентябрь
+    expect(res.units.length).toBe(unstamped.length)
+    for (const unit of res.units) expect(unit.bucket).toBe(res.meta.bucketOf(unit.dateMs))
+    // one message per month, exported in order: the stamps are 0..6
+    expect(res.units.map((unit) => unit.bucket)).toEqual([0, 1, 2, 3, 4, 5, 6])
+  })
+
+  it('countsUpTo sums buckets up to and including t, per author', () => {
+    const res = new PipelineCache().resolve(monthChat, CFG)
+    const full = fullCounts(res)
+    for (let t = 0; t < res.meta.count; t++) {
+      expect(countsUpTo(res.bucketCounts, t)).toEqual(prefixOracle(res.units, t))
+    }
+    // inclusive: t=0 is the first month alone (2 tokens), t=2 adds two more months
+    expect(totalCounts(countsUpTo(res.bucketCounts, 0))).toBe(2)
+    expect(totalCounts(countsUpTo(res.bucketCounts, 2))).toBe(6)
+    expect(totalCounts(full)).toBe(14)
+    // the cursor's last bucket is count-1; asking past it clamps to full history
+    expect(countsUpTo(res.bucketCounts, res.meta.count)).toEqual(full)
+  })
+
+  it('ignores the buckets above t, per author', () => {
+    const res = new PipelineCache().resolve(monthChat, CFG)
+    // 'май' (author 2) appears only in bucket 2; 'март' (author 1) only in bucket 0
+    const mayId = idOfForm(res.ia, 'май')
+    const marchId = idOfForm(res.ia, 'март')
+    expect(countsUpTo(res.bucketCounts, 1).has(mayId)).toBe(false)
+    expect(countsUpTo(res.bucketCounts, 2).get(mayId)).toEqual(new Map([[2, 1]]))
+    expect(countsUpTo(res.bucketCounts, 0).get(marchId)).toEqual(new Map([[1, 1]]))
+    expect(countsUpTo(res.bucketCounts, 1).get(marchId)).toEqual(new Map([[1, 1]]))
+  })
+
+  it('keeps a unit without a bucket in bucket 0, so no slice drops it', () => {
+    const units: RawUnit[] = [
+      { authorId: 1, dateMs: 0, replyTo: null, tokens: new Uint32Array([5]) },
+      { authorId: 1, dateMs: 0, replyTo: null, tokens: new Uint32Array([5]), bucket: 0 },
+      { authorId: 2, dateMs: 0, replyTo: null, tokens: new Uint32Array([5]), bucket: 3 },
+    ]
+    const bc = countByBuckets(units, 4)
+    // the unstamped unit counts exactly like an explicit bucket-0 one
+    expect(countsUpTo(bc, 0).get(5)).toEqual(new Map([[1, 2]]))
+    expect(countsUpTo(bc, 2).get(5)).toEqual(new Map([[1, 2]]))
+    expect(countsUpTo(bc, 3).get(5)).toEqual(
+      new Map([
+        [1, 2],
+        [2, 1],
+      ]),
+    )
+  })
+})
+
+describe('slice scan', () => {
+  // An hour apart: adjacency never fires, so each unit's pair set stands alone.
+  const early: RawUnit = { id: 1, authorId: 1, dateMs: 1000, replyTo: null, bucket: 0, tokens: new Uint32Array([1, 2]) }
+  const late: RawUnit = {
+    id: 2,
+    authorId: 1,
+    dateMs: 1000 + 3_600_000,
+    replyTo: null,
+    bucket: 2,
+    tokens: new Uint32Array([3, 4]),
+  }
+
+  it('(a) юнит выше курсора исключён из пар и из частот', () => {
+    // The future reply would leak through the raw reply pass without its own cutoff.
+    const futureReply: RawUnit = {
+      id: 9,
+      authorId: 1,
+      dateMs: 2_000_000,
+      replyTo: 1,
+      bucket: 2,
+      tokens: new Uint32Array([3]),
+    }
+    const units = [early, late, futureReply]
+    // baseline: two window pairs plus the reply links (1,3) and (2,3)
+    expect(tally(units).pairs.size).toBe(4)
+
+    const res = tally(units, { maxBucket: 0 })
+    expect([...res.pairs.keys()]).toEqual([edgeKey(1, 2)])
+    // the future unit's tokens contribute no counts either
+    expect(res.counts.has(3)).toBe(false)
+    expect(res.counts.has(4)).toBe(false)
+    expect(res.counts.get(1)).toEqual(new Map([[1, 1]]))
+  })
+
+  it('(b) юнит без бакета всегда попадает в срез', () => {
+    const unstamped: RawUnit = { id: 3, authorId: 2, dateMs: 0, replyTo: null, tokens: new Uint32Array([5, 6]) }
+    for (const maxBucket of [0, 3]) {
+      const res = tally([unstamped], { maxBucket })
+      expect(res.pairs.get(edgeKey(5, 6))?.nX.get(2)).toBe(1)
+      expect(res.counts.get(5)).toEqual(new Map([[2, 1]]))
+    }
+  })
+
+  it('(c) пара с концом вне memberSet не доходит до pairs, но частоты остаются', () => {
+    // 4 is outside the mask, so the late window pair dies before edgeKey
+    const res = tally([early, late], { memberSet: new Set([1, 2, 3]) })
+    expect([...res.pairs.keys()]).toEqual([edgeKey(1, 2)])
+    // membership narrows pairs only: whole-history counts still carry token 4
+    expect(res.counts.get(4)).toEqual(new Map([[1, 1]]))
+    expect(res.counts.get(3)).toEqual(new Map([[1, 1]]))
+  })
+
+  it('(d) tally(units) совпадает с самим собой при опущенных и undefined-опциях', () => {
+    const units: RawUnit[] = [
+      early,
+      late,
+      { id: 7, authorId: 2, dateMs: 0, replyTo: 1, tokens: new Uint32Array([5, 6, 5]) },
+      { authorId: 3, dateMs: 2000, replyTo: null, tokens: new Uint32Array([7, 8]), bucket: 1 },
+    ]
+    const plain = tally(units)
+    expect(tally(units, undefined)).toEqual(plain)
+    // an empty opts object must stay the oracle too
+    expect(tally(units, {})).toEqual(plain)
+    // sanity anchor: the fixture really links across units (reply + adjacency)
+    expect(plain.pairs.get(edgeKey(5, 1))?.nCross).toBe(1)
   })
 })

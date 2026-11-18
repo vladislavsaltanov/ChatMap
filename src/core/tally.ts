@@ -1,6 +1,7 @@
 import { compileWordRules, isStopword } from './filters'
 import { Intern, MAX_TOKEN_ID } from './intern'
 import { smartMerge } from './smart-merge'
+import { buildBucketMeta, type BucketMeta } from './timebuckets'
 import { tokenize } from './tokenize'
 import type { AuthorId, ChatExport, FilterCfg, Message, Tok, TokUnit } from './types'
 
@@ -20,6 +21,7 @@ export type RawUnit = {
   dateMs: number
   replyTo: number | null
   tokens: Uint32Array
+  bucket?: number // pass-1 time stamp; undefined = unstamped, always in a slice
 }
 
 export type PairStat = {
@@ -31,6 +33,20 @@ export type TallyResult = {
   pairs: Map<number, PairStat>
   counts: Map<number, Map<AuthorId, number>>
 }
+
+// Pass-2 narrowing for a timeline slice. memberSet lives in RAW token-id space (the
+// preimage of the selected merge roots) and filters pair candidates only; maxBucket
+// drops whole units above the cursor, counts included. Without opts the scan is the
+// whole-history oracle every equivalence test compares against.
+export type ScanOpts = {
+  memberSet?: Set<number>
+  maxBucket?: number
+}
+
+// Pass-1 store: token -> author -> one counter per time bucket. Sparse by design
+// (only seen tokens and authors allocate); a cursor slice is a prefix sum over the
+// Uint32Array, so switching buckets never re-scans the units.
+export type BucketCounts = Map<number, Map<AuthorId, Uint32Array>>
 
 // Numeric pair key min * KEY_BASE + max: exact while token ids stay in
 // [1, MAX_TOKEN_ID] (chat vocabularies are orders of magnitude smaller).
@@ -72,14 +88,19 @@ function tokenizeMessage(message: Message): TokUnit[] {
   return message.kind === 'service' || message.parts.length === 0 ? [] : tokenize(message.parts)
 }
 
-// interns the kept tokens of each sentence unit and appends one RawUnit per unit
+// Interns the kept tokens of each sentence unit and appends one RawUnit per unit.
+// With a BucketMeta the units carry the message's time bucket (pass 1); without one
+// the stamp stays undefined, which every slice treats as "always included".
 function addUnits(
   out: RawUnit[],
   message: Message,
   tokUnits: TokUnit[],
   ia: Intern,
-  dropTok: (t: Tok) => boolean
+  dropTok: (t: Tok) => boolean,
+  meta?: BucketMeta
 ) {
+  // One lookup per message: every unit of a message shares its date.
+  const bucket = meta?.bucketOf(message.dateMs)
   for (const unit of tokUnits) {
     const kept = unit.filter((t) => !dropTok(t))
     if (kept.length === 0) continue
@@ -96,6 +117,7 @@ function addUnits(
       dateMs: message.dateMs,
       replyTo: message.replyTo,
       tokens: ids,
+      bucket,
     })
   }
 }
@@ -130,8 +152,11 @@ function countSurfaces(tokenized: TokUnit[][]): Map<string, number> {
 }
 
 // keeps the max candidate weight per pair key within one message
-function relax(best: Map<number, number>, u: number, v: number, w: number) {
+function relax(best: Map<number, number>, u: number, v: number, w: number, memberSet?: Set<number>) {
   if (u === v) return
+  // Guard: a slice keeps only links whose both words survived the cursor. Checked
+  // before edgeKey, so a dropped candidate never pays for a key.
+  if (memberSet !== undefined && (!memberSet.has(u) || !memberSet.has(v))) return
   const key = edgeKey(u, v)
   if ((best.get(key) ?? 0) < w) best.set(key, w)
 }
@@ -160,7 +185,15 @@ function isCloseGap(prevMs: number, nextMs: number): boolean {
   return gap >= 0 && gap <= ADJACENT_CLOSE_MS
 }
 
-export function tally(units: RawUnit[]): TallyResult {
+// [Query] Link scan over the units: intra-message windows, close adjacency, replies.
+// opts narrows the scan for a timeline slice: maxBucket drops units above the cursor
+// (their counts too — a future message must not page a word into the slice), while
+// memberSet filters pair candidates ONLY. Counts stay whole-history under memberSet:
+// select() ranks on them and the UI reads author leads, so a membership mask must not
+// shrink the frequencies of the words it keeps.
+export function tally(units: RawUnit[], opts?: ScanOpts): TallyResult {
+  const memberSet = opts?.memberSet
+  const maxBucket = opts?.maxBucket
   const pairs = new Map<number, PairStat>()
   const counts = new Map<number, Map<AuthorId, number>>()
   const unitsByMsgId = new Map<number, RawUnit[]>()
@@ -186,6 +219,9 @@ export function tally(units: RawUnit[]): TallyResult {
   const msgIndexById = new Map<number, number>()
 
   for (const unit of units) {
+    // Guard: a unit above the cursor is outside the slice entirely. An unstamped unit
+    // reads as bucket 0, so any non-negative cursor keeps it (undated = always shown).
+    if (maxBucket !== undefined && (unit.bucket ?? 0) > maxBucket) continue
     const msgId = unit.id ?? unit.msgId
     if (msgId !== undefined) {
       let list = unitsByMsgId.get(msgId)
@@ -228,7 +264,7 @@ export function tally(units: RawUnit[]): TallyResult {
       const a = msg.units[ui]
       for (let i = 0; i < a.length; i++) {
         for (let d = 1; d <= WINDOW_SIZE && i + d < a.length; d++) {
-          relax(best, a[i], a[i + d], 1 / d)
+          relax(best, a[i], a[i + d], 1 / d, memberSet)
         }
       }
       for (let uj = ui + 1; uj < msg.units.length; uj++) {
@@ -236,7 +272,7 @@ export function tally(units: RawUnit[]): TallyResult {
         const ca = capped(a)
         for (let i = 0; i < ca.length; i++) {
           for (let j = 0; j < b.length; j++) {
-            relax(best, ca[i], b[j], INTER_UNIT_WEIGHT)
+            relax(best, ca[i], b[j], INTER_UNIT_WEIGHT, memberSet)
           }
         }
       }
@@ -273,6 +309,9 @@ export function tally(units: RawUnit[]): TallyResult {
         for (let i = 0; i < ua.length; i++) {
           for (let j = 0; j < ub.length; j++) {
             if (ua[i] === ub[j]) continue
+            // Guard: an endpoint outside the selection can never form a shown edge,
+            // so the candidate dies before its key is built.
+            if (memberSet !== undefined && (!memberSet.has(ua[i]) || !memberSet.has(ub[j]))) continue
             const key = edgeKey(ua[i], ub[j])
             if (seenStamp.get(key) === stamp || prevA.has(key) || prevB.has(key)) continue
             seenStamp.set(key, stamp)
@@ -288,6 +327,9 @@ export function tally(units: RawUnit[]): TallyResult {
   const seenReplyStamp = new Map<number, number>()
   let replyStamp = 0
   for (const unit of units) {
+    // Guard: the reply pass reads the raw list, so the slice cutoff must drop a
+    // future reply source here too — its pairs would leak past the cursor.
+    if (maxBucket !== undefined && (unit.bucket ?? 0) > maxBucket) continue
     if (unit.replyTo == null) continue
     const targetUnits = unitsByMsgId.get(unit.replyTo)
     if (!targetUnits) continue
@@ -303,6 +345,8 @@ export function tally(units: RawUnit[]): TallyResult {
         for (let j = 0; j < ct.length; j++) {
           const v = ct[j]
           if (u === v) continue
+          // Guard: same membership rule as the adjacency pass, before the key.
+          if (memberSet !== undefined && (!memberSet.has(u) || !memberSet.has(v))) continue
           const key = edgeKey(u, v)
           if (seenReplyStamp.get(key) !== replyStamp) {
             seenReplyStamp.set(key, replyStamp)
@@ -314,6 +358,58 @@ export function tally(units: RawUnit[]): TallyResult {
   }
 
   return { pairs, counts }
+}
+
+// [Query] Pass-1 frequencies: one linear pass over the units, bucketed by the stamp
+// addUnits wrote. Guard: a unit without a stamp (undated, or built without meta)
+// counts into bucket 0, so a timeline slice can never drop it.
+export function countByBuckets(units: RawUnit[], bucketCount: number): BucketCounts {
+  const out: BucketCounts = new Map()
+  for (const unit of units) {
+    // Guard: only a missing stamp is special; stamps arrive upper-clamped from BucketMeta.
+    const bucket = unit.bucket ?? 0
+    for (let i = 0; i < unit.tokens.length; i++) {
+      const tokId = unit.tokens[i]
+      let byAuthor = out.get(tokId)
+      // Sparse store: rows appear only for tokens and authors actually seen.
+      if (!byAuthor) {
+        byAuthor = new Map()
+        out.set(tokId, byAuthor)
+      }
+      let perBucket = byAuthor.get(unit.authorId)
+      if (!perBucket) {
+        perBucket = new Uint32Array(bucketCount)
+        byAuthor.set(unit.authorId, perBucket)
+      }
+      perBucket[bucket] += 1
+    }
+  }
+  return out
+}
+
+// [Query] Prefix-sum view of pass 1 for the timeline cursor: buckets 0..t inclusive
+// (t is a cursor index, not a length), per author. Guard: t past the last bucket
+// clamps to full history; guard: an author whose prefix is zero is left out of the
+// sparse map, exactly like a token that never appears in this slice.
+export function countsUpTo(bc: BucketCounts, t: number): Map<number, Map<AuthorId, number>> {
+  const out = new Map<number, Map<AuthorId, number>>()
+  for (const [tokId, byAuthor] of bc) {
+    let authorMap: Map<AuthorId, number> | undefined
+    for (const [authorId, perBucket] of byAuthor) {
+      const last = Math.min(t, perBucket.length - 1)
+      // Guard: a negative horizon (no bucket yet) contributes nothing.
+      if (last < 0) continue
+      let sum = 0
+      for (let b = 0; b <= last; b++) sum += perBucket[b]
+      // Guard: zero-prefix authors stay absent instead of bloating the map.
+      if (sum === 0) continue
+      if (!authorMap) authorMap = new Map()
+      authorMap.set(authorId, sum)
+    }
+    // Guard: a token with no surviving author never reaches the selector.
+    if (authorMap) out.set(tokId, authorMap)
+  }
+  return out
 }
 
 // Show-flags: a checked category stays on the map, an unchecked one is dropped
@@ -338,10 +434,10 @@ export function mergeCacheKey(cfg: FilterCfg): string {
 }
 
 // same inputs as worker.ts runPipeline: total count per id, canon word for plain ids
-function mergeTokens(tallyResult: TallyResult, ia: Intern): Map<number, number> {
+function mergeTokens(counts: Map<number, Map<AuthorId, number>>, ia: Intern): Map<number, number> {
   const freq = new Map<number, number>()
   const idWords = new Map<number, string>()
-  for (const [id, authorMap] of tallyResult.counts) {
+  for (const [id, authorMap] of counts) {
     let sum = 0
     for (const cnt of authorMap.values()) sum += cnt
     freq.set(id, sum)
@@ -356,21 +452,24 @@ function mergeTokens(tallyResult: TallyResult, ia: Intern): Map<number, number> 
 export type PipelineCallbacks = {
   onTokenizeStart?: () => void
   onTokenizeProgress?: Progress
-  onTallyStart?: () => void
+  onCountStart?: () => void
   onMergeStart?: () => void
 }
 
-// a *Cached flag is true when that stage did not run (reused, or switched off)
-export type PipelineResult = {
+// Pass-1 output factory for the map pipeline: units still feed the (Task 3) slice
+// scan, bucketCounts feed every timeline cursor, countsCached marks a reused slot.
+export type ResolveResult = {
   ia: Intern
-  tallyResult: TallyResult
+  units: RawUnit[]
   merged?: Map<number, number>
-  tallyCached: boolean
-  mergeCached: boolean
+  meta: BucketMeta
+  bucketCounts: BucketCounts
+  countsCached: boolean
 }
 
 // Filter toggles in the UI are A->B->A, so two slots make the return trip free.
-// Each tally slot keeps a full pairs map: two slots = two tallies alive at once.
+// A slot holds one filtered unit list plus its bucketed counts; the full pairs map
+// is gone (pass 2 scans on demand), so two slots are far cheaper than two tallies.
 // shortcut: fixed two slots, no byte accounting; raise slots only with a memory budget
 const CACHE_SLOTS = 2
 
@@ -383,21 +482,26 @@ function remember<K, V>(map: Map<K, V>, key: K, value: V, slots: number): V {
   return value
 }
 
-// Keeps one chat, its tokens, and up to CACHE_SLOTS tally/merge entries.
-// Tokenization is chat-scoped; only the filter-dependent stages are slotted.
+// Keeps one chat, its tokens, its bucket layout, and up to CACHE_SLOTS filter/merge
+// entries. Tokenization and bucket meta are chat-scoped; only the filter-dependent
+// stages are slotted.
 export class PipelineCache {
   private chat?: ChatExport
   private tokenized?: TokUnit[][]
   private surfaceCounts?: Map<string, number>
-  private tallied = new Map<string, { ia: Intern; tallyResult: TallyResult }>()
+  private meta?: BucketMeta
+  private filterSlots = new Map<string, { ia: Intern; units: RawUnit[]; bucketCounts: BucketCounts }>()
   private merged = new Map<string, Map<number, number>>()
 
-  resolve(chat: ChatExport, cfg: FilterCfg, callbacks: PipelineCallbacks = {}): PipelineResult {
+  // [Query] Pass-1 resolve for one chat and filter. Never tallies pairs: the open path
+  // still scans the units itself (pass 2 arrives with the slice work).
+  resolve(chat: ChatExport, cfg: FilterCfg, callbacks: PipelineCallbacks = {}): ResolveResult {
     if (chat !== this.chat) {
       this.chat = chat
       this.tokenized = undefined
       this.surfaceCounts = undefined
-      this.tallied.clear()
+      this.meta = undefined
+      this.filterSlots.clear()
       this.merged.clear()
     }
 
@@ -407,39 +511,53 @@ export class PipelineCache {
       this.surfaceCounts = countSurfaces(this.tokenized)
     }
 
+    // Buckets are a pure function of the chat, so one build serves every filter:
+    // a filter switch never re-segments time.
+    if (!this.meta) this.meta = buildBucketMeta(chat)
+    const meta = this.meta
+
     const filterKey = filterCacheKey(cfg)
-    let tallyCached = true
-    let tallied = this.tallied.get(filterKey)
-    if (tallied) {
+    let countsCached = true
+    let slot = this.filterSlots.get(filterKey)
+    if (slot) {
       // touch so the least recently used key stays first in insertion order
-      tallied = remember(this.tallied, filterKey, tallied, CACHE_SLOTS)
+      slot = remember(this.filterSlots, filterKey, slot, CACHE_SLOTS)
     } else {
-      tallyCached = false
-      callbacks.onTallyStart?.()
+      countsCached = false
+      callbacks.onCountStart?.()
       const tallyIa = new Intern(this.surfaceCounts)
       const dropTok = dropFor(cfg)
       const units: RawUnit[] = []
       for (let i = 0; i < chat.messages.length; i++) {
-        addUnits(units, chat.messages[i], this.tokenized[i], tallyIa, dropTok)
+        addUnits(units, chat.messages[i], this.tokenized[i], tallyIa, dropTok, meta)
       }
-      tallied = remember(this.tallied, filterKey, { ia: tallyIa, tallyResult: tally(units) }, CACHE_SLOTS)
+      slot = remember(
+        this.filterSlots,
+        filterKey,
+        { ia: tallyIa, units, bucketCounts: countByBuckets(units, meta.count) },
+        CACHE_SLOTS,
+      )
     }
-    const { ia, tallyResult } = tallied
+    const { ia, units, bucketCounts } = slot
 
     let merged: Map<number, number> | undefined
-    let mergeCached = true
     if (cfg.smartMerge) {
       const mergeKey = mergeCacheKey(cfg)
       const cached = this.merged.get(mergeKey)
       if (cached) {
         merged = remember(this.merged, mergeKey, cached, CACHE_SLOTS)
       } else {
-        mergeCached = false
         callbacks.onMergeStart?.()
-        merged = remember(this.merged, mergeKey, mergeTokens(tallyResult, ia), CACHE_SLOTS)
+        // Merging is a whole-history decision: the cursor never changes the stems.
+        merged = remember(
+          this.merged,
+          mergeKey,
+          mergeTokens(countsUpTo(bucketCounts, meta.count - 1), ia),
+          CACHE_SLOTS,
+        )
       }
     }
 
-    return { ia, tallyResult, merged, tallyCached, mergeCached }
+    return { ia, units, merged, meta, bucketCounts, countsCached }
   }
 }

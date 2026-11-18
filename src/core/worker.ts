@@ -1,9 +1,20 @@
 import { armsFromIndex, buildArmsIndex, bundleEdges, edgeAlpha, footprintScale, footprintSize, nodeFitSize, phaseFor } from './geometry'
-import { getLruCache, layout, setLruCache, type LayoutNodeInput, type LayoutResult } from './graph'
+import { getLruCache, layout, setLruCache, type LayoutNodeInput, type LayoutPort, type LayoutResult } from './graph'
 import type { Intern } from './intern'
 import { parse } from './parse'
-import { dropEdgelessNodes, pruneSortedBackbone, select, type Selection, type SelectionEdge, type SelectionNode, type ViewCfg } from './select'
-import { PipelineCache, type PipelineCallbacks, type TallyResult } from './tally'
+import {
+  dropEdgelessNodes,
+  memberPreimage,
+  pruneSortedBackbone,
+  select,
+  topIds,
+  type Selection,
+  type SelectionEdge,
+  type SelectionNode,
+  type ViewCfg,
+} from './select'
+import { buildSlice, crossCandidates } from './slice'
+import { PipelineCache, countsUpTo, filterCacheKey, tally, type PipelineCallbacks, type ResolveResult } from './tally'
 import type {
   AuthorId,
   ChatExport,
@@ -18,6 +29,23 @@ let chat: ChatExport | null = null
 const positionsCache = new Map<string, { x: number; y: number }>()
 const MAX_POS_CACHE = 2000
 let pipelineCache = new PipelineCache()
+
+// Pin for timeline slices: the last map's layout and its on-screen node set.
+// Captured on every 'map' send (open and update runs alike) so a slice is always
+// framed against exactly what is on screen; reset with the chat.
+type PinnedLayout = {
+  positions: Map<number, { x: number; y: number }>
+  ports?: Map<number, LayoutPort>
+  groupOf?: Map<number, number>
+  stemOf?: Map<number, number>
+  universe: Set<number>
+}
+let lastPinned: PinnedLayout | null = null
+
+// Cross-mode candidates for the pinned universe, lazy and filter-scoped: the set is a
+// property of the filtered units, so only a filter switch (or a new chat) invalidates
+// it — topN/minWeight/mode never do. One full-range scan replaces the oracle's pair map.
+let crossUniverse: { key: string; set: Set<number> } | null = null
 
 const DEFAULT_FILTER_CFG: FilterCfg = {
   mat: false,
@@ -46,12 +74,15 @@ function resetWorkerState(): void {
   chat = null
   pipelineCache = new PipelineCache()
   positionsCache.clear()
+  // A slice of the previous chat has no coordinates in this one.
+  lastPinned = null
+  // Cross candidates are unit ids of the previous chat's filter: stale by definition.
+  crossUniverse = null
 }
 
 type NodeInfo = { bestForm: string; forms: Array<[string, number]>; size: number }
-type PipelineData = { ia: Intern; tallyResult: TallyResult; merged?: Map<number, number> }
 
-function resolveData(chat: ChatExport, cfg: FilterCfg, callbacks: PipelineCallbacks): PipelineData {
+function resolveData(chat: ChatExport, cfg: FilterCfg, callbacks: PipelineCallbacks): ResolveResult {
   return pipelineCache.resolve(chat, cfg, callbacks)
 }
 
@@ -125,7 +156,7 @@ function buildMapMessage(
   selection: Selection,
   layoutResult: LayoutResult,
   ia: Intern,
-  tallyResult: TallyResult,
+  counts: Map<number, Map<AuthorId, number>>,
   backboneEdges: SelectionEdge[],
   nodeInfoMap: Map<number, NodeInfo>,
 ): MapMsg {
@@ -137,7 +168,7 @@ function buildMapMessage(
   })
   // Edge geometry is routed through the figure's own funnels: fibres of one
   // corridor share control points, so they land on top of each other and merge.
-  const bundles = bundleEdges(posList, backboneEdges, selection.maxWeight, {
+  const bundles = bundleEdges(posList, backboneEdges, {
     ports: layoutResult.ports ?? new Map(),
     groupOf: layoutResult.groupOf ?? new Map(),
     // Fascicle identity lets intra-topic fibres share one trunk per stem instead of
@@ -155,7 +186,7 @@ function buildMapMessage(
     const pos = layoutResult.positions.get(n.id) || { x: 0, y: 0 }
     let authorLead: AuthorId = 0
     let leadCount = 0
-    const authorMap = tallyResult.counts.get(n.id)
+    const authorMap = counts.get(n.id)
     if (authorMap) {
       for (const [authorId, cnt] of authorMap) {
         if (cnt > leadCount) {
@@ -207,7 +238,7 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
 
   const cfg = currentFilterCfg
   // cache hits skip the stages they reuse, so their ticks never show
-  const { ia, tallyResult, merged } = resolveData(chat, cfg, {
+  const res = resolveData(chat, cfg, {
     onTokenizeStart: () => send({ type: 'progress', done: 35, total: 100, stage: 'Токенизация и фильтрация...' }),
     onTokenizeProgress: (doneMsgs, totalMsgs) =>
       send({
@@ -216,14 +247,23 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
         total: 100,
         stage: `Токенизация: ${doneMsgs} / ${totalMsgs} сообщ.`,
       }),
-    onTallyStart: () => send({ type: 'progress', done: 60, total: 100, stage: 'Подсчёт частот и связей...' }),
+    onCountStart: () => send({ type: 'progress', done: 60, total: 100, stage: 'Подсчёт частот и связей...' }),
     onMergeStart: () => send({ type: 'progress', done: 70, total: 100, stage: 'Умные склейки слов...' }),
   })
+  const { ia, units, merged, meta } = res
+  // Pass 1 is bucketed; the map wants whole-history totals, so materialize the prefix
+  // up to the last bucket. Pass 2 then scans pairs only for the cursor's words:
+  // memberSet is the raw-id preimage of the ranked roots, so the scan skips every
+  // pair select() would drop anyway. Counts stay whole-history on both stages.
+  const counts = countsUpTo(res.bucketCounts, meta.count - 1)
+  const selected = topIds(counts, currentViewCfg, merged)
+  const memberSet = memberPreimage(counts, selected, merged)
+  const { pairs } = tally(units, { memberSet })
 
   // 'ready' needs the tallied counts, so it goes out here (full run only) and before any 'map'
   if (fullRun && authorNames) {
     const wordCounts = new Map<AuthorId, number>()
-    for (const tokenAuthors of tallyResult.counts.values()) {
+    for (const tokenAuthors of counts.values()) {
       for (const [authorId, cnt] of tokenAuthors) {
         wordCounts.set(authorId, (wordCounts.get(authorId) || 0) + cnt)
       }
@@ -240,7 +280,7 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
   }
 
   send({ type: 'progress', done: 75, total: 100, stage: 'Выборка узлов и рёбер...' })
-  const selection = select(tallyResult, currentViewCfg, merged)
+  const selection = select({ counts, pairs }, currentViewCfg, merged)
 
   const { layoutNodes, backboneEdges, nodeInfoMap, nodes } = buildLayoutInput(selection, ia, positionsCache)
 
@@ -250,9 +290,10 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
     fullRun,
     onStage: (done, stage) => send({ type: 'progress', done, total: 100, stage }),
   })
-  // Runtime stamp: proves which layout code the browser runs and what shape
-  // it produced. Read it in DevTools console after reopening the export.
-  {
+  // Runtime stamp: proves which layout code the (dev) browser runs and what
+  // shape it produced. Dev-only: the production console stays clean on
+  // every filter update.
+  if (import.meta.env.DEV) {
     let minX = Infinity
     let maxX = -Infinity
     let minY = Infinity
@@ -275,7 +316,20 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
   }
 
   send({ type: 'progress', done: 95, total: 100, stage: 'Формирование карты...' })
-  send(buildMapMessage({ ...selection, nodes }, layoutResult, ia, tallyResult, backboneEdges, nodeInfoMap))
+  // Pin the frame BEFORE the map leaves. `nodes` is the final on-screen list (after
+  // the backbone drop), so the universe is exactly the words the renderer draws —
+  // a slice can never address a word without coordinates. Re-pinned on every map
+  // send (filter, topN, minWeight), and because the worker is single-threaded a
+  // slice can never pair this pin with a newer filter config.
+  lastPinned = {
+    positions: layoutResult.positions,
+    ports: layoutResult.ports,
+    groupOf: layoutResult.groupOf,
+    stemOf: layoutResult.stemOf,
+    universe: new Set(nodes.map((n) => n.id)),
+  }
+
+  send(buildMapMessage({ ...selection, nodes }, layoutResult, ia, counts, backboneEdges, nodeInfoMap))
 }
 
 self.onmessage = (e: MessageEvent<WorkerIn>) => {
@@ -323,6 +377,62 @@ self.onmessage = (e: MessageEvent<WorkerIn>) => {
         minWeight: msg.cfg.minWeight,
       }
       runPipeline(false)
+    } else if (msg.type === 'slice') {
+      // [Command] One timeline frame at the cursor. Guard: a slice needs an open chat
+      // and a pinned layout (positions, ports and the drawn-word universe) — anything
+      // else has no frame to draw and is dropped silently.
+      const openChat = chat
+      const pinned = lastPinned
+      if (!openChat || !pinned) return
+      // Resolve on the warm cache: the open path just filled it, so this is the cheap
+      // A->B->A read and slices stay consistent with the map the pin was taken from.
+      // No callbacks on purpose: scrubbing the strip must not replay progress stages.
+      const res = resolveData(openChat, currentFilterCfg, {})
+      // Cross candidates are woken only when the cross mode asks. Keyed by the filter
+      // config: the mask lives in raw unit-id space, so a merge (post-pass) never
+      // invalidates it and a filter switch always does.
+      let cross: Set<number> | undefined
+      if (currentViewCfg.mode.kind === 'cross') {
+        const key = filterCacheKey(currentFilterCfg)
+        if (crossUniverse === null || crossUniverse.key !== key) {
+          crossUniverse = { key, set: crossCandidates(res.units, res.meta) }
+        }
+        cross = crossUniverse.set
+      }
+      send(
+        buildSlice({
+          units: res.units,
+          bucketCounts: res.bucketCounts,
+          merged: res.merged,
+          meta: res.meta,
+          bucket: msg.bucket,
+          view: currentViewCfg,
+          ia: res.ia,
+          layout: {
+            positions: pinned.positions,
+            ports: pinned.ports,
+            groupOf: pinned.groupOf,
+            stemOf: pinned.stemOf,
+          },
+          memberUniverse: pinned.universe,
+          cross,
+        }),
+      )
+    } else if (msg.type === 'timelineOn') {
+      // [Command] Strip layout request. Guard: no open chat means no buckets to describe.
+      if (!chat) return
+      // Warm-cache read: the open/update path already built the meta, so showing the
+      // strip never re-tokenizes and never replays a progress stage.
+      const res = resolveData(chat, currentFilterCfg, {})
+      // Sent even when ineligible: the UI owns the decision to hide the strip.
+      send({
+        type: 'timelineMeta',
+        eligible: res.meta.eligible,
+        count: res.meta.count,
+        monthStarts: res.meta.monthStarts,
+        labels: res.meta.labels,
+        msgCounts: Array.from(res.meta.msgCounts),
+      })
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err)

@@ -32,6 +32,42 @@ export type Selection = {
 
 const MAX_EDGES = 10000
 
+// [Query] Counts in the post-merge id space: every raw id folds into its root and the
+// per-author counts sum there. select() and topIds() both rank in this space, so the
+// cursor's ids are already merge roots.
+function remapCounts(
+  counts: Map<number, Map<AuthorId, number>>,
+  merged: Map<number, number>,
+): Map<number, Map<AuthorId, number>> {
+  const out = new Map<number, Map<AuthorId, number>>()
+  for (const [id, authorMap] of counts) {
+    const root = merged.get(id) ?? id
+    let targetMap = out.get(root)
+    if (!targetMap) {
+      targetMap = new Map()
+      out.set(root, targetMap)
+    }
+    for (const [author, cnt] of authorMap) {
+      targetMap.set(author, (targetMap.get(author) || 0) + cnt)
+    }
+  }
+  return out
+}
+
+// [Query] Rank count of one word under the view mode. cross sums every author here:
+// its pair-based candidate restriction belongs to the slice builder (Task 6), and
+// select() applies that gate separately.
+function modeCount(authorMap: Map<AuthorId, number>, mode: ViewMode): number {
+  if (mode.kind === 'author') return authorMap.get(mode.author) || 0
+  let sum = 0
+  for (const c of authorMap.values()) sum += c
+  return sum
+}
+
+// Ranking shared by select() and topIds(): heavier first, ties by id, so a topN cut
+// through a plateau picks the same words on both paths.
+const byRank = (a: SelectionNode, b: SelectionNode): number => b.count - a.count || a.id - b.id
+
 export function select(
   tallyData: TallyResult,
   cfg: ViewCfg,
@@ -39,21 +75,9 @@ export function select(
 ): Selection {
   let { counts, pairs } = tallyData
 
+  // Merge first: everything downstream ranks and filters in the root id space.
   if (merged && merged.size > 0) {
-    const remappedCounts = new Map<number, Map<AuthorId, number>>()
-    for (const [id, authorMap] of counts) {
-      const root = merged.get(id) ?? id
-      let targetMap = remappedCounts.get(root)
-      if (!targetMap) {
-        targetMap = new Map()
-        remappedCounts.set(root, targetMap)
-      }
-      for (const [author, cnt] of authorMap) {
-        targetMap.set(author, (targetMap.get(author) || 0) + cnt)
-      }
-    }
-    counts = remappedCounts
-
+    counts = remapCounts(counts, merged)
     const remappedPairs = new Map<number, PairStat>()
     for (const [key, stat] of pairs) {
       const [a, b] = parseEdgeKey(key)
@@ -88,22 +112,15 @@ export function select(
 
   const candidateNodes: SelectionNode[] = []
   for (const [id, authorMap] of counts) {
-    let count = 0
-    if (cfg.mode.kind === 'together') {
-      for (const c of authorMap.values()) count += c
-    } else if (cfg.mode.kind === 'author') {
-      count = authorMap.get(cfg.mode.author) || 0
-    } else {
-      if (!crossNodes.has(id)) continue
-      for (const c of authorMap.values()) count += c
-    }
-
-    if (count > 0) {
-      candidateNodes.push({ id, count })
-    }
+    // Guard: cross is defined by links, so a word without a cross edge is no candidate.
+    if (cfg.mode.kind === 'cross' && !crossNodes.has(id)) continue
+    const count = modeCount(authorMap, cfg.mode)
+    // Guard: a zero count is not a map word.
+    if (count === 0) continue
+    candidateNodes.push({ id, count })
   }
 
-  candidateNodes.sort((a, b) => b.count - a.count || a.id - b.id)
+  candidateNodes.sort(byRank)
   const selectedNodes = candidateNodes.slice(0, cfg.topN)
   const selectedNodeSet = new Set(selectedNodes.map((n) => n.id))
 
@@ -148,6 +165,45 @@ export function select(
     maxCount,
     maxWeight,
   }
+}
+
+// [Query] Cursor ids for a slice: the top cfg.topN words ranked exactly like select()
+// (merge roots first, count desc, id asc), returned in the post-merge id space.
+// cross ranks every counted word here — its real pair-based candidates arrive with the
+// slice builder (Task 6); until then a cross id below the global topN is not pinned.
+export function topIds(
+  counts: Map<number, Map<AuthorId, number>>,
+  cfg: ViewCfg,
+  merged?: Map<number, number>,
+): number[] {
+  const rankedCounts = merged !== undefined && merged.size > 0 ? remapCounts(counts, merged) : counts
+  const ranked: SelectionNode[] = []
+  for (const [id, authorMap] of rankedCounts) {
+    const count = modeCount(authorMap, cfg.mode)
+    // Guard: a zero count is not a map word, exactly as in select().
+    if (count === 0) continue
+    ranked.push({ id, count })
+  }
+  ranked.sort(byRank)
+  return ranked.slice(0, cfg.topN).map((node) => node.id)
+}
+
+// [Query] Raw-id preimage of the selected roots. The scan works in raw token ids, so
+// every variant folding into a ranked root must stay a member — otherwise smartMerge
+// would lose the pairs of exactly the forms that glued the root together. Without a
+// merge the preimage is the selection itself.
+export function memberPreimage(
+  counts: Map<number, Map<AuthorId, number>>,
+  selected: number[],
+  merged?: Map<number, number>,
+): Set<number> {
+  const roots = new Set(selected)
+  const out = new Set<number>()
+  for (const id of counts.keys()) {
+    // Guard: a raw id joins only when its merge root survived the cursor.
+    if (roots.has(merged?.get(id) ?? id)) out.add(id)
+  }
+  return out
 }
 
 // Nodes without a single surviving edge have no position: neither the

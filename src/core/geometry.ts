@@ -467,9 +467,6 @@ function tractFromControls(
 export function bundleEdges(
   points: BundlePoint[],
   edges: BundleEdgeInput[],
-  // Kept in the signature for callers that still pass the selection's max weight;
-  // ranking is now derived from the weights themselves, so the bound is unused.
-  _maxWeight = 0,
   routes?: RouteInfo,
 ): BundleInfo[] {
   const pos = new Map(points.map((p) => [p.id, p]))

@@ -248,8 +248,7 @@ describe('reuse frame keeps edge routing (filter switch)', () => {
 
   it('routes no edge as a straight fallback', () => {
     const posList = nodes2.map((n) => ({ id: n.id, ...reused.positions.get(n.id)! }))
-    const maxW = Math.max(...edges2.map((e) => e.weight))
-    const bundles = bundleEdges(posList, edges2, maxW, {
+    const bundles = bundleEdges(posList, edges2, {
       ports: reused.ports!,
       groupOf: reused.groupOf!,
     })
