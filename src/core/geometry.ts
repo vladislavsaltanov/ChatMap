@@ -28,6 +28,16 @@ export function fisheyePoint(x: number, y: number, f: FisheyeConfig): { x: numbe
   return { x: cx + dx * gain, y: cy + dy * gain }
 }
 
+// Pure gain factor of the fisheye magnifier at a distance: 1 far away,
+// 1 + FISHEYE_GAIN * strength at the center. Exported so the camera fit can
+// predict displaced positions through the same kernel it renders with.
+export function fisheyeGain(distance: number, radius: number, strength: number): number {
+  const k = Math.max(0, Math.min(1, strength))
+  if (k <= 0 || radius <= 0 || !(distance > 1e-9)) return 1
+  const t = distance / radius
+  return 1 + FISHEYE_GAIN * k * Math.exp(-1.8 * t * t)
+}
+
 // Camera ratio -> divisor Sigma applies to node sizes (`scaleSize = size / f(ratio)`).
 // ratio > 1 is zoom-out: node radii must shrink exactly like the positions (1/ratio),
 // otherwise screen-referenced hubs keep their px size while the graph collapses into them.
@@ -289,7 +299,12 @@ export function focusYield(distance: number, reach: number, ownRadius: number, d
   const outer = inner + Math.max(0, ownRadius)
   const d = Math.max(0, distance)
   // A body with no radius has no contact band: the clearing ends at the reach.
-  const touch = outer - inner < 1e-6 ? (d <= inner ? 1 : 0) : 1 - smooth01(inner, outer, d)
+  let touch: number
+  if (outer - inner < 1e-6) {
+    touch = d <= inner ? 1 : 0
+  } else {
+    touch = 1 - smooth01(inner, outer, d)
+  }
   // Clamped: 1 - 0.8 * 1 lands on 0.19999999999999996 and the opacity styles read
   // this number directly.
   return Math.max(YIELD_FLOOR, 1 - (1 - YIELD_FLOOR) * k * touch)

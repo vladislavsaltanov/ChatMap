@@ -9,6 +9,7 @@ import {
   edgeWidth,
   egoNodeScale,
   fanCoreFrac,
+  fisheyeGain,
   fisheyePoint,
   focusYield,
   footprintScale,
@@ -30,6 +31,30 @@ import {
   zoomSizeRatio,
 } from '../src/core/geometry'
 
+describe('fisheyeGain (fit kernel)', () => {
+  it('is 1 when disabled, degenerate, or far away', () => {
+    expect(fisheyeGain(100, 1000, 0)).toBe(1)
+    expect(fisheyeGain(100, 0, 1)).toBe(1)
+    expect(fisheyeGain(0, 1000, 1)).toBe(1)
+    expect(fisheyeGain(1e7, 1000, 1)).toBeCloseTo(1, 6)
+  })
+
+  it('peaks at the center and decays with distance', () => {
+    expect(fisheyeGain(0.01, 1000, 1)).toBeCloseTo(1.5, 2)
+    const near = fisheyeGain(200, 1000, 1)
+    const mid = fisheyeGain(1000, 1000, 1)
+    expect(near).toBeGreaterThan(mid)
+    expect(mid).toBeGreaterThan(1)
+  })
+
+  it('scales with strength and matches fisheyePoint', () => {
+    expect(fisheyeGain(200, 1000, 0.25)).toBeGreaterThan(1)
+    expect(fisheyeGain(200, 1000, 0.25)).toBeLessThan(fisheyeGain(200, 1000, 1))
+    // Same kernel the renderer applies: displaced offset equals gain * offset.
+    const p = fisheyePoint(200, 0, { fisheyeX: 0, fisheyeY: 0, fisheyeRadius: 1000, fisheyeStrength: 1 })
+    expect(p.x / 200).toBeCloseTo(fisheyeGain(200, 1000, 1), 9)
+  })
+})
 describe('fisheyePoint (zoom-in spread)', () => {
   const cfg = { fisheyeX: 0, fisheyeY: 0, fisheyeRadius: 1000, fisheyeStrength: 1 }
 
