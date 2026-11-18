@@ -1,5 +1,5 @@
-import { isStopword, matchesLaugh, matchesMat } from './filters'
-import { Intern } from './intern'
+import { compileWordRules, isStopword } from './filters'
+import { Intern, MAX_TOKEN_ID } from './intern'
 import { smartMerge } from './smart-merge'
 import { tokenize } from './tokenize'
 import type { AuthorId, ChatExport, FilterCfg, Message, Tok, TokUnit } from './types'
@@ -32,12 +32,15 @@ export type TallyResult = {
   counts: Map<number, Map<AuthorId, number>>
 }
 
-// Numeric pair key min * 2^24 + max: exact while token ids stay below 2^24
-// (chat vocabularies are orders of magnitude smaller). Numeric keys skip the
-// per-pair template string plus split/Number parses on every lookup.
-const KEY_BASE = 2 ** 24
+// Numeric pair key min * KEY_BASE + max: exact while token ids stay in
+// [1, MAX_TOKEN_ID] (chat vocabularies are orders of magnitude smaller).
+// Numeric keys skip the per-pair template string plus split/Number parses.
+const KEY_BASE = MAX_TOKEN_ID + 1
 
 export function edgeKey(a: number, b: number): number {
+  if (!Number.isInteger(a) || !Number.isInteger(b) || a < 1 || b < 1 || a > MAX_TOKEN_ID || b > MAX_TOKEN_ID) {
+    throw new RangeError('token id out of range')
+  }
   return a < b ? a * KEY_BASE + b : b * KEY_BASE + a
 }
 
@@ -105,6 +108,25 @@ function tokenizeChat(chat: ChatExport, onProgress?: Progress): TokUnit[][] {
     out.push(tokenizeMessage(chat.messages[i]))
   }
   return out
+}
+
+// Corpus-wide surface counts for the stemmer. The corpus IS the dictionary: a stem
+// that is itself a far more frequent standalone word must not absorb a rare one
+// (see canon.ts). Counted BEFORE any filter, so the answer does not depend on the
+// active filter or on token order.
+// ponytail: one linear pass over the cached units (~100k distinct forms); revisit
+// only if tokenize ever stops dominating the pipeline.
+function countSurfaces(tokenized: TokUnit[][]): Map<string, number> {
+  const counts = new Map<string, number>()
+  for (const units of tokenized) {
+    for (const unit of units) {
+      for (const tok of unit) {
+        if (tok.cls !== 'plain') continue
+        counts.set(tok.word, (counts.get(tok.word) ?? 0) + 1)
+      }
+    }
+  }
+  return counts
 }
 
 // keeps the max candidate weight per pair key within one message
@@ -230,6 +252,10 @@ export function tally(units: RawUnit[]): TallyResult {
   // for different authors (that is what the cross-author view shows), into nX for
   // the same author. Pairs already linked inside either message are skipped
   // (max, not sum). A large gap contributes nothing.
+  // One stamp map serves all message pairs: a key is window-new only when its
+  // stamp differs from the current pair stamp (avoids a Set alloc per pair).
+  const seenStamp = new Map<number, number>()
+  let stamp = 0
   for (let mi = 0; mi + 1 < messages.length; mi++) {
     const a = messages[mi]
     const b = messages[mi + 1]
@@ -239,7 +265,7 @@ export function tally(units: RawUnit[]): TallyResult {
     // key sets: probe the intra maps directly, track only window-new pairs.
     const prevA = intraMaxList[mi]
     const prevB = intraMaxList[mi + 1]
-    const seen = new Set<number>()
+    stamp += 1
     for (const uaRaw of a.units) {
       for (const ubRaw of b.units) {
         const ua = capped(uaRaw)
@@ -248,8 +274,8 @@ export function tally(units: RawUnit[]): TallyResult {
           for (let j = 0; j < ub.length; j++) {
             if (ua[i] === ub[j]) continue
             const key = edgeKey(ua[i], ub[j])
-            if (seen.has(key) || prevA.has(key) || prevB.has(key)) continue
-            seen.add(key)
+            if (seenStamp.get(key) === stamp || prevA.has(key) || prevB.has(key)) continue
+            seenStamp.set(key, stamp)
             addPair(ua[i], ub[j], b.authorId, isCross, ADJACENT_CLOSE_WEIGHT)
           }
         }
@@ -257,6 +283,10 @@ export function tally(units: RawUnit[]): TallyResult {
     }
   }
 
+  // One stamp map serves all reply targets: a key is new only when its stamp
+  // differs from the current target stamp (avoids a Set alloc per target).
+  const seenReplyStamp = new Map<number, number>()
+  let replyStamp = 0
   for (const unit of units) {
     if (unit.replyTo == null) continue
     const targetUnits = unitsByMsgId.get(unit.replyTo)
@@ -264,7 +294,7 @@ export function tally(units: RawUnit[]): TallyResult {
 
     for (const targetUnit of targetUnits) {
       const isCross = unit.authorId !== targetUnit.authorId
-      const seenReply = new Set<number>()
+      replyStamp += 1
 
       const cu = capped(unit.tokens)
       const ct = capped(targetUnit.tokens)
@@ -274,8 +304,8 @@ export function tally(units: RawUnit[]): TallyResult {
           const v = ct[j]
           if (u === v) continue
           const key = edgeKey(u, v)
-          if (!seenReply.has(key)) {
-            seenReply.add(key)
+          if (seenReplyStamp.get(key) !== replyStamp) {
+            seenReplyStamp.set(key, replyStamp)
             addPair(u, v, unit.authorId, isCross, REPLY_WEIGHT)
           }
         }
@@ -288,13 +318,14 @@ export function tally(units: RawUnit[]): TallyResult {
 
 // Show-flags: a checked category stays on the map, an unchecked one is dropped
 // before tally. Custom lists extend their category (no-op when shown: nothing drops).
-function dropFor(cfg: FilterCfg): (t: Tok) => boolean {
+// Category rules compile once here, not per token; cls and stopword flags stay cheap.
+export function dropFor(cfg: FilterCfg): (t: Tok) => boolean {
+  const dropWord = compileWordRules(cfg)
   return (tok) =>
     (!cfg.tech && tok.cls === 'tech') ||
     (!cfg.digits && tok.cls === 'digits') ||
     (!cfg.stopwords && isStopword(tok.word)) ||
-    (!cfg.mat && matchesMat(tok.word, cfg.customMat)) ||
-    (!cfg.laugh && matchesLaugh(tok.word, cfg.customLaugh))
+    dropWord(tok.word)
 }
 
 // topN and minWeight are not in the key: they only change selection, not the tally
@@ -338,51 +369,75 @@ export type PipelineResult = {
   mergeCached: boolean
 }
 
-// shortcut: keeps one chat and one tally/merge entry, so flipping back to an older filter recomputes; upgrade to a Map keyed by filterKey if the UI flips often
+// Filter toggles in the UI are A->B->A, so two slots make the return trip free.
+// Each tally slot keeps a full pairs map: two slots = two tallies alive at once.
+// shortcut: fixed two slots, no byte accounting; raise slots only with a memory budget
+const CACHE_SLOTS = 2
+
+// Insertion order doubles as recency: the first key is the oldest. Re-inserting an
+// existing key refreshes it, so one function covers both store and touch.
+function remember<K, V>(map: Map<K, V>, key: K, value: V, slots: number): V {
+  map.delete(key)
+  map.set(key, value)
+  while (map.size > slots) map.delete(map.keys().next().value as K)
+  return value
+}
+
+// Keeps one chat, its tokens, and up to CACHE_SLOTS tally/merge entries.
+// Tokenization is chat-scoped; only the filter-dependent stages are slotted.
 export class PipelineCache {
   private chat?: ChatExport
   private tokenized?: TokUnit[][]
-  private tallied?: { key: string; ia: Intern; tallyResult: TallyResult }
-  private merged?: { key: string; merged: Map<number, number> }
+  private surfaceCounts?: Map<string, number>
+  private tallied = new Map<string, { ia: Intern; tallyResult: TallyResult }>()
+  private merged = new Map<string, Map<number, number>>()
 
   resolve(chat: ChatExport, cfg: FilterCfg, callbacks: PipelineCallbacks = {}): PipelineResult {
     if (chat !== this.chat) {
       this.chat = chat
       this.tokenized = undefined
-      this.tallied = undefined
-      this.merged = undefined
+      this.surfaceCounts = undefined
+      this.tallied.clear()
+      this.merged.clear()
     }
 
     if (!this.tokenized) {
       callbacks.onTokenizeStart?.()
       this.tokenized = tokenizeChat(chat, callbacks.onTokenizeProgress)
+      this.surfaceCounts = countSurfaces(this.tokenized)
     }
 
     const filterKey = filterCacheKey(cfg)
     let tallyCached = true
-    if (!this.tallied || this.tallied.key !== filterKey) {
+    let tallied = this.tallied.get(filterKey)
+    if (tallied) {
+      // touch so the least recently used key stays first in insertion order
+      tallied = remember(this.tallied, filterKey, tallied, CACHE_SLOTS)
+    } else {
       tallyCached = false
       callbacks.onTallyStart?.()
-      const tallyIa = new Intern()
+      const tallyIa = new Intern(this.surfaceCounts)
       const dropTok = dropFor(cfg)
       const units: RawUnit[] = []
       for (let i = 0; i < chat.messages.length; i++) {
         addUnits(units, chat.messages[i], this.tokenized[i], tallyIa, dropTok)
       }
-      this.tallied = { key: filterKey, ia: tallyIa, tallyResult: tally(units) }
+      tallied = remember(this.tallied, filterKey, { ia: tallyIa, tallyResult: tally(units) }, CACHE_SLOTS)
     }
-    const { ia, tallyResult } = this.tallied
+    const { ia, tallyResult } = tallied
 
     let merged: Map<number, number> | undefined
     let mergeCached = true
     if (cfg.smartMerge) {
       const mergeKey = mergeCacheKey(cfg)
-      if (!this.merged || this.merged.key !== mergeKey) {
+      const cached = this.merged.get(mergeKey)
+      if (cached) {
+        merged = remember(this.merged, mergeKey, cached, CACHE_SLOTS)
+      } else {
         mergeCached = false
         callbacks.onMergeStart?.()
-        this.merged = { key: mergeKey, merged: mergeTokens(tallyResult, ia) }
+        merged = remember(this.merged, mergeKey, mergeTokens(tallyResult, ia), CACHE_SLOTS)
       }
-      merged = this.merged.merged
     }
 
     return { ia, tallyResult, merged, tallyCached, mergeCached }

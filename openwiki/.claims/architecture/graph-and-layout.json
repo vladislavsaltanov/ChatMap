@@ -1,18 +1,18 @@
 {
   "schemaVersion": 1,
-  "pageVersion": "sha256:84ef8d249afbc20b943ae4a341fd1a202cb2d713e537f81acb8ff1e141b1090b",
+  "pageVersion": "sha256:688b7abb3e9d7efd2a8e581b52169a7d8b31459a5df7052ccf29c807d418a67d",
   "claims": [
     {
       "id": "claim_68438a3089a943eead247df8dc50d673",
-      "statement": "select() отбирает до topN узлов по частоте и до 10000 рёбер с весом не ниже minWeight; режимы together/author/cross определяют способ подсчёта веса",
+      "statement": "select() отбирает до topN узлов и до 10000 рёбер весом не ниже minWeight; слово без единого видимого ребра отсекается через dropEdgelessNodes, а maxCount считается до отсечения, поэтому размеры не прыгают",
       "evidence": [
         {
-          "resource": "repo://src/core/select.ts",
-          "version": "repo-file-v1:sha256:e3009030bf438bd1fa5f9830d460904def38b7edc1c06afd8827425b59716c8b"
+          "resource": "repo://src/core/select.ts#L100-L160",
+          "version": "repo-lines-v1:sha256:5e264a0ff28cfbff214bfd8efec0b4b103f8cd92036072206ed74006c27439e0:eyJzZWxlY3RlZExpbmVDb3VudCI6NjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJjNGY2NThhMDIxMWRjYzRlYjllN2M0MWQ4MTdhMTk5MGVhMjUxMGRlODcwN2U0Y2VjNTAwYmRhZGE4ZmFlYTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImVjMzMyNzRmYmQwOGMwZTYyYzcwMDYxNWU4ODQ1YzM3NWVmMjRjN2VhZDNhYTJkYTgwZTUzYTU0OGU5NGFhODAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA2Y2M3MTY5NzNiMzkxZTg4N2U1YmM0ZWNmNzQzOWNiZjdiYTQwZmU5MGFkMzY1NjkxZDQ2M2Y1ZjcxNTAxMmQifQ"
         },
         {
-          "resource": "repo://tests/select.test.ts",
-          "version": "repo-file-v1:sha256:0f9c6e100ff3aa9cdfe38f59f7c20fd3bf05f5b4f4e54d22ffffaaea5705341f"
+          "resource": "repo://src/core/select.ts#L157-L168",
+          "version": "repo-lines-v1:sha256:4f46044d634d7756dd1497cbf821d7a95e482aa0594a8627e8de90814fc6e63a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEwYzBkMDc3MGYzZDhiODZlMTJlZjIxNWI5OTEyODZkZWFkODMxN2Y1ZDBmNzdmOTc0MTE0ZmQwMTZjNmVmMzgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUyMmZhYTUzNWJkMmVhM2Q1MmU3NDFlZDQ1NDQzNWI3ZmU0OWU4MzU4NmU5NDNkOThkODJiYmZiMjRkMWY1YzUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE2MGJjMjhmMGFlZjAxNDc3Zjc4Yjc5YmJhYmQyNGI2Y2NkMmY1YmJlYWUzOTI0MTBjNzIwN2JmOTZjMzQ5YTkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjIzZTY3NWU3MmU2NmRhYmE3NTBkZmU5MTBkZDdjMzdhOTUwNDkzN2Q0MDQ3YmQyYjY0MmJmMmI2NGEyMjE0ZTQifQ"
         }
       ]
     },
@@ -22,31 +22,17 @@
       "evidence": [
         {
           "resource": "repo://src/core/select.ts",
-          "version": "repo-file-v1:sha256:e3009030bf438bd1fa5f9830d460904def38b7edc1c06afd8827425b59716c8b"
+          "version": "repo-file-v1:sha256:7efb64149ee8f9f30d6f32426600e81b6989d396bffb931d4ecf4e4d3b95393d"
         }
       ]
     },
     {
       "id": "claim_0a40beb101de46ce909c076be7897623",
-      "statement": "Раскладка графа запускается из воркера с фиксированным seed 1337,repeat runs детерминированы, а positionsCache (LRU, 2000 записей, ключ — каноническая форма) сохраняет стабильность карты при смене фильтров",
+      "statement": "Сид раскладки роллится на каждое открытие файла (?seed= в URL фиксирует его), переключение фильтров сид хранит, а positionsCache (LRU, ключ — каноническая форма) держит силуэт стабильным",
       "evidence": [
         {
-          "resource": "repo://src/core/graph.ts",
-          "version": "repo-file-v1:sha256:80dd222dbf042b3e357f97deccf447e0bb9300345df49bc764a7d3ec50bd4214"
-        },
-        {
-          "resource": "repo://src/core/worker.ts",
-          "version": "repo-file-v1:sha256:b7c3df84a6df9604f5be92039729666b18287aa76a27b1a709575f191f806419"
-        }
-      ]
-    },
-    {
-      "id": "claim_1197a719d0da42d79c643fc6459aad94",
-      "statement": "nodeFitSize резервирует место под узел по логарифмической частоте, а visualCoreRadius сжимает отрисовываемый радиус для зазоров в плотных кластерах",
-      "evidence": [
-        {
-          "resource": "repo://src/core/geometry.ts",
-          "version": "repo-file-v1:sha256:a54ad975c999414e49a16b642d9368db0a86fc510d914349885eb352b9db43ba"
+          "resource": "repo://src/core/worker.ts#L275-L290",
+          "version": "repo-lines-v1:sha256:7a9cc7f7ba095802c77c3ab3d9de803f87cf815ed09f8d46990ceb89beb7ab17:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcxMzQ1MTgwMTA1YjBjNjZhNzdkYWQ1MWJiMzc5MDFhMzczMmM5NjU0YmE0ZGUzOTgxZjgxZTE4MTc1MjQ4YmYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNjNmViNGJkNjM5YWEzOTllOGYyYzYwM2I5ZGQ5Y2FkMzY5NDY3MmMxMWIwMTJhYTJlZDhjYWFlNmQ1NmFlODciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY0ZjBjMjU5YjY2MmQ1NjZlYTNjNWYyNTc0YmJkYWEwMTQ0Y2E4MDQ3ZWFkMGQyZTNhY2Q0ODhlM2Y0MWVlODAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE3YzY4MDA4MWM2MDJlZTQyNWIxYWQ4YzhlMTcxM2EwMjE3ZGQ1OTQ2OWE2YjdkZTE5ZjE1NmU2NzZiMDVjZGUifQ"
         }
       ]
     },
@@ -56,11 +42,11 @@
       "evidence": [
         {
           "resource": "repo://src/core/types.ts",
-          "version": "repo-file-v1:sha256:ed68ecf93dec7150cabe5632ec15f929b25955529b40431b171c14e836fc90c9"
+          "version": "repo-file-v1:sha256:fab8416af632f9fdde22dd813c7151a814737af849999e66f46f860709441242"
         },
         {
           "resource": "repo://src/core/worker.ts",
-          "version": "repo-file-v1:sha256:b7c3df84a6df9604f5be92039729666b18287aa76a27b1a709575f191f806419"
+          "version": "repo-file-v1:sha256:1219e1c055fca8477dfe0e8b3c2a275d87a1b584a825f90d00ad1fa44ce50e0f"
         }
       ]
     },
@@ -70,11 +56,11 @@
       "evidence": [
         {
           "resource": "repo://src/ui/mapStyles.ts",
-          "version": "repo-file-v1:sha256:1422262e296ec17d70c5adbaf45e01b8bdd331fccf367dd2c1b6d867d55db4c5"
+          "version": "repo-file-v1:sha256:78596cce860d3834b6f1e35c10f5de81e2faa4c429dca9a338f8b3bf5884ab87"
         },
         {
           "resource": "repo://src/ui/mapview.ts",
-          "version": "repo-file-v1:sha256:eec3a39f8ab3746824bd32aa5e68810c0b51047740442e0f81c9cfb7334e2838"
+          "version": "repo-file-v1:sha256:a6668b8dce255d92cba3326df98ff675b2cdaf29aea22fa86e1eb2824b184293"
         }
       ]
     },
@@ -84,13 +70,89 @@
       "evidence": [
         {
           "resource": "repo://src/core/labels.ts",
-          "version": "repo-file-v1:sha256:a885e7462678193ca54fc5c41516e1b9b8063c06ee77624dfebe5b063d81c3bf"
+          "version": "repo-file-v1:sha256:94deb3fd00f9933e3078c95d2e648741b23ab15f055d510086ccc0c48a7c9dbd"
+        }
+      ]
+    },
+    {
+      "id": "claim_25f00bf8faa340f99906b5d64a6305dc",
+      "statement": "nodeFitSize — степенной закон от частоты (SIZE_GAMMA, крышка SIZE_MAX, бюджет площади footprintScale), а visualCoreRadius сжимает отрисовываемый радиус для зазоров",
+      "evidence": [
+        {
+          "resource": "repo://src/core/geometry.ts#L109-L133",
+          "version": "repo-lines-v1:sha256:7fddc0d9b265beaf2be49e370483cb88f2d18881127e82d98c82bca8353e776a:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ2NmQ5MGM2MWJhY2FmYjRlY2JlMmE5ZGMyMTI1OGQ3MTAzMTY4Y2IxZmJiNDQxYzI4YjE4MjlkODU4MDBmODEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUyMmZhYTUzNWJkMmVhM2Q1MmU3NDFlZDQ1NDQzNWI3ZmU0OWU4MzU4NmU5NDNkOThkODJiYmZiMjRkMWY1YzUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjMzMmM5MWM1Nzc2MWZjZTk0MTZhMjVkODI0N2NjZjAxZDVjYzA2NGVhODRjOTM4MDYyODc3N2NiNWFiZTQ5NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVlNjc4ZmVjN2MyMjAzM2QyYWQyNGZiOWJhMzI1MmMzMWM2MTM1NzBkODI0OWExM2RkYWFiZGI1ZDRiMThmNmUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f6ccd8465fbc420692d3b27fd3887566",
+      "statement": "Фильтр-апдейт не перестраивает силуэт: позиции берутся из кэша, а топики и порты-центроиды пересчитываются через assignGroups, поэтому рёбра не вырождаются в прямые",
+      "evidence": [
+        {
+          "resource": "repo://src/core/graph.ts#L485-L520",
+          "version": "repo-lines-v1:sha256:d9c53ab7d1aa0d523a89c911d24c64ea7166c5c2298527f7b88de923d785a65d:eyJzZWxlY3RlZExpbmVDb3VudCI6MzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhiOGRmY2RiMGFjNDg2N2M3NzU0ODMyNjU1ZWIzODgwNjYzMTM2Mzk4OGMzYzViYTE1ZjJkMTZjNTA1NzNkMTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVlMTIzNmYyYWVhMWNlNDJmYTJiMGNjYjI3ODMyYzc4ZjVkOGMxYzE5MjM4YTI0MDkyMjEwNjYzZDUzOWVkNjEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNjMGQzOTM2NTkxNThjOGI2ODg1N2ZmYjIzYzI5MDlkODY0YjNmNDM1NzBjMTFkN2NlZWY3MTI1NmU1NTI3NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNjY2NkMmMxNmYwMTJiMTJmYTU0YWVmZTFmMTFmYzFhNTliMmY4YjRhM2Q4NTE2Mzk4ZWE3ODFmM2JiNWM1NTYifQ"
+        },
+        {
+          "resource": "repo://src/core/spread.ts#L272-L304",
+          "version": "repo-lines-v1:sha256:4fc8b81fdc4ac549725a297f64b021d27e992a74c9cde47626d689c08bc89748:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ5MmJhOGFiMGQ4NWM2NjEzZTJlNzE4ZDU0NmQyN2RkZDc1ZGQ1OGQ1MmJmNDE5M2I4MWVjNGU5MTgyZmE4ODQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUyMmZhYTUzNWJkMmVhM2Q1MmU3NDFlZDQ1NDQzNWI3ZmU0OWU4MzU4NmU5NDNkOThkODJiYmZiMjRkMWY1YzUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE0M2E2YzIwYTUwZjhmOWNjMWViZTE2MGZlN2VlYzBiMjZmN2E5YzAxZTFiZjU2YzViZjkxMzA0NTliYmQ5N2QiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE5ODVmMmI4NzE5YzNlMzg3MzNlZGFkYmVlMzNkZWMyOWJiMWFmMWU3MzRlMWY2MGYwMmFmZDk0ZjExNDdmMjkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e26d3227963f4559aba3aa5d1f0b5f71",
+      "statement": "Зоны раскладывает MST по аффинити с корнем в сильнейшей зоне; хабы — источники Дейкстры, слова с чётким владельцем квантуются в стебли-фасклы",
+      "evidence": [
+        {
+          "resource": "repo://src/core/leaf.ts#L300-L323",
+          "version": "repo-lines-v1:sha256:6b079590b3150397f72082ec6004934c2182a07c3b51b63b01ecf5340dd2e6a8:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk0NzY2NTY2YmM0MmFhM2ZhMmY1OGNlMmI0NjJmMWM0ZjcyNzgyOGRjOTMzY2UzNjE1MWY0YTZiMjgwYjQyMDUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIwMzFiMDM2YmVmNjdhNzQ5ODIwM2Y0ZDViODU3MjdkZjlhODI3MmM0NWM1ZWI1OTU2ODliNGQ0OGFmODk0Y2IiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI2NWY2NGFjODRlNWJkOTg0ZDFhNmViNjJkMGQyNDhkYmIyNzNiNWFmNGIzNmNlYzQ4YzFkZTVhNDc0ZDk5NzUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImEyODk4YjY0MmM4NThlYTYzYWIwNzBjMWJlOTUyYWE3ZGQxOTlmMTU1MWI3MTdlYTBkOWUwZTFiYmJjN2Q4ZGYifQ"
+        },
+        {
+          "resource": "repo://src/core/leaf.ts#L484-L530",
+          "version": "repo-lines-v1:sha256:e3b8da309a3ed073c307d05f02560e2eb349bab313cb583ff1fe73fb363da51a:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFmMmU2MDU3Y2YwNGFiNTI1OGE3YmE5ZDQ5OGM4NmU4MzkwYWJkZTBhYjMyOTczMTU4MTMxMTJhNDQ5MjFiZmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM5YjgxZmY3ODcyOGVmZmY0YjQ5YjUyYTFmMjE2OGVjODZjMTVhZGEyNzM5YjJjZWE5NjE2ZDVjZDE0ZDAzNTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImExZTdiNDdjY2U0ZjI3YjBkMDExYzUxMjc0OTA4ZTRjMjBiMjdhMDMyNjY5YWQ3YTA4NDNmNzdiZjM5YTQxZmEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_50baaad8611549d3a821b650c40d7998",
+      "statement": "Фигура собирается порядком warp, containTail, anchored relax, holdAspect(FRAME_ASPECT 2.0); reuse-путь варп пропускает, так как позиции уже варпнуты",
+      "evidence": [
+        {
+          "resource": "repo://src/core/graph.ts#L27-L27",
+          "version": "repo-lines-v1:sha256:31ccca6d0a23f91b6c1ab6b9f53b6285ca9c493ef5354fc7815d9c3f3f8f21df:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMzFjY2NhNmQwYTIzZjkxYjZjMWFiNmI5ZjUzYjYyODVjYTljNDkzZWY1MzU0ZmM3ODE1ZDljM2YzZjhmMjFkZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMzFjY2NhNmQwYTIzZjkxYjZjMWFiNmI5ZjUzYjYyODVjYTljNDkzZWY1MzU0ZmM3ODE1ZDljM2YzZjhmMjFkZiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNDc0NWI3ODNhMGRiZjgwM2NhMzBlYjljM2Y5ZDU5N2I2MDY1ODY2NzRlYmNlZjNhNTc0NTcyYzA1YjljZTA1NCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYzViODBiNzE3NWU0MjhlOTkzMjhkMzBhODcyMTAwZjZmNjRjZDJkNTVjNzAyOWRjMWYwNGMzOWMwNjUyNGQyMCJ9"
+        },
+        {
+          "resource": "repo://src/core/graph.ts#L582-L599",
+          "version": "repo-lines-v1:sha256:3e694d1c9ff7157eed10647875a37f24922d72dc8aee34bc4f9fe82b2ad252d6:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI0MGRlMmU0MmRmOGIyNGRmNmIxYzVkYmExODA0MzgzNTE2YWNhOGQwZDgwMWQzYTllNDVjNTA0YTM2MWU1YjMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc3ODU2MWFlOTUwY2M0YTFkOGQ0YWM2ZTZjNzUwZjgxMzJlZjhjYWQzODE1ZjlmMzk2YWQ0M2M0NzBiOGNkOTciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRmNWMwMjlhMWJhZDgyMmQzNzAwYzVjY2QzNWMzOTczOGVmNWRhMWFjZmJjOTBiMzAwNTQ3YTdhZWVkMDk3ZTkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI1NDkxYzg1MTRjMTVjYmU0Yzc4NjJhOTY3NzNiMzljZmQ0MTk2NzRkNzhjNWM2N2M0YTUzNmI0ZjRkNWZmMTAifQ"
+        },
+        {
+          "resource": "repo://src/core/spread.ts#L64-L64",
+          "version": "repo-lines-v1:sha256:931f7189ac8f5067fad54a1fa9560b69894100d176c355063110e0532649d8da:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOTMxZjcxODlhYzhmNTA2N2ZhZDU0YTFmYTk1NjBiNjk4OTQxMDBkMTc2YzM1NTA2MzExMGUwNTMyNjQ5ZDhkYSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOTMxZjcxODlhYzhmNTA2N2ZhZDU0YTFmYTk1NjBiNjk4OTQxMDBkMTc2YzM1NTA2MzExMGUwNTMyNjQ5ZDhkYSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZDUwNTQ2NDNlNWNmNThjMjcyOGUxOWY3MjZmZGRjNTliYjFkMWM1MDIzZjMwMzU3NmU0MzRkZTBmNWZiZThkNiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYTA0YTQxOWY1NTczOGYwZWIzMGFjYzE5ZGJhMmMzNTFmNDkyZGVjZDhmNWRiNmE2ODllYjA3Y2ZlMzZlYzhhYiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_6653d366ca6a461b9f334e35553fd410",
+      "statement": "Рёбра одного стебля делят общий ствол через trunkControls, коридоры соседних зон сливаются через общие gateway-точки",
+      "evidence": [
+        {
+          "resource": "repo://src/core/geometry.ts#L343-L371",
+          "version": "repo-lines-v1:sha256:58f444b3e54d1b2873b75697edd126f26cc458d5000641223649923888a2d793:eyJzZWxlY3RlZExpbmVDb3VudCI6MjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjliMmZjODc5ZTMxZmY5MjM1Y2UwMjg1YjVhNjczYjE3OGNlZDg2OWYwZjRjZjllM2NkNmRhYWMwNDM4NTNmNTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ODNmZDdjMDhlYmMzMTU4ODc4MTIwZWViNDFhZmFiMWRhNTA3MDgzNTgzZWQzZDMyMmIxZjEyNWFlNTgwZjgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ3N2Q1OTVkYTVjMzM2OWNlMGVmYjcxZjdhNzk4YWU5NDdhMzJkMDY1NTM3MjZhYzUwMmRjYTZlM2QxZjY2N2QiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJhZTg0MjMyODczNGRiMjI5ZTQ0ODQzMWFmMjUzMWYwMWJhNWUxNjFmZTc3NjFiMGQxODBiY2ZlNTEyMDg4MjMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ee763afe578d40d9ad46ec554e1bffc0",
+      "statement": "Вся LOD/alpha-математика — чистые ядра style-math (одна bodyAlpha на тела и рёбра, плашка гаснет с текстом), mapStyles только адаптирует атрибуты Sigma",
+      "evidence": [
+        {
+          "resource": "repo://src/core/style-math.ts#L82-L110",
+          "version": "repo-lines-v1:sha256:2c639c0f4919184c8f85f88fff331a17fba7c313e447d908e0ac9f8f4f3244ee:eyJzZWxlY3RlZExpbmVDb3VudCI6MjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFiOTg2OWQ3NWQ5ZGJiYjM5ZjE3M2Y2NTc0YzA4NGYyMGNhNjhmNzFlN2Q3ZTRkYWQxZGY5NzgwYjU1MjBhOWIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEyNDIyYzczYTM1MTBkMjQyN2Y2ZTI4ZmQxOWFlMDkxM2MyMjkzMzk1ZTg1MjY2YWVkY2IyZmZjNTMxOGRhNWMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUwYmQzM2UyYWQ0MWI0NTEyOGZlMjM3YTg2NDk1M2FiMDhiODljY2I3ZTkzZThmOGI2NTFhMjkwYzM1ZDI2NGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM2ZDkxMGQxYWQ2MjU3NTZjN2ZiZDRjNjM0MmYyYmE3MzdlOWFlZDk3ZWFjMGI1NTBlN2Y3MGUwMjdlMDdmMTEifQ"
         }
       ]
     }
   ],
   "verification": {
     "by": "openwiki/0.9.0",
-    "at": "2026-11-09T15:02:00.342Z"
+    "at": "2026-11-15T11:24:14.683Z"
   }
 }

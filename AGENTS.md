@@ -35,6 +35,7 @@ Read CONVENTIONS.md before any GitHub or git operation.
 
 ## Agent Rules
 - **Workflow Mandate:** Работай через bigpowers/superpowers скиллы (develop-tdd, execute-plan и т.п.). Не пиши код напрямую в ответ на промпт.
+- **Subagents:** `delegate_to_subagents` запрещён навсегда — субагенты запускаются только напрямую через `subagent`. Без `hy4` и сторонних моделей: только текущая модель агента.
 - **Always Green:** Preflight зелёный до следующего шага. Воспроизводимый красный гейт — fix-or-log (quick-fix → fix-bug), отдельный коммит.
 - Начни с чтения specs/ и доки перед кодом.
 - Планы и спецификации пиши в specs/ до генерации кода.

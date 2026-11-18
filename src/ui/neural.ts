@@ -68,7 +68,10 @@ vec2 path_tract_normal(float t, vec2 source, vec2 target) {
 `
   return {
     name: 'tract',
-    segments: 18,
+    // 48 subdivisions instead of 18: a fibre can span several thousand world units,
+    // and at 18 the strip was polygonal — the visible kinks on the real map. The
+    // cost is vertices only (~50k strips for a full map), not fragments.
+    segments: 48,
     glsl,
     uniforms: [],
     attributes: [{ name: 'a_tract', size: 4, type: FLOAT, source: 'tract' }],
@@ -134,7 +137,7 @@ float somaFadeEdge() {
 float somaLeader() {
   float band = somaBand(soma.p.x / soma.pxu, soma.coreR + 0.6, 1.0 / soma.pxu - 0.8, 0.8)
              * (1.0 - smoothstep(0.75, 1.6, abs(soma.p.y) / soma.pxu));
-  return band * smoothstep(4.5, 8.0, soma.coreR) * (0.55 + 0.35 * soma.focus);
+  return band * smoothstep(14.0, 19.0, soma.coreR) * (0.55 + 0.35 * soma.focus);
 }
 
 // Focus reticle: a second, heavier orbit at +3.4px.
@@ -163,14 +166,15 @@ float somaTicks() {
                        * (1.0 - smoothstep(0.75, 1.6, abs(v))));
     }
   }
-  return ticks * smoothstep(6.0, 11.0, soma.coreR);
+  return ticks * smoothstep(19.0, 26.0, soma.coreR);
 }
 
-// Four-ray star with 2px arms instead of hairlines.
+// Four-ray star: slim arms instead of hairlines; the cross stays a glint,
+// not the body of the node.
 float somaStarRay(float len) {
-  float rayX = (1.0 - smoothstep(1.10, 2.60, abs(soma.p.y) / soma.pxu))
+  float rayX = (1.0 - smoothstep(0.80, 1.90, abs(soma.p.y) / soma.pxu))
              * (1.0 - smoothstep(len * 0.55, len, abs(soma.p.x) / soma.pxu));
-  float rayY = (1.0 - smoothstep(1.10, 2.60, abs(soma.p.x) / soma.pxu))
+  float rayY = (1.0 - smoothstep(0.80, 1.90, abs(soma.p.x) / soma.pxu))
              * (1.0 - smoothstep(len * 0.55, len, abs(soma.p.y) / soma.pxu));
   return max(rayX, rayY);
 }
@@ -179,28 +183,35 @@ vec4 skinConstellation() {
   vec4 acc = vec4(PLATE, soma.disc);
 
   // 1. Quiet continuous orbit: the outline that holds the beads together.
+  //    Dust (< 8px) deliberately has NO orbit: a field of small rings reads as a
+  //    chain of interlocking links, while the same nodes as bare stars read as
+  //    texture. The ring is the language of a body worth naming, so it fades in
+  //    across 12..30px instead of snapping on at 14: a mid-size word must not
+  //    carry a hub-weight frame (reported: frames crowded the small nodes).
   float orbit = 1.0 - smoothstep(0.9, 2.2, abs(soma.dPx));
-  acc = somaOver(acc, vec4(soma.col, orbit * 0.30 * smoothstep(4.0, 9.0, soma.coreR)));
+  acc = somaOver(acc, vec4(soma.col, orbit * 0.26 * smoothstep(12.0, 30.0, soma.coreR)));
 
   // 2. Chunky beads: fewer, longer, 2.4px thick. Count encodes frequency and
   //    each word's own phase rotates the pattern.
-  float beadsN = floor(mix(9.0, 20.0, smoothstep(5.0, 34.0, soma.coreR)) + 0.5);
+  float beadsN = floor(mix(9.0, 20.0, smoothstep(16.0, 34.0, soma.coreR)) + 0.5);
   float seg = fract(atan(soma.p.y, soma.p.x) / TAU * beadsN + 0.5 + soma.phase);
   float beads = (1.0 - smoothstep(0.16, 0.34, abs(seg - 0.5)))
               * (1.0 - smoothstep(1.1, 2.6, abs(soma.dPx)))
-              * smoothstep(4.5, 9.0, soma.coreR);
+              * smoothstep(16.0, 24.0, soma.coreR);
   vec3 beadCol = mix(soma.col, vec3(1.0), 0.62 + 0.22 * soma.focus);
-  acc = somaOver(acc, vec4(beadCol, beads * (0.95 + 0.05 * soma.focus)));
+  // Beads answer to the body too: full weight only on real hubs, so the frame of a
+  // mid-size word stays a trace rather than a solid dashed circle.
+  acc = somaOver(acc, vec4(beadCol, beads * (0.55 + 0.45 * smoothstep(18.0, 34.0, soma.coreR)) * (1.0 + 0.05 * soma.focus)));
 
   // 3. Coloured halo, wider and stronger than the thin version.
   float halo = exp(-pow((soma.r / soma.pxu) / (0.50 * soma.coreR + 4.0), 2.0)) * 0.28;
   acc = somaOver(acc, vec4(soma.col, halo));
 
-  // 4. Star: heavy cross + a large white core.
-  float ray = somaStarRay(min(soma.coreR * 0.85, 22.0) + 2.0 * soma.focus)
+  // 4. Star: slim cross + a small bright core.
+  float ray = somaStarRay(min(soma.coreR * 0.62, 15.0) + 1.5 * soma.focus)
             * (0.85 + 0.15 * soma.focus);
   acc = somaOver(acc, vec4(soma.point, ray));
-  acc = somaOver(acc, vec4(WARM, somaPoint(3.0 + 0.7 * soma.focus)));
+  acc = somaOver(acc, vec4(WARM, somaPoint(2.2 + 0.5 * soma.focus)));
 
   // 5. Ticks, leader, outer aura and focus reticle.
   acc = somaOver(acc, vec4(soma.ink, somaTicks() * 0.95));
@@ -221,7 +232,7 @@ vec4 layer_soma(vec4 v_somaColor, float v_somaCore, float v_somaGlow, float v_so
   soma.haloPx = max(0.0, (1.0 - soma.c) / soma.pxu);
   soma.focus = clamp(v_somaGlow - 1.0, 0.0, 1.0);
   soma.dPx = (soma.r - soma.c) / soma.pxu;
-  soma.disc = 1.0 - smoothstep(-0.5, 0.6, soma.dPx);
+  soma.disc = 1.0 - smoothstep(-0.7, 0.85, soma.dPx);
   soma.phase = v_somaPhase;
   soma.col = v_somaColor.rgb;
   soma.ink = mix(soma.col, WARM, 0.24 + 0.38 * soma.focus);
@@ -252,70 +263,141 @@ export function layerAxon(): EdgeLayer {
   const { FLOAT } = WebGL2RenderingContext
   // language=GLSL
   const glsl = /*glsl*/ `
+// Axon fibre: a tube rather than a ribbon. Shading, specular and the braid all
+// need the SIGNED offset from the axis; ctx.sdf is measured to the strip edge
+// and is unsigned across it, so the flank sign is taken from the standard
+// v_side varying. Every length below is in screen pixels (px = aaWidth).
+float axonWrap(float t, float p, float L) {
+  return (fract(t - p + 0.5) - 0.5) * L;
+}
+
+// Asymmetric comet: sharp head, long fading wake; both branches meet at dd = 0.
+float axonComet(float dd, float sig) {
+  float tau = mix(sig * 0.65, sig * 2.8, step(dd, 0.0));
+  return exp(-(dd * dd) / (2.0 * sig * sig)) * exp(-abs(dd) / tau);
+}
+
 vec4 layer_axon(EdgeContext ctx) {
   float px = max(ctx.aaWidth, 1e-6);
-  float halfPx = max(ctx.thickness * 0.5 / px, 1.0);
-  float dPx = abs(ctx.sdf + ctx.thickness * 0.5) / px;
-  float L = ctx.edgeLength / px;
+  float t = clamp(ctx.t, 0.0, 1.0);
+  float L = max(ctx.edgeLength / px, 1.0);
+  float halfPx = ctx.thickness * 0.5 / px;
   float s = clamp(v_axonStrength, 0.0, 1.0);
   float dens = clamp(v_axonBundle, 0.0, 1.0);
-  float k = step(0.5, v_axonPulse);
+  float bead = clamp(v_axonBead, 0.0, 1.0);
   float lod = clamp(v_axonLod, 0.0, 1.0);
-  float t = ctx.t;
+  float k = step(0.5, v_axonPulse);
   float ph = v_axonPhase * 6.2831853;
+  float motion = clamp(u_motion, 0.0, 1.0);
+  float flow = u_time * motion;
 
-  // Liquid: two slow counter-running waves (flowing in / flowing out) and a
-  // meniscus at both ends, so the filament pours into and out of its nodes.
-  float wavelen = mix(150.0, 52.0, s);
-  float speed = mix(0.045, 0.11, s) * u_motion;
-  float w1 = sin(t * L / wavelen - u_time * speed * 6.2831853 + ph);
-  float w2 = sin(t * L / wavelen + u_time * speed * 4.3 + ph + 1.7);
-  float liquid = 0.5 + 0.5 * (0.62 * w1 + 0.38 * w2);
-  float ends = pow(abs(2.0 * t - 1.0), 5.0);
+  // Absolute-length features (meniscus, mid varicosity) must not fill a short
+  // link: their gaussians are 10-18 px wide, so a 30 px edge would swell into a
+  // bead and lose its hairline character.
+  float longEdge = smoothstep(16.0, 44.0, L);
 
+  // Axis distance keeps the sdf magnitude (zone-safe) and only borrows the sign.
+  float d = sign(v_side) * abs(ctx.sdf + ctx.thickness * 0.5) / px;
+  float ad = abs(d);
+
+  // Liquid: two slow waves running along the fibre. The first one also breathes
+  // the thickness, so the tube pulses instead of only brightening.
+  float wavelen = mix(160.0, 54.0, s);
+  float waveArg = t * L / wavelen * 6.2831853;
+  float w1 = sin(waveArg - flow * 1.2 + ph);
+  float w2 = sin(waveArg * 0.57 + flow * 0.75 + ph * 1.7);
+  float liquid = 0.5 + 0.5 * (0.65 * w1 + 0.35 * w2);
+  float peri = w1;
+
+  // Thickness IS the frequency: the round-12 law, multiplied by taper, breath,
+  // LOD, a meniscus that pours the fibre into its nodes and a mid varicosity
+  // for the heaviest links.
   float toMid = (t - 0.5) * L;
-  // Thickness IS the frequency: rare links are hairlines, frequent ones are
-  // arteries. Round 12 raises the additive weight so the connecting fibres
-  // match the heavier node strokes (1.54 px at s=0.3, 3.84 px at s=1.0).
-  float fil = (0.08 + 1.55 * pow(s, 1.5) + 0.10 * dens * s
-            + v_axonBead * 0.08 * exp(-(toMid * toMid) / 50.0)
-            + 0.50 * (1.0 - 0.42 * s))
-            * (1.0 - 0.5 * lod)
-            * (0.86 + 0.28 * liquid)
-            * (1.0 + 0.24 * ends);
+  float fromEnd = min(t, 1.0 - t) * L;
+  float taper = mix(0.80, 1.0, pow(max(1.0 - pow(abs(2.0 * t - 1.0), 4.0), 0.0), 0.6));
+  float fil = (0.08 + 1.55 * pow(s, 1.5) + 0.10 * dens * s + 0.50 * (1.0 - 0.42 * s))
+            * taper
+            * (1.0 + 0.15 * peri * (1.0 - lod))
+            * (1.0 - 0.45 * lod)
+            * (0.88 + 0.24 * liquid)
+            + longEdge * (0.30 * exp(-(fromEnd * fromEnd) / 90.0)
+            + bead * 0.50 * exp(-(toMid * toMid) / 648.0));
+  // The quad is edgeSize wide (mapview.ts); a breath that outgrows it is cut
+  // square by the geometry, which reads as a chopped fibre.
+  fil = clamp(fil, 0.35, halfPx + 0.4);
 
-  float d = dPx;
-  float body = 1.0 - smoothstep(fil - 0.32, fil + 0.32, d);
-  // Quiet by default; only hovered/selected fibres run white-hot.
+  // 0.38 of the radius is a deliberate, softened edge: a 0.7px fibre
+  // antialiased over a sub-pixel band shimmered into stair steps while moving.
+  float feather = clamp(fil * 0.38, 0.38, 0.80);
+  float body = 1.0 - smoothstep(fil - feather, fil + feather, ad);
+
+  // Quiet by default; hovered and selected fibres run white-hot through the core.
   vec3 base = mix(v_sourceColor.rgb, v_targetColor.rgb, t);
-  base = mix(base, vec3(1.0), (0.45 + 0.30 * k) * s);
+  base = mix(base, base * vec3(1.08, 0.96, 1.14), liquid * 0.35);
+  float rel = clamp(ad / max(fil, 1e-3), 0.0, 1.0);
+  float shade = 0.58 + 0.62 * pow(max(1.0 - rel * rel, 0.0), 0.7);
 
-  float rel = clamp(d / max(halfPx, 1.0), 0.0, 1.0);
-  float glow = exp(-max(d - fil, 0.0) / max(halfPx * 0.09, 0.45))
-             * (0.012 + 0.030 * s) * (1.0 - smoothstep(0.4, 1.0, rel))
-             * (1.0 - 0.6 * lod);
-  float a = min(1.0, body + (1.0 - body) * glow);
-  vec3 rgb = a > 0.001 ? (base * (0.82 + 0.18 * body) + base * glow * (1.0 - body)) / a : base;
-  rgb *= 0.84 + 0.30 * liquid;
+  // Braided bundle: two strands twist around the axis and darken the groove
+  // between them. On |d| both strands would mirror into one hollow smear.
+  float twist = sin(t * L * 0.45 - flow * 2.2 + ph);
+  float strandOff = twist * fil * 0.55 * dens;
+  float strandW = max(fil * 0.45, 0.40);
+  float ds1 = d - strandOff;
+  float ds2 = d + strandOff;
+  float strand = 0.5 * (exp(-(ds1 * ds1) / (2.0 * strandW * strandW))
+                      + exp(-(ds2 * ds2) / (2.0 * strandW * strandW)));
+  shade *= 1.0 - 0.20 * dens * (1.0 - strand) * (1.0 - lod);
+  vec3 col = base * shade;
 
-  // Soft droplets travelling both ways; active links get a faster extra wave.
-  float sig = mix(26.0, 12.0, s);
-  float ppIn = fract(u_time * 0.055 + v_axonPhase);
-  float ppOut = fract(u_time * 0.038 + v_axonPhase + 0.5);
-  float dIn = (t - ppIn) * L;
-  float dOut = (t - ppOut) * L;
-  float drop = exp(-(dIn * dIn) / (2.0 * sig * sig))
-             + 0.75 * exp(-(dOut * dOut) / (2.0 * sig * sig));
-  float ppAct = fract(u_time * 0.32 + v_axonPhase);
-  float dAct = (t - ppAct) * L;
-  float dropAct = exp(-(dAct * dAct) / (2.0 * sig * sig));
-  float pulse = u_motion * mix(drop * 0.45, drop * 0.45 + 0.8 * dropAct, k);
+  // Specular on one flank of the tube; only ever inside the body.
+  float specOff = d - fil * 0.38;
+  float specW = max(fil * 0.32, 0.35);
+  float spec = exp(-(specOff * specOff) / (2.0 * specW * specW)) * body;
+  col += vec3(1.0) * spec * (0.08 + 0.20 * s + 0.28 * k) * (1.0 - 0.7 * lod);
 
-  vec3 hot = mix(base, vec3(1.0), 0.8);
-  rgb = mix(rgb, hot, clamp(pulse, 0.0, 1.0) * 0.75);
+  // Bright fibre core: the light that makes the line read as optic, not paint.
+  float coreW = max(fil * 0.38, 0.28);
+  float core = 1.0 - smoothstep(coreW - feather * 0.6, coreW + feather * 0.6, ad);
+  // The white mix is capped at 1: extrapolating past white pushed the core over
+  // 1.0 and the framebuffer clamp then erased the author tint along the axis.
+  vec3 coreCol = mix(base, vec3(1.0), min(0.35 + 0.45 * s + 0.30 * k, 1.0));
+  col = mix(col, coreCol * (1.02 + 0.22 * liquid), core * (0.40 + 0.35 * s));
+
+  // Tinted halo, a pixel or two wide; LOD drops it first so zooming out leaves
+  // pure fibre instead of haze.
+  float glowRange = max(halfPx * 0.55, 2.2 + 3.0 * s);
+  float glow = exp(-max(ad - fil, 0.0) / glowRange) * (1.0 - body);
+  glow *= (0.05 + 0.10 * s + 0.12 * k) * (1.0 - 0.65 * lod);
+  col += base * glow * 1.2;
+  float a = clamp(body + glow * 1.6, 0.0, 1.0);
+
+  // Comets travel both ways; the active link adds a third, faster wave. The
+  // cyclic wrap keeps them alive across the t = 0/1 seam instead of cutting.
+  float sig = mix(20.0, 10.0, s);
+  float ddIn = axonWrap(t, fract(flow * 0.045 + v_axonPhase), L);
+  float ddOut = axonWrap(t, fract(flow * 0.030 + v_axonPhase + 0.5), L);
+  float comet = axonComet(ddIn, sig) + 0.65 * axonComet(ddOut, sig * 1.25);
+  float ddAct = axonWrap(t, fract(flow * 0.28 + v_axonPhase), L);
+  float cometAct = axonComet(ddAct, sig * 0.8);
+  float pulse = clamp(motion * mix(comet * 0.55, comet * 0.55 + cometAct * 1.15, k)
+                    * (1.0 - 0.7 * lod), 0.0, 1.5);
+
+  vec3 hot = mix(coreCol, vec3(1.0), 0.65);
+  col = mix(col, hot * (1.05 + 0.45 * pulse), clamp(pulse, 0.0, 1.0) * 0.85);
   // Droplets brighten existing coverage only: they never widen the fibre.
-  a = clamp(a + pulse * body * 0.4, 0.0, 1.0);
-  return vec4(rgb, a);
+  a = clamp(a + pulse * body * 0.35, 0.0, 1.0);
+
+  // Flow bands live on the core, so the flanks keep their cylinder shade.
+  float flowBand = 0.5 + 0.5 * sin(t * L * 0.22 - flow * (1.0 + 2.0 * s) + ph);
+  col *= 0.94 + 0.12 * flowBand * core;
+  float inflow = longEdge * exp(-(fromEnd * fromEnd) / 120.0);
+  col *= 1.0 + 0.16 * inflow * (0.5 + 0.5 * liquid);
+
+  // Sigma composites layers as blendOver (straight alpha) and then multiplies
+  // rgb by the geometric coverage, so rgb already carries a. Dividing it out
+  // keeps the halo energy linear and leaves ONE brightness multiplier — the
+  // style opacity — applied exactly once.
+  return a > 0.001 ? vec4(col / a, a) : vec4(0.0);
 }
 `
   return {

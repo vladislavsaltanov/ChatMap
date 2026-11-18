@@ -1,12 +1,14 @@
-import { armsFromIndex, buildArmsIndex, bundleEdges, edgeAlpha, nodeFitSize, phaseFor } from './geometry'
-import { getLruCache, layout, setLruCache } from './graph'
+import { armsFromIndex, buildArmsIndex, bundleEdges, edgeAlpha, footprintScale, footprintSize, nodeFitSize, phaseFor } from './geometry'
+import { getLruCache, layout, setLruCache, type LayoutNodeInput, type LayoutResult } from './graph'
+import type { Intern } from './intern'
 import { parse } from './parse'
-import { pruneSortedBackbone, select, type ViewCfg } from './select'
-import { PipelineCache } from './tally'
+import { dropEdgelessNodes, pruneSortedBackbone, select, type Selection, type SelectionEdge, type SelectionNode, type ViewCfg } from './select'
+import { PipelineCache, type PipelineCallbacks, type TallyResult } from './tally'
 import type {
   AuthorId,
   ChatExport,
   FilterCfg,
+  MapMsg,
   WorkerIn,
   WorkerNode,
   WorkerOut,
@@ -30,60 +32,53 @@ const DEFAULT_FILTER_CFG: FilterCfg = {
 
 let currentFilterCfg: FilterCfg = { ...DEFAULT_FILTER_CFG }
 let currentViewCfg: ViewCfg = { mode: { kind: 'together' }, topN: 600, minWeight: 0 }
+// Rolled on every open so each generation gets its own figure; filter switches
+// keep it so the silhouette stays stable while browsing one chat.
+let layoutSeed = 1337
 
 function send(msg: WorkerOut) {
   self.postMessage(msg)
 }
 
-function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
-  if (!chat) return
+// New file = new identity space: stale canon->position entries would
+// pin same-spelled words of the new chat to the old chat's coordinates.
+function resetWorkerState(): void {
+  chat = null
+  pipelineCache = new PipelineCache()
+  positionsCache.clear()
+}
 
-  const cfg = currentFilterCfg
-  // cache hits skip the stages they reuse, so their ticks never show
-  const { ia, tallyResult, merged } = pipelineCache.resolve(chat, cfg, {
-    onTokenizeStart: () => send({ type: 'progress', done: 35, total: 100, stage: 'Токенизация и фильтрация...' }),
-    onTokenizeProgress: (doneMsgs, totalMsgs) =>
-      send({
-        type: 'progress',
-        done: 35 + Math.round((doneMsgs / totalMsgs) * 20),
-        total: 100,
-        stage: `Токенизация: ${doneMsgs} / ${totalMsgs} сообщ.`,
-      }),
-    onTallyStart: () => send({ type: 'progress', done: 60, total: 100, stage: 'Подсчёт частот и связей...' }),
-    onMergeStart: () => send({ type: 'progress', done: 70, total: 100, stage: 'Умные склейки слов...' }),
-  })
+type NodeInfo = { bestForm: string; forms: Array<[string, number]>; size: number }
+type PipelineData = { ia: Intern; tallyResult: TallyResult; merged?: Map<number, number> }
 
-  // 'ready' needs the tallied counts, so it goes out here (full run only) and before any 'map'
-  if (fullRun && authorNames) {
-    const wordCounts = new Map<AuthorId, number>()
-    for (const tokenAuthors of tallyResult.counts.values()) {
-      for (const [authorId, cnt] of tokenAuthors) {
-        wordCounts.set(authorId, (wordCounts.get(authorId) || 0) + cnt)
-      }
-    }
-    send({
-      type: 'ready',
-      authors: Array.from(authorNames.entries()).map(([id, name]) => ({
-        id,
-        name,
-        wordCount: wordCounts.get(id) || 0,
-      })),
-      counts: { messages: chat.messages.length },
-    })
-  }
+function resolveData(chat: ChatExport, cfg: FilterCfg, callbacks: PipelineCallbacks): PipelineData {
+  return pipelineCache.resolve(chat, cfg, callbacks)
+}
 
-  send({ type: 'progress', done: 75, total: 100, stage: 'Выборка узлов и рёбер...' })
-  const selection = select(tallyResult, currentViewCfg, merged)
-
+function buildLayoutInput(
+  selection: Selection,
+  ia: Intern,
+  positionsCache: Map<string, { x: number; y: number }>,
+): { layoutNodes: LayoutNodeInput[]; backboneEdges: SelectionEdge[]; nodeInfoMap: Map<number, NodeInfo>; nodes: SelectionNode[] } {
+  // Size bounds stay on the FULL selection: dropping linkless words must not
+  // resize the survivors when the minWeight slider moves.
   let minCount = Infinity
   for (const n of selection.nodes) {
     if (n.count < minCount) minCount = n.count
   }
   if (minCount === Infinity) minCount = 1
 
+  // Serrano disparity backbone; every node keeps its 2 strongest edges.
+  // Selection edges arrive sorted weight-desc, so the backbone skips its own
+  // resort. Its budget cap can strand dust on dense chats (same as minWeight
+  // orphans in select()): drop them here so layout, labels and picking agree
+  // on one connected node set.
+  const backboneEdges = pruneSortedBackbone(selection.edges, selection.nodes.length)
+  const nodes = dropEdgelessNodes(selection.nodes, backboneEdges)
+
   // Pre-calculate best word form and cell sizes so layout spaces them properly
-  const nodeInfoMap = new Map<number, { bestForm: string; forms: Array<[string, number]>; size: number }>()
-  for (const n of selection.nodes) {
+  const nodeInfoMap = new Map<number, NodeInfo>()
+  for (const n of nodes) {
     const formMap = ia.forms.get(n.id)
     let bestForm = ia.getCanon(n.id) || String(n.id)
     let bestCount = 0
@@ -103,8 +98,17 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
     nodeInfoMap.set(n.id, { bestForm, forms: formsList, size })
   }
 
-  send({ type: 'progress', done: 85, total: 100, stage: 'Укладка графа (ForceAtlas2)...' })
-  const layoutNodes = selection.nodes.map((n) => {
+  // Screen-area budget: the same px size law cannot serve a 33-word and a
+  // 1000-word map. Rescale the whole distribution once — uniformly, so the size
+  // hierarchy survives and only its on-screen scale adapts to the map size.
+  const sizeScale = footprintScale([...nodeInfoMap.values()].map((info) => info.size))
+  if (sizeScale < 1) {
+    for (const info of nodeInfoMap.values()) {
+      info.size = Math.round(footprintSize(info.size, sizeScale) * 10) / 10
+    }
+  }
+
+  const layoutNodes = nodes.map((n) => {
     const canonStr = ia.getCanon(n.id) || String(n.id)
     const info = nodeInfoMap.get(n.id)
     return {
@@ -114,29 +118,32 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
     }
   })
 
-  // Serrano disparity backbone; every node keeps its 2 strongest edges
-  // Selection edges arrive sorted weight-desc, so the backbone skips its own resort.
-  const backboneEdges = pruneSortedBackbone(selection.edges, selection.nodes.length)
+  return { layoutNodes, backboneEdges, nodeInfoMap, nodes }
+}
 
-  const layoutResult = layout(layoutNodes, backboneEdges, {
-    seed: 1337,
-    fullRun,
-    onStage: (done, stage) => send({ type: 'progress', done, total: 100, stage }),
-  })
-
-  for (const [id, pos] of layoutResult.positions) {
-    const canonStr = ia.getCanon(id) || String(id)
-    setLruCache(positionsCache, canonStr, pos, MAX_POS_CACHE)
-  }
-
-  send({ type: 'progress', done: 95, total: 100, stage: 'Формирование карты...' })
+function buildMapMessage(
+  selection: Selection,
+  layoutResult: LayoutResult,
+  ia: Intern,
+  tallyResult: TallyResult,
+  backboneEdges: SelectionEdge[],
+  nodeInfoMap: Map<number, NodeInfo>,
+): MapMsg {
   const nodes: WorkerNode[] = []
   const forms = new Map<number, Array<[string, number]>>()
   const posList = selection.nodes.map((n) => {
     const p = layoutResult.positions.get(n.id) || { x: 0, y: 0 }
     return { id: n.id, x: p.x, y: p.y }
   })
-  const bundles = bundleEdges(posList, backboneEdges, selection.maxWeight)
+  // Edge geometry is routed through the figure's own funnels: fibres of one
+  // corridor share control points, so they land on top of each other and merge.
+  const bundles = bundleEdges(posList, backboneEdges, selection.maxWeight, {
+    ports: layoutResult.ports ?? new Map(),
+    groupOf: layoutResult.groupOf ?? new Map(),
+    // Fascicle identity lets intra-topic fibres share one trunk per stem instead of
+    // fanning 200 individual curves out of the soma.
+    stemOf: layoutResult.stemOf,
+  })
   const armsIndex = buildArmsIndex(posList, backboneEdges)
 
   for (const n of selection.nodes) {
@@ -177,7 +184,7 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
     })
   }
 
-  send({
+  return {
     type: 'map',
     nodes,
     edges: backboneEdges.map((e, i) => ({
@@ -192,20 +199,97 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
     maxCount: selection.maxCount,
     maxWeight: selection.maxWeight,
     forms,
+  }
+}
+
+function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
+  if (!chat) return
+
+  const cfg = currentFilterCfg
+  // cache hits skip the stages they reuse, so their ticks never show
+  const { ia, tallyResult, merged } = resolveData(chat, cfg, {
+    onTokenizeStart: () => send({ type: 'progress', done: 35, total: 100, stage: 'Токенизация и фильтрация...' }),
+    onTokenizeProgress: (doneMsgs, totalMsgs) =>
+      send({
+        type: 'progress',
+        done: 35 + Math.round((doneMsgs / totalMsgs) * 20),
+        total: 100,
+        stage: `Токенизация: ${doneMsgs} / ${totalMsgs} сообщ.`,
+      }),
+    onTallyStart: () => send({ type: 'progress', done: 60, total: 100, stage: 'Подсчёт частот и связей...' }),
+    onMergeStart: () => send({ type: 'progress', done: 70, total: 100, stage: 'Умные склейки слов...' }),
   })
+
+  // 'ready' needs the tallied counts, so it goes out here (full run only) and before any 'map'
+  if (fullRun && authorNames) {
+    const wordCounts = new Map<AuthorId, number>()
+    for (const tokenAuthors of tallyResult.counts.values()) {
+      for (const [authorId, cnt] of tokenAuthors) {
+        wordCounts.set(authorId, (wordCounts.get(authorId) || 0) + cnt)
+      }
+    }
+    send({
+      type: 'ready',
+      authors: Array.from(authorNames.entries()).map(([id, name]) => ({
+        id,
+        name,
+        wordCount: wordCounts.get(id) || 0,
+      })),
+      counts: { messages: chat.messages.length },
+    })
+  }
+
+  send({ type: 'progress', done: 75, total: 100, stage: 'Выборка узлов и рёбер...' })
+  const selection = select(tallyResult, currentViewCfg, merged)
+
+  const { layoutNodes, backboneEdges, nodeInfoMap, nodes } = buildLayoutInput(selection, ia, positionsCache)
+
+  send({ type: 'progress', done: 85, total: 100, stage: 'Раскладка карты...' })
+  const layoutResult = layout(layoutNodes, backboneEdges, {
+    seed: layoutSeed,
+    fullRun,
+    onStage: (done, stage) => send({ type: 'progress', done, total: 100, stage }),
+  })
+  // Runtime stamp: proves which layout code the browser runs and what shape
+  // it produced. Read it in DevTools console after reopening the export.
+  {
+    let minX = Infinity
+    let maxX = -Infinity
+    let minY = Infinity
+    let maxY = -Infinity
+    for (const p of layoutResult.positions.values()) {
+      if (p.x < minX) minX = p.x
+      if (p.x > maxX) maxX = p.x
+      if (p.y < minY) minY = p.y
+      if (p.y > maxY) maxY = p.y
+    }
+    const aspect = (maxX - minX) / Math.max(1e-9, maxY - minY)
+    console.log(
+      `[chatmap-layout] leaf-P1 aspect hold 2.0: nodes=${layoutResult.positions.size} aspect=${aspect.toFixed(2)} fullRun=${fullRun} seed=${layoutSeed}`,
+    )
+  }
+
+  for (const [id, pos] of layoutResult.positions) {
+    const canonStr = ia.getCanon(id) || String(id)
+    setLruCache(positionsCache, canonStr, pos, MAX_POS_CACHE)
+  }
+
+  send({ type: 'progress', done: 95, total: 100, stage: 'Формирование карты...' })
+  send(buildMapMessage({ ...selection, nodes }, layoutResult, ia, tallyResult, backboneEdges, nodeInfoMap))
 }
 
 self.onmessage = (e: MessageEvent<WorkerIn>) => {
   const msg = e.data
   try {
     if (msg.type === 'open') {
+      resetWorkerState()
+      // Pinned ?seed= wins (stand, reproducible maps); otherwise roll per open
+      // so every generation gets its own figure.
+      layoutSeed = Number.isInteger(msg.seed) ? (msg.seed as number) >>> 0 : (Math.random() * 0x7fffffff) | 0
       send({ type: 'progress', done: 5, total: 100, stage: 'Чтение JSON...' })
-      chat = parse(new TextDecoder().decode(msg.buf))
-      if (chat.warn) send({ type: 'warn', message: chat.warn })
-      pipelineCache = new PipelineCache()
-      // New file = new identity space: stale canon->position entries would
-      // pin same-spelled words of the new chat to the old chat's coordinates.
-      positionsCache.clear()
+      const nextChat = parse(new TextDecoder().decode(msg.buf))
+      if (nextChat.warn) send({ type: 'warn', message: nextChat.warn })
+      chat = nextChat
       send({ type: 'progress', done: 30, total: 100, stage: 'Определение авторов...' })
 
       const authorMap = new Map<AuthorId, string>()

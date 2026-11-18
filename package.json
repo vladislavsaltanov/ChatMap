@@ -12,7 +12,6 @@
   "dependencies": {
     "@sigma/export-image": "4.0.0",
     "graphology": "0.26.0",
-    "graphology-layout-forceatlas2": "0.10.1",
     "sigma": "4.0.4"
   },
   "devDependencies": {

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { canon } from '../src/core/canon'
 import * as canonMod from '../src/core/canon'
-import { Intern } from '../src/core/intern'
+import { Intern, MAX_TOKEN_ID } from '../src/core/intern'
 
 describe('canon', () => {
   it('stems verb forms into a single key', () => {
@@ -77,5 +77,53 @@ describe('Intern memoization', () => {
     expect(tech.id).not.toBe(plain.id)
     expect(interner.forms.get(plain.id)!.get('talked')).toBe(1)
     expect(interner.forms.get(tech.id)!.get('talked')).toBe(1)
+  })
+
+  it('assigns the last valid id, then throws', () => {
+    const ia = new Intern()
+    Reflect.set(ia, 'nextId', MAX_TOKEN_ID)
+    expect(ia.intern('last', 'plain').id).toBe(MAX_TOKEN_ID)
+    expect(() => ia.intern('overflow', 'plain')).toThrow(RangeError)
+  })
+})
+
+describe('canon с частотным словарём корпуса', () => {
+  // Real shape from a chat: the pronoun «меня» is 139x more frequent than the verb
+  // it would absorb, so the stem «меня» is a different lexeme, not an inflection.
+  const counts = new Map([
+    ['меня', 2085],
+    ['менять', 15],
+    ['меняет', 7],
+    ['меняют', 4],
+    ['меняю', 1],
+    ['меняем', 1],
+    ['работ', 100],
+    ['работе', 10],
+  ])
+
+  it('не вливает редкую форму в частотное самостоятельное слово', () => {
+    expect(canon('менять', 'plain', counts)).not.toBe('меня')
+    expect(canon('меняет', 'plain', counts)).not.toBe('меня')
+    expect(canon('меняют', 'plain', counts)).not.toBe('меня')
+    // The pronoun keeps its own slot.
+    expect(canon('меня', 'plain', counts)).toBe('меня')
+  })
+
+  it('по-прежнему склеивает парадигму, где основа не доминирует', () => {
+    expect(canon('работе', 'plain', counts)).toBe('работ')
+  })
+
+  it('без карты частот работает как раньше', () => {
+    expect(canon('менять', 'plain')).toBe('меня')
+    expect(canon('работе', 'plain')).toBe('работ')
+  })
+
+  it('Intern с картой оставляет у местоимения и глагола разные ноды', () => {
+    const ia = new Intern(counts)
+    const pronoun = ia.intern('меня', 'plain')
+    const verb = ia.intern('менять', 'plain')
+    expect(verb.id).not.toBe(pronoun.id)
+    expect(ia.forms.get(pronoun.id)!.get('меня')).toBe(1)
+    expect(ia.forms.get(verb.id)!.get('менять')).toBe(1)
   })
 })

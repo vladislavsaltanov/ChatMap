@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import fixture from './fixtures/sample-export.json'
-import { ExportError, MAX_FLATTEN_DEPTH, flatten, parse } from '../src/core/parse'
+import { ExportError, MAX_FLATTEN_DEPTH, flatten, parse, parseFinitePositiveNumber, parsePositiveInt } from '../src/core/parse'
 
 const src = JSON.stringify(fixture)
 const HTML_ERR =
@@ -194,5 +194,17 @@ describe('parse', () => {
   it('(o) одиночный экспорт → warn не задан', () => {
     expect(parse(src).warn).toBeUndefined()
     expect(parse(src)).not.toHaveProperty('warn')
+  })
+
+  it('(p) exponent id и infinity-даты отвергаются, digit-строки принимаются', () => {
+    expect(parsePositiveInt('1e3')).toBeNull()
+    expect(parsePositiveInt('123')).toBe(123)
+    expect(parseFinitePositiveNumber('1e309')).toBeNull()
+    expect(parseFinitePositiveNumber(Infinity)).toBeNull()
+  })
+
+  it('(q) строковый reply id сохраняется', () => {
+    const chat = parse(JSON.stringify({ messages: [{ id: 1, reply_to_message_id: '123', text: 'x' }] }))
+    expect(chat.messages[0].replyTo).toBe(123)
   })
 })

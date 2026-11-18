@@ -55,6 +55,15 @@ function addWarning(msg: string): void {
 
 const worker = new Worker()
 
+// Pinned layout seed from ?seed= (stand calibration, reproducible maps).
+// Absent or non-numeric = the worker rolls its own per open.
+const openSeed = ((): number | undefined => {
+  const raw = new URLSearchParams(location.search).get('seed')
+  if (raw === null || raw.trim() === '') return undefined
+  const parsed = Number.parseInt(raw, 10)
+  return Number.isInteger(parsed) ? parsed : undefined
+})()
+
 // Sigma v4 rasterises label glyphs into an SDF atlas with canvas 2D exactly
 // once and caches them forever. If Obel Mono is not loaded before the renderer
 // is created, the atlas permanently bakes a system fallback instead. Weight 400
@@ -98,6 +107,13 @@ worker.onmessage = async (e: MessageEvent<WorkerOut>) => {
   } else if (msg.type === 'warn') {
     addWarning(msg.message)
   } else if (msg.type === 'error') {
+    // Only an open can fail with the progress screen up, and the worker has
+    // already dropped its chat at that point. Drop the view with it, otherwise
+    // the next filter change lands in a worker that silently ignores it.
+    if (!screens.progress.hidden) {
+      mapView.clear()
+      controls.setAuthors([])
+    }
     showError(msg.message)
   }
 }
@@ -124,7 +140,7 @@ function sendFile(file: File) {
     // Transfer, not copy: the buffer moves to the worker, so a 200 MB file
     // lives in memory once instead of twice (string + structured-clone).
     const buf = reader.result as ArrayBuffer
-    worker.postMessage({ type: 'open', buf } satisfies WorkerIn, [buf])
+    worker.postMessage({ type: 'open', buf, seed: openSeed } satisfies WorkerIn, [buf])
   }
   reader.onerror = () => {
     showError('Не удалось прочитать файл.')
@@ -145,6 +161,7 @@ if (import.meta.env.DEV && location.search.includes('fixture=1')) {
     worker.postMessage({
       type: 'open',
       buf: bytes.buffer as ArrayBuffer,
+      seed: openSeed,
     } satisfies WorkerIn, [bytes.buffer as ArrayBuffer])
   })
 }
