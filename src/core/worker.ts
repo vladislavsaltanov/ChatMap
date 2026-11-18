@@ -3,7 +3,7 @@ import { getLruCache, layout, setLruCache, type LayoutNodeInput, type LayoutResu
 import type { Intern } from './intern'
 import { parse } from './parse'
 import { dropEdgelessNodes, pruneSortedBackbone, select, type Selection, type SelectionEdge, type SelectionNode, type ViewCfg } from './select'
-import { PipelineCache, type PipelineCallbacks, type TallyResult } from './tally'
+import { PipelineCache, countsUpTo, tally, type PipelineCallbacks, type ResolveResult } from './tally'
 import type {
   AuthorId,
   ChatExport,
@@ -49,9 +49,8 @@ function resetWorkerState(): void {
 }
 
 type NodeInfo = { bestForm: string; forms: Array<[string, number]>; size: number }
-type PipelineData = { ia: Intern; tallyResult: TallyResult; merged?: Map<number, number> }
 
-function resolveData(chat: ChatExport, cfg: FilterCfg, callbacks: PipelineCallbacks): PipelineData {
+function resolveData(chat: ChatExport, cfg: FilterCfg, callbacks: PipelineCallbacks): ResolveResult {
   return pipelineCache.resolve(chat, cfg, callbacks)
 }
 
@@ -125,7 +124,7 @@ function buildMapMessage(
   selection: Selection,
   layoutResult: LayoutResult,
   ia: Intern,
-  tallyResult: TallyResult,
+  counts: Map<number, Map<AuthorId, number>>,
   backboneEdges: SelectionEdge[],
   nodeInfoMap: Map<number, NodeInfo>,
 ): MapMsg {
@@ -155,7 +154,7 @@ function buildMapMessage(
     const pos = layoutResult.positions.get(n.id) || { x: 0, y: 0 }
     let authorLead: AuthorId = 0
     let leadCount = 0
-    const authorMap = tallyResult.counts.get(n.id)
+    const authorMap = counts.get(n.id)
     if (authorMap) {
       for (const [authorId, cnt] of authorMap) {
         if (cnt > leadCount) {
@@ -207,7 +206,7 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
 
   const cfg = currentFilterCfg
   // cache hits skip the stages they reuse, so their ticks never show
-  const { ia, tallyResult, merged } = resolveData(chat, cfg, {
+  const res = resolveData(chat, cfg, {
     onTokenizeStart: () => send({ type: 'progress', done: 35, total: 100, stage: 'Токенизация и фильтрация...' }),
     onTokenizeProgress: (doneMsgs, totalMsgs) =>
       send({
@@ -216,14 +215,20 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
         total: 100,
         stage: `Токенизация: ${doneMsgs} / ${totalMsgs} сообщ.`,
       }),
-    onTallyStart: () => send({ type: 'progress', done: 60, total: 100, stage: 'Подсчёт частот и связей...' }),
+    onCountStart: () => send({ type: 'progress', done: 60, total: 100, stage: 'Подсчёт частот и связей...' }),
     onMergeStart: () => send({ type: 'progress', done: 70, total: 100, stage: 'Умные склейки слов...' }),
   })
+  const { ia, units, merged, meta } = res
+  // Pass 1 is bucketed; the map wants whole-history totals, so materialize the prefix
+  // up to the last bucket. Pairs still come from the full tally scan: limiting the scan
+  // to the selected words is the next step, and select() needs real pairs either way.
+  const counts = countsUpTo(res.bucketCounts, meta.count - 1)
+  const { pairs } = tally(units)
 
   // 'ready' needs the tallied counts, so it goes out here (full run only) and before any 'map'
   if (fullRun && authorNames) {
     const wordCounts = new Map<AuthorId, number>()
-    for (const tokenAuthors of tallyResult.counts.values()) {
+    for (const tokenAuthors of counts.values()) {
       for (const [authorId, cnt] of tokenAuthors) {
         wordCounts.set(authorId, (wordCounts.get(authorId) || 0) + cnt)
       }
@@ -240,7 +245,7 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
   }
 
   send({ type: 'progress', done: 75, total: 100, stage: 'Выборка узлов и рёбер...' })
-  const selection = select(tallyResult, currentViewCfg, merged)
+  const selection = select({ counts, pairs }, currentViewCfg, merged)
 
   const { layoutNodes, backboneEdges, nodeInfoMap, nodes } = buildLayoutInput(selection, ia, positionsCache)
 
@@ -276,7 +281,7 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
   }
 
   send({ type: 'progress', done: 95, total: 100, stage: 'Формирование карты...' })
-  send(buildMapMessage({ ...selection, nodes }, layoutResult, ia, tallyResult, backboneEdges, nodeInfoMap))
+  send(buildMapMessage({ ...selection, nodes }, layoutResult, ia, counts, backboneEdges, nodeInfoMap))
 }
 
 self.onmessage = (e: MessageEvent<WorkerIn>) => {
