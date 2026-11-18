@@ -1,7 +1,7 @@
 import Graph from 'graphology'
 import Sigma from 'sigma'
 import { drawOnCanvas } from '@sigma/export-image'
-import { coreFrac, edgeColor, edgeWidth, fisheyePoint, labelZoomRatio, phaseFor, quadOf, renderedNodeSize, visualCoreRadius, type FisheyeConfig } from '../core/geometry'
+import { coreFrac, edgeColor, edgeWidth, egoNodeScale, fisheyeGain, fisheyePoint, labelZoomRatio, phaseFor, quadOf, renderedNodeSize, visualCoreRadius, type FisheyeConfig } from '../core/geometry'
 import { resolveLabelBackdrops, resolveLabelBoxes, type LabelBox, type LabelCircle } from '../core/labels'
 import { LEGEND_TEXT } from '../core/legend'
 import type { AuthorId, MapMsg } from '../core/types'
@@ -849,15 +849,43 @@ export class MapView {
 
   // Query: ego members in both spaces — graph units for the fisheye math,
   // framed units for the camera. Caption width mirrors the collision resolver.
-  private egoPoints(r: NonNullable<MapView['renderer']>, key: string): Array<{ gx: number; gy: number; fx: number; fy: number; body: number; capW: number; capH: number }> {
+  private egoPoints(r: NonNullable<MapView['renderer']>, key: string): Array<{ gx: number; gy: number; fx: number; fy: number; quad: number; scale: number; capW: number; capH: number }> {
     return [key, ...this.graph.neighbors(key)].map((nodeKey) => {
       const attrs = this.graph.getNodeAttributes(nodeKey)
       const gx = (attrs.x as number) ?? 0
       const gy = (attrs.y as number) ?? 0
       const framed = r.graphToFramedGraph({ x: gx, y: gy })
       const fs = labelFontPxFor(attrs)
-      return { gx, gy, fx: framed.x, fy: framed.y, body: visualCoreRadius((attrs.size as number) ?? 0), capW: String(attrs.label ?? '').length * fs * 0.6, capH: fs * 1.25 }
+      // Quad, not core: captions anchor to the quad, and the pinned word's
+      // quad rides the grow+promote lift (egoNodeScale at rest).
+      const scale = nodeKey === key ? egoNodeScale(1, 1) : egoNodeScale(0, 0)
+      return { gx, gy, fx: framed.x, fy: framed.y, quad: quadOf(visualCoreRadius((attrs.size as number) ?? 0)), scale, capW: String(attrs.label ?? '').length * fs * 0.6, capH: fs * 1.25 }
     })
+  }
+
+  // Query: px taken by overlay panels on each side of the canvas. Those panels
+  // float OVER the map, so a word inside the canvas but under one of them is not
+  // visible — the fit must target the free rect, not the whole canvas.
+  private overlayInsets(): { l: number; t: number; r: number; b: number } {
+    const out = { l: 0, t: 0, r: 0, b: 0 }
+    const root = this.container.parentElement
+    if (!root) return out
+    const canvas = this.container.getBoundingClientRect()
+    // Breathing room between the frame and a panel edge.
+    const gap = 12
+    for (const sel of ['.drawer', '.nodepanel']) {
+      const el = root.querySelector<HTMLElement>(sel)
+      if (!el || el.hidden) continue
+      const box = el.getBoundingClientRect()
+      // Guard: a collapsed or off-screen panel carves nothing out.
+      if (box.width < 24 || box.height < 24) continue
+      const leftGap = box.left - canvas.left
+      const rightGap = canvas.right - box.right
+      // Side-agnostic: whichever edge the panel hugs earns the inset.
+      if (leftGap <= rightGap) out.l = Math.max(out.l, leftGap + box.width + gap)
+      else out.r = Math.max(out.r, rightGap + box.width + gap)
+    }
+    return out
   }
 
   // Query: frame (framed center + ratio) fitting the pinned ego-network with
@@ -870,48 +898,97 @@ export class MapView {
     let maxX = -Infinity
     let minY = Infinity
     let maxY = -Infinity
+    let maxCapW = 0
+    let maxCapH = 0
     for (const p of pts) {
       if (p.fx < minX) minX = p.fx
       if (p.fx > maxX) maxX = p.fx
       if (p.fy < minY) minY = p.fy
       if (p.fy > maxY) maxY = p.fy
+      if (p.capW > maxCapW) maxCapW = p.capW
+      if (p.capH > maxCapH) maxCapH = p.capH
     }
     const cx0 = (minX + maxX) / 2
     const cy0 = (minY + maxY) / 2
     if (!(Math.max(maxX - minX, maxY - minY) > 1e-9)) return { x: cx0, y: cy0, ratio: null }
-    // Fisheye at the FUTURE ratio: strength follows the same ramp applyView
-    // uses, reach scales with the ratio (px-per-unit is proportional to it).
-    const ratioGuess = Math.max(maxX - minX, maxY - minY) * 1.3
+    // Fixed-point over center AND ratio: displacement is computed around the
+    // future frame, but an asymmetric ego shifts its middle and padding grows
+    // the span — so each pass re-anchors the gains on the shifted middle,
+    // re-centers on the free rect and rescales the reach to the new ratio.
+    // Three passes converge; the 1.06 slack covers projection rounding only.
     const gs = r.getGraphState()
-    const k = Math.max(0, Math.min(1, (1 - ratioGuess) / 0.5))
-    const radius = (gs.fisheyeRadius ?? 0) * (ratioGuess / Math.max(1e-6, cam.ratio))
-    const centerG = r.framedGraphToGraph({ x: cx0, y: cy0 })
-    // px per framed unit at the guessed ratio, measured — no internal math.
-    const probe = { ...cam, x: cx0, y: cy0, ratio: ratioGuess }
-    const pa = r.graphToViewport({ x: cx0, y: cy0 }, { cameraState: probe })
-    const pb = r.graphToViewport({ x: cx0 + 0.01, y: cy0 }, { cameraState: probe })
-    const pxPerFramed = Math.max(1e-6, Math.hypot(pb.x - pa.x, pb.y - pa.y) / 0.01)
-    // Displaced bbox: each offset scaled by its fisheye gain, then padded by
-    // the drawn body on every side and the caption on +x (captions sit right
-    // of the marker, like the resolver assumes).
-    let dMinX = Infinity
-    let dMaxX = -Infinity
-    let dMinY = Infinity
-    let dMaxY = -Infinity
-    for (const p of pts) {
-      const d = Math.hypot(p.gx - centerG.x, p.gy - centerG.y)
-      const gain = radius > 0 && d > 1e-9 ? 1 + 0.5 * k * Math.exp(-1.8 * (d / radius) * (d / radius)) : 1
-      const bodyF = renderedNodeSize(p.body, ratioGuess) / pxPerFramed
-      const dfx = cx0 + (p.fx - cx0) * gain
-      const dfy = cy0 + (p.fy - cy0) * gain
-      if (dfx - bodyF < dMinX) dMinX = dfx - bodyF
-      if (dfx + bodyF + p.capW / pxPerFramed > dMaxX) dMaxX = dfx + bodyF + p.capW / pxPerFramed
-      if (dfy - bodyF - p.capH / pxPerFramed < dMinY) dMinY = dfy - bodyF - p.capH / pxPerFramed
-      if (dfy + bodyF + p.capH / pxPerFramed > dMaxY) dMaxY = dfy + bodyF + p.capH / pxPerFramed
+    const dims = r.getDimensions()
+    // Fit target: the free rect between overlay panels, and its center.
+    const insets = this.overlayInsets()
+    const availW = Math.max(160, dims.width - insets.l - insets.r)
+    const availH = Math.max(160, dims.height - insets.t - insets.b)
+    const targetX = insets.l + availW / 2
+    const targetY = insets.t + availH / 2
+    let ratioGuess = Math.max(maxX - minX, maxY - minY) * 1.3
+    let ccx = cx0
+    let ccy = cy0
+    let dMinX = 0
+    let dMaxX = 0
+    let dMinY = 0
+    let dMaxY = 0
+    for (let iter = 0; iter < 3; iter++) {
+      const k = Math.max(0, Math.min(1, (1 - ratioGuess) / 0.5))
+      const radius = (gs.fisheyeRadius ?? 0) * (ratioGuess / Math.max(1e-6, cam.ratio))
+      const centerG = r.framedGraphToGraph({ x: ccx, y: ccy })
+      // px per framed unit at the guessed ratio, measured — no internal math.
+      const probe = { ...cam, x: ccx, y: ccy, ratio: ratioGuess }
+      const pa = r.framedGraphToViewport({ x: ccx, y: ccy }, { cameraState: probe })
+      const pb = r.framedGraphToViewport({ x: ccx + 0.01, y: ccy }, { cameraState: probe })
+      const pxPerFramed = Math.max(1e-6, Math.hypot(pb.x - pa.x, pb.y - pa.y) / 0.01)
+      dMinX = Infinity
+      dMaxX = -Infinity
+      dMinY = Infinity
+      dMaxY = -Infinity
+      for (const p of pts) {
+        const gain = fisheyeGain(Math.hypot(p.gx - centerG.x, p.gy - centerG.y), radius, k)
+        const quadF = (renderedNodeSize(p.quad, ratioGuess) * p.scale) / pxPerFramed
+        const dfx = ccx + (p.fx - ccx) * gain
+        const dfy = ccy + (p.fy - ccy) * gain
+        if (dfx - quadF < dMinX) dMinX = dfx - quadF
+        if (dfx + quadF > dMaxX) dMaxX = dfx + quadF
+        if (dfy - quadF < dMinY) dMinY = dfy - quadF
+        if (dfy + quadF > dMaxY) dMaxY = dfy + quadF
+      }
+      ccx = (dMinX + dMaxX) / 2
+      ccy = (dMinY + dMaxY) / 2
+      // Land the box center on the free rect's center instead of the canvas
+      // center: the camera pin (x, y) maps to the viewport middle, so the
+      // correction is the pixel offset converted back to framed units.
+      const at = r.framedGraphToViewport({ x: ccx, y: ccy }, { cameraState: { ...cam, x: ccx, y: ccy, ratio: ratioGuess } })
+      ccx += (targetX - at.x) / pxPerFramed
+      // Viewport y grows downward while framed y grows upward.
+      ccy -= (targetY - at.y) / pxPerFramed
+      // The visible framed box is NOT square: px-per-framed turns out equal on
+      // both axes (measured 4463 vs 4460), so the box carries the free rect's
+      // aspect. Fitting with max(spanX, spanY) assumed a square and clipped
+      // tall egos vertically — the single cause of every "still misses" round.
+      const visX = availW / pxPerFramed
+      const visY = availH / pxPerFramed
+      ratioGuess = ratioGuess * Math.max((dMaxX - dMinX) / visX, (dMaxY - dMinY) / visY) * 1.06
     }
-    // Slack for projection rounding only: displacement, bodies and captions
-    // are already inside the box.
-    return { x: (dMinX + dMaxX) / 2, y: (dMinY + dMaxY) / 2, ratio: Math.max(dMaxX - dMinX, dMaxY - dMinY) * 1.1 }
+    // Captions sit right of their marker: reserve the widest one plus the
+    // resolver gap on +x, and the tallest one vertically. Captions widen the
+    // ratio only — never the middle — or the center drifts right and left
+    // members fall out of frame.
+    const finalProbe = { ...cam, x: ccx, y: ccy, ratio: ratioGuess }
+    const fpa = r.framedGraphToViewport({ x: ccx, y: ccy }, { cameraState: finalProbe })
+    const fpb = r.framedGraphToViewport({ x: ccx + 0.01, y: ccy }, { cameraState: finalProbe })
+    const pxFinal = Math.max(1e-6, Math.hypot(fpb.x - fpa.x, fpb.y - fpa.y) / 0.01)
+    const capXF = (maxCapW + 5 * (1 / labelZoomRatio(ratioGuess))) / pxFinal
+    const capYF = maxCapH / pxFinal
+    // Same aspect-correct fit for the caption-inclusive box.
+    const needX = dMaxX - dMinX + capXF
+    const needY = dMaxY - dMinY + capYF
+    return {
+      x: ccx,
+      y: ccy,
+      ratio: ratioGuess * Math.max(needX / (availW / pxFinal), needY / (availH / pxFinal)) * 1.06,
+    }
   }
 
   // Command: fly the camera to the egoFrame. Same 320ms beat as the ⊙ reset.
