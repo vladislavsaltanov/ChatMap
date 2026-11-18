@@ -1,5 +1,5 @@
 import { armsFromIndex, buildArmsIndex, bundleEdges, edgeAlpha, footprintScale, footprintSize, nodeFitSize, phaseFor } from './geometry'
-import { getLruCache, layout, setLruCache, type LayoutNodeInput, type LayoutResult } from './graph'
+import { getLruCache, layout, setLruCache, type LayoutNodeInput, type LayoutPort, type LayoutResult } from './graph'
 import type { Intern } from './intern'
 import { parse } from './parse'
 import {
@@ -13,6 +13,7 @@ import {
   type SelectionNode,
   type ViewCfg,
 } from './select'
+import { buildSlice } from './slice'
 import { PipelineCache, countsUpTo, tally, type PipelineCallbacks, type ResolveResult } from './tally'
 import type {
   AuthorId,
@@ -28,6 +29,18 @@ let chat: ChatExport | null = null
 const positionsCache = new Map<string, { x: number; y: number }>()
 const MAX_POS_CACHE = 2000
 let pipelineCache = new PipelineCache()
+
+// Pin for timeline slices: the last map's layout and its on-screen node set.
+// Captured on every 'map' send (open and update runs alike) so a slice is always
+// framed against exactly what is on screen; reset with the chat.
+type PinnedLayout = {
+  positions: Map<number, { x: number; y: number }>
+  ports?: Map<number, LayoutPort>
+  groupOf?: Map<number, number>
+  stemOf?: Map<number, number>
+  universe: Set<number>
+}
+let lastPinned: PinnedLayout | null = null
 
 const DEFAULT_FILTER_CFG: FilterCfg = {
   mat: false,
@@ -56,6 +69,8 @@ function resetWorkerState(): void {
   chat = null
   pipelineCache = new PipelineCache()
   positionsCache.clear()
+  // A slice of the previous chat has no coordinates in this one.
+  lastPinned = null
 }
 
 type NodeInfo = { bestForm: string; forms: Array<[string, number]>; size: number }
@@ -294,6 +309,19 @@ function runPipeline(fullRun: boolean, authorNames?: Map<AuthorId, string>) {
   }
 
   send({ type: 'progress', done: 95, total: 100, stage: 'Формирование карты...' })
+  // Pin the frame BEFORE the map leaves. `nodes` is the final on-screen list (after
+  // the backbone drop), so the universe is exactly the words the renderer draws —
+  // a slice can never address a word without coordinates. Re-pinned on every map
+  // send (filter, topN, minWeight), and because the worker is single-threaded a
+  // slice can never pair this pin with a newer filter config.
+  lastPinned = {
+    positions: layoutResult.positions,
+    ports: layoutResult.ports,
+    groupOf: layoutResult.groupOf,
+    stemOf: layoutResult.stemOf,
+    universe: new Set(nodes.map((n) => n.id)),
+  }
+
   send(buildMapMessage({ ...selection, nodes }, layoutResult, ia, counts, backboneEdges, nodeInfoMap))
 }
 
@@ -342,6 +370,35 @@ self.onmessage = (e: MessageEvent<WorkerIn>) => {
         minWeight: msg.cfg.minWeight,
       }
       runPipeline(false)
+    } else if (msg.type === 'slice') {
+      // [Command] One timeline frame at the cursor. Guard: a slice needs an open chat
+      // and a pinned layout (positions, ports and the drawn-word universe) — anything
+      // else has no frame to draw and is dropped silently.
+      const openChat = chat
+      const pinned = lastPinned
+      if (!openChat || !pinned) return
+      // Resolve on the warm cache: the open path just filled it, so this is the cheap
+      // A->B->A read and slices stay consistent with the map the pin was taken from.
+      // No callbacks on purpose: scrubbing the strip must not replay progress stages.
+      const res = resolveData(openChat, currentFilterCfg, {})
+      send(
+        buildSlice({
+          units: res.units,
+          bucketCounts: res.bucketCounts,
+          merged: res.merged,
+          meta: res.meta,
+          bucket: msg.bucket,
+          view: currentViewCfg,
+          ia: res.ia,
+          layout: {
+            positions: pinned.positions,
+            ports: pinned.ports,
+            groupOf: pinned.groupOf,
+            stemOf: pinned.stemOf,
+          },
+          memberUniverse: pinned.universe,
+        }),
+      )
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err)
