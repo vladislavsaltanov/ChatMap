@@ -2,8 +2,7 @@
   #map {
     position: relative;
     display: grid;
-    grid-template-rows: 1fr auto;
-    gap: var(--gap);
+    grid-template-rows: 1fr;
     height: 100vh;
     padding: 16px;
     overflow: hidden;
@@ -65,7 +64,7 @@
   .map-controls {
     position: absolute;
     /* Воздух от канваса = как справа: 16 паддинг + 22 строка-подпись + 8 зазор + 8 воздух. */
-    bottom: 54px;
+    bottom: 24px;
     right: 24px;
     display: flex;
     flex-direction: column;
@@ -109,14 +108,17 @@
     }
   }
 
-  .hover-line {
-    min-height: 22px;
+  /* Transient progress caption, inside the canvas: the map owns the frame
+     all the way to the bottom edge, so no status row sits under it. */
+  .map-status {
+    position: absolute;
+    top: 10px;
+    left: 14px;
     margin: 0;
+    z-index: 15;
+    pointer-events: none;
     font-variant-numeric: tabular-nums;
-    /* Одна строка всегда: длинное слово обрезаем, иначе прыгает высота грида. */
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   .map-progress {
@@ -321,10 +323,9 @@
 
   .nodepanel {
     position: absolute;
-    /* 24px top/right = 16px canvas inset + 8px air, same rhythm as the drawer.
-       The bottom uses 54px like .map-controls: the canvas ends above the
-       hover-line row, so a viewport-based bottom hung 22px past the canvas. */
-    inset: 24px 24px 54px auto;
+    /* 24px = 16px canvas inset + 8px air on every side, same rhythm as the
+       drawer and the zoom buttons. */
+    inset: 24px 24px 24px auto;
     width: min(280px, calc(100vw - 48px));
     padding: 16px;
     z-index: 20;

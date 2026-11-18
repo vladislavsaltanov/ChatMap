@@ -37,7 +37,9 @@ function labelCoreBar(graph: Graph): number {
 
 export class MapView {
   private container: HTMLElement
-  private hoverLine: HTMLElement
+  // Transient progress caption inside the canvas; hover feedback is the node
+  // panel now, so there is no always-on status row under the map.
+  private statusEl: HTMLElement
   private progressEl: HTMLElement
   private legendCanvas: HTMLCanvasElement
   private legendVisible = true
@@ -69,13 +71,6 @@ export class MapView {
     this.renderer?.refresh({ skipIndexation: true })
   })
 
-  private labelLine(id: number): string {
-    const key = String(id)
-    if (!this.graph.hasNode(key)) return 'слово · 0'
-    const attrs = this.graph.getNodeAttributes(key)
-    return `${attrs.label} · ${attrs.count}`
-  }
-
   private cancelIdleTimer(): void {
     if (this.idleTimer !== null) {
       clearTimeout(this.idleTimer)
@@ -100,7 +95,6 @@ export class MapView {
     this.idleTimer = window.setTimeout(() => {
       this.idleTimer = null
       if (this.pinnedId === null && this.subgraphKey !== null) {
-        this.hoverLine.textContent = 'слово · 0'
         this.fadeToIdle()
       }
     }, 50)
@@ -241,6 +235,7 @@ export class MapView {
           <i></i><i></i><i></i><i></i>
         </div>
         <div class="map-progress" hidden></div>
+        <p class="map-status label" role="status" hidden></p>
       </div>
       <div class="map-controls">
         <button type="button" id="export-png" aria-label="Экспорт в PNG" class="num">PNG</button>
@@ -248,11 +243,10 @@ export class MapView {
         <button type="button" id="zoom-out" aria-label="Отдалить">−</button>
         <button type="button" id="zoom-reset" aria-label="В центр">⊙</button>
       </div>
-      <p class="hover-line label">слово · 0</p>
     `
 
     this.container = root.querySelector<HTMLElement>('.canvas')!
-    this.hoverLine = root.querySelector<HTMLElement>('.hover-line')!
+    this.statusEl = root.querySelector<HTMLElement>('.map-status')!
     this.progressEl = root.querySelector<HTMLElement>('.map-progress')!
     this.legendCanvas = root.querySelector<HTMLCanvasElement>('.map-legend')!
     this.legendCanvas.setAttribute('aria-label', LEGEND_TEXT)
@@ -266,9 +260,6 @@ export class MapView {
       const key = String(id)
       if (this.graph.hasNode(key)) {
         this.graph.setNodeAttribute(key, 'label', label)
-      }
-      if (this.pinnedId === id) {
-        this.hoverLine.textContent = this.labelLine(id)
       }
       this.renderer.refresh({ skipIndexation: true })
     })
@@ -432,7 +423,6 @@ export class MapView {
 
     const handleNodeEnter = (nodeKey: string) => {
       this.cancelIdleTimer()
-      this.hoverLine.textContent = this.labelLine(Number(nodeKey))
       if (this.pinnedId === null && this.subgraphKey !== nodeKey) {
         this.subgraphKey = nodeKey
         this.focusSubgraph(nodeKey, 8)
@@ -827,7 +817,6 @@ export class MapView {
       const key = String(id)
       this.subgraphKey = key
       this.focusSubgraph(key, 12)
-      this.hoverLine.textContent = this.labelLine(id)
 
       const rawForms = this.lastMsg?.forms
       const forms = rawForms instanceof Map
@@ -839,7 +828,6 @@ export class MapView {
       }
     } else {
       this.fadeToIdle()
-      this.hoverLine.textContent = 'слово · 0'
       this.nodePanel.hide()
     }
 
@@ -1075,7 +1063,8 @@ export class MapView {
     this.container.setAttribute('aria-busy', 'true')
     this.progressEl.hidden = false
     this.progressEl.style.width = `${pct}%`
-    this.hoverLine.textContent = stage
+    this.statusEl.hidden = false
+    this.statusEl.textContent = stage
       ? `Обновление · ${stage.replace(/\.\.\.$/, '')} · ${pct}%`
       : `Обновление · ${pct}%`
   }
@@ -1084,12 +1073,8 @@ export class MapView {
     this.progressEl.hidden = true
     this.progressEl.style.width = '0%'
     this.container.removeAttribute('aria-busy')
-    if (this.pinnedId !== null && this.graph.hasNode(String(this.pinnedId))) {
-      const attrs = this.graph.getNodeAttributes(String(this.pinnedId))
-      this.hoverLine.textContent = `${attrs.label} · ${attrs.count}`
-    } else {
-      this.hoverLine.textContent = 'слово · 0'
-    }
+    this.statusEl.hidden = true
+    this.statusEl.textContent = ''
   }
 }
 
