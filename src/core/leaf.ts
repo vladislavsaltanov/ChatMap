@@ -1,5 +1,7 @@
-// Leaf-tissue spike (P0): Dijkstra + branch-coherent soft init + bridge-aware targetLen.
-// Copy for measurement only — trunk/core/strands in spread.ts stay untouched.
+// Leaf-tissue kernels: Dijkstra + branch-coherent soft init + bridge-aware
+// targetLen + stress. PRODUCTION library — spread.ts builds its pipeline on
+// these kernels. leafLayout() below is a test-only assembly (no production
+// caller); tests pin determinism through it.
 // All pure and deterministic: ties by id, no Math.random, hashing via spread.hashAt.
 
 import { hashAt } from './spread'
