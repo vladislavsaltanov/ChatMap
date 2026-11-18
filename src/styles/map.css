@@ -1,8 +1,11 @@
 @layer map {
   #map {
+    /* Жёсткое связное состояние: полоса таймлайна лежит В ПОТОКЕ под канвой,
+       поэтому колонка flex — канва сжимается на её высоту, а не перекрывается. */
     position: relative;
-    display: grid;
-    grid-template-rows: 1fr;
+    display: flex;
+    flex-direction: column;
+    --timeline-h: 46px; /* капсула 34px + нижний воздух полосы 12px */
     height: 100vh;
     padding: 16px;
     overflow: hidden;
@@ -10,8 +13,12 @@
 
   .canvas {
     width: 100%;
+    /* height: 100% как фолбэк, flex-basis 0 отдаёт остаток места после полосы. */
     height: 100%;
-    min-height: 400px;
+    flex: 1;
+    /* Флекс-контракт: без нуля канва не может ужаться ниже своего контента и
+       выдавила бы полосу за 100vh. */
+    min-height: 0;
     border: 1px solid var(--hairline);
     border-radius: var(--radius);
     background: var(--paper);
@@ -106,6 +113,18 @@
     #map:has(.nodepanel:not([hidden])) .map-controls {
       right: calc(24px + 280px + 12px);
     }
+  }
+
+  /* Пока полоса видна, кнопки зума поднимаются на её высоту: иначе они садятся
+     на капсулу и перекрывают правый край спектра. */
+  #map:has(.timeline:not([hidden])) .map-controls {
+    bottom: calc(24px + var(--timeline-h));
+  }
+
+  /* Панель слова тоже не заходит на полосу: её низ поднят на ту же высоту,
+     иначе край капсулы уходит под панель (z-index 20 над полосой). */
+  #map:has(.timeline:not([hidden])) .nodepanel {
+    bottom: calc(24px + var(--timeline-h));
   }
 
   /* Transient progress caption, inside the canvas: the map owns the frame
@@ -457,5 +476,72 @@
   .form-btn.active {
     border-color: var(--ink);
     font-weight: 450;
+  }
+
+  /* Полоса таймлайна: капсула в потоке под канвой. Плоская заливка тоном чуть
+     светлее бумаги — разделение только тональное: без рамок, теней, градиентов. */
+  .timeline {
+    padding: 0 14px 12px;
+  }
+
+  .timeline-capsule {
+    position: relative;
+    /* Один источник стороны спектра: тики, playhead и отображение указателя в
+       bucket считают по этому же инсету. */
+    --tick-inset: 12px;
+    height: 34px;
+    border-radius: var(--radius-pill);
+    background: oklch(0.22 0.015 85);
+    cursor: pointer;
+    /* Скруб указателем не должен скроллить страницу на тач-экранах. */
+    touch-action: none;
+  }
+
+  /* Фокус клавиатуры: тональный шаг капсулы вместо обводки (плоская грамматика),
+     но фокус обязан быть виден — outline не убираем молча. */
+  .timeline:focus-visible .timeline-capsule {
+    background: oklch(0.26 0.015 85);
+  }
+
+  .timeline-ticks {
+    position: absolute;
+    inset: 6px var(--tick-inset);
+  }
+
+  /* Тик: высота приходит из msgCounts линейно (см. timeline.ts), поэтому шкала
+     честная — полспекатра = половина сообщений бакета. */
+  .timeline-ticks div {
+    position: absolute;
+    width: 2px;
+    bottom: 0;
+    transform: translateX(-50%);
+    background: rgb(240 237 228 / 0.22);
+  }
+
+  .timeline-ticks div.covered {
+    background: rgb(104 164 255 / 0.8);
+  }
+
+  .timeline-playhead {
+    position: absolute;
+    top: 3px;
+    bottom: 3px;
+    /* --tick-ratio — доля спектра (пишет timeline.ts на каждом шаге курсора). */
+    left: calc(var(--tick-inset) + var(--tick-ratio, 1) * (100% - 2 * var(--tick-inset)));
+    width: 1.5px;
+    background: #f0f3ff;
+    transform: translateX(-50%);
+    pointer-events: none;
+  }
+
+  .timeline-readout {
+    position: absolute;
+    left: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
+    white-space: nowrap;
+    /* Подпись читается поверх спектра. */
+    z-index: 1;
   }
 }
