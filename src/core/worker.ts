@@ -137,7 +137,7 @@ function buildMapMessage(
   })
   // Edge geometry is routed through the figure's own funnels: fibres of one
   // corridor share control points, so they land on top of each other and merge.
-  const bundles = bundleEdges(posList, backboneEdges, selection.maxWeight, {
+  const bundles = bundleEdges(posList, backboneEdges, {
     ports: layoutResult.ports ?? new Map(),
     groupOf: layoutResult.groupOf ?? new Map(),
     // Fascicle identity lets intra-topic fibres share one trunk per stem instead of

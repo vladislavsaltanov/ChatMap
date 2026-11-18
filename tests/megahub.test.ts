@@ -194,7 +194,7 @@ const chainReport = (graph: MegaGraph, run: { result: LayoutResult; inputs: Layo
 
   const points = inputs.map((n) => ({ id: n.id, ...result.positions.get(n.id)! }))
   const byId = new Map(points.map((p) => [p.id, p]))
-  const bundles = bundleEdges(points, graph.backbone, graph.selection.maxWeight, {
+  const bundles = bundleEdges(points, graph.backbone, {
     ports,
     groupOf,
     stemOf,
