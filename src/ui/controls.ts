@@ -101,8 +101,8 @@ export class Controls {
   constructor(root: HTMLElement) {
     const details = document.createElement('details')
     details.className = 'drawer'
-    // На узких экранах панель скрыта по умолчанию — не съедает карту целиком
-    details.open = window.matchMedia('(min-width: 720px)').matches
+    // Collapsed on every start (2026-11-18 decision): the map is the product,
+    // the drawer must never eat the canvas on load — any screen width.
     details.setAttribute('aria-label', 'Параметры')
     details.innerHTML = `
       <summary class="label">Параметры</summary>
