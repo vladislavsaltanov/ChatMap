@@ -100,10 +100,11 @@ export type ScanOpts = { memberSet?: Set<number>; maxBucket?: number }
 export function tally(units: RawUnit[], opts?: ScanOpts): TallyResult
 ```
 - `select.ts` += `export function topIds(counts, cfg, merged): number[]` — [Query] топ-N id по mode (together/author; cross до Task 6 — все id со счётом). `worker.ts` здесь же переключает open-путь: `countsUpTo` → `topIds` → `tally(units, { memberSet })` → `select` (реальные pairs) — выигрыш по памяти/времени приземляется на этом шаге.
+- `memberSet` живёт в RAW-id пространстве: это ПРООБРАЗ selected под `merged` (raw id включён ⟺ root = merged.get(id) ?? id лежит в topIds). Без этого smartMerge терял бы пары вариантов, склеивающихся в выбранные корни.
 Гарды в скане пар (до `edgeKey`): `if (opts?.memberSet !== undefined && (!mset.has(u) || !mset.has(v))) continue`; `if (opts?.maxBucket !== undefined && (unit.bucket ?? 0) > opts.maxBucket) skip unit`. `tally(units)` без opts — байт-идентично сегодняшнему (оракул).
 
 - [ ] Шаг 3.1 — TDD: тесты среза — юнит с `bucket > maxBucket` исключён; пара вне memberSet не в pairs; пара с undefined-bucket включена всегда.
-- [ ] Шаг 3.2 — Property-тест `tests/slice-equiv.test.ts`: для фикстур `tests/fixtures/sample-export.json`, megahub-генератора и синтетики tally-тестов, ≥3 cfg (default, mat:true, customMat): `select(tally(units), view)` DEEP-EQUAL `select({counts: countsUpTo(bc, last), pairs: tally(units, {memberSet})}, view)`. FAIL (opts нет).
+- [ ] Шаг 3.2 — Property-тест `tests/slice-equiv.test.ts`: для фикстур `tests/fixtures/sample-export.json`, megahub-генератора и синтетики tally-тестов, ≥3 cfg (default, mat:true, customMat, smartMerge:true): `select(tally(units), view)` DEEP-EQUAL `select({counts: countsUpTo(bc, last), pairs: tally(units, {memberSet})}, view)` при memberSet = прообраз topIds (см. выше). FAIL (opts нет).
 - [ ] Шаг 3.3 — Реализация opts в `tally` (только гарды, ноль изменения семантики без opts).
 - [ ] Шаг 3.4 — Оба файла PASS; `npx vitest run tests/tally.test.ts tests/slice-equiv.test.ts`.
 - [ ] Шаг 3.5 — Commit: `feat(core): tally scan opts — membership mask and time cutoff`.
