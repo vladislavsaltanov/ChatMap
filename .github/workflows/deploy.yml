@@ -1,0 +1,104 @@
+name: Deploy ChatMap
+
+on:
+  push:
+    branches: [deploy]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-chatmap-production
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Preflight checks and build
+        run: |
+          npm run typecheck
+          npm run test
+          npm run build
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Atomic release via rsync + symlink
+        env:
+          SSH_TARGET: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
+          SSH_PORT: ${{ secrets.DEPLOY_PORT }}
+          SHA_SHORT: ${{ github.sha }}
+        run: |
+          RELEASE="$(date -u +%Y%m%d-%H%M%S)-${SHA_SHORT:0:7}"
+          REMOTE_DIR="/var/www/chatmap/releases/${RELEASE}"
+
+          ssh -p "$SSH_PORT" "$SSH_TARGET" "mkdir -p '${REMOTE_DIR}'"
+
+          # Явные права доступа, чтобы пользователь caddy гарантированно мог читать файлы
+          rsync -az --delete \
+            --chmod=Du=rwx,Dg=rx,Do=rx,Fu=rw,Fg=r,Fo=r \
+            -e "ssh -p ${SSH_PORT}" \
+            dist/ "${SSH_TARGET}:${REMOTE_DIR}/"
+
+          # Атомарное переключение current и хранение последних 5 релизов
+          ssh -p "$SSH_PORT" "$SSH_TARGET" "
+            ln -sfn '${REMOTE_DIR}' /var/www/chatmap/current.tmp &&
+            mv -Tf /var/www/chatmap/current.tmp /var/www/chatmap/current &&
+            cd /var/www/chatmap/releases &&
+            ls -1dt */ | tail -n +6 | xargs -r rm -rf
+          "
+
+      - name: Verify production headers
+        env:
+          SITE_URL: https://chatmap.madebykowie.ru
+        run: |
+          set -e
+
+          # --retry страхует первый запуск, пока Caddy выпускает TLS-сертификат
+          HEADERS=$(curl -fsSI --retry 5 --retry-delay 3 --retry-all-errors "$SITE_URL/")
+          echo "=== / headers ==="
+          echo "$HEADERS"
+          echo "$HEADERS" | grep -iq "content-security-policy:.*connect-src 'none'"
+          echo "$HEADERS" | grep -iq "x-content-type-options: nosniff"
+          echo "$HEADERS" | grep -iq "referrer-policy: no-referrer"
+          echo "$HEADERS" | grep -iq "cache-control:.*no-cache"
+
+          ASSET_JS=$(curl -fsS "$SITE_URL/" | grep -oE '/assets/index-[^"]+\.js' | head -n 1)
+          test -n "$ASSET_JS"
+          JS_HEADERS=$(curl -fsSI "${SITE_URL}${ASSET_JS}")
+          echo "=== ${ASSET_JS} headers ==="
+          echo "$JS_HEADERS"
+          echo "$JS_HEADERS" | grep -iq "content-type:.*text/javascript"
+          echo "$JS_HEADERS" | grep -iq "cache-control:.*immutable"
